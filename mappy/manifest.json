@@ -1,0 +1,21 @@
+{
+  "name": "mappy",
+  "label": "Mappy",
+  "type": "widget",
+  "version": "1.5.0",
+  "exbVersion": "1.21.0",
+  "author": "Brian McLeer, City of Grand Junction",
+  "description": "A friendly folded-map assistant for any Experience Builder app. Users chat with him to find tools, pages, links, layers and features; he opens widgets, switches layers, zooms and answers questions from everything in the app. A deep scan in the builder teaches him the web maps, every field and coded value, item descriptions and widget docs. Runs entirely in the browser.",
+  "copyright": "",
+  "license": "http://www.apache.org/licenses/LICENSE-2.0",
+  "properties": {
+    "canCrossLayoutBoundary": true
+  },
+  "translatedLocales": [
+    "en"
+  ],
+  "defaultSize": {
+    "width": 240,
+    "height": 60
+  }
+}

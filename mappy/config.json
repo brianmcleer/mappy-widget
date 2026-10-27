@@ -1,0 +1,19 @@
+{
+  "assistantName": "Mappy",
+  "greeting": "",
+  "displayMode": "floating",
+  "corner": "bottom-right",
+  "size": "medium",
+  "bubbleStyle": "classic",
+  "greetOnFirstVisit": true,
+  "tipsEnabled": true,
+  "tipIntervalSec": 180,
+  "featureSearch": true,
+  "maxResults": 8,
+  "draggable": true,
+  "suggestions": [],
+  "faq": [],
+  "notes": "",
+  "brain": null,
+  "telemetry": false
+}

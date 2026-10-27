@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Community attachment zips built by publish-all.ps1 never get committed
+*.zip
