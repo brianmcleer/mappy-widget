@@ -1,0 +1,435 @@
+{
+  "about": "The phrase test set. A language pack ships only when it passes at least as many of these as the pack before it. 'say' must be understood the same as 'same' (a request Mappy already understands). 'ask' must find the tool named in 'expect'. 'keep' must come through untouched. Add cases freely; reported misses land here automatically.",
+  "appNames": [
+    "Parcels",
+    "Zoning Districts",
+    "Fire Hydrants",
+    "Street Centerlines",
+    "Flood Zones",
+    "Schools",
+    "City Parks",
+    "Trails",
+    "Map Layers",
+    "Legend",
+    "Print",
+    "Bookmarks",
+    "Measurement",
+    "Owner Name",
+    "Situs Address"
+  ],
+  "same": [
+    {
+      "say": "trun on parcels",
+      "same": "turn on parcels"
+    },
+    {
+      "say": "tunr on parcles",
+      "same": "turn on parcels"
+    },
+    {
+      "say": "turnon parcels",
+      "same": "turn on parcels"
+    },
+    {
+      "say": "turn on the parcles layer",
+      "same": "turn on the parcels layer"
+    },
+    {
+      "say": "turn of parcels",
+      "same": "turn off parcels"
+    },
+    {
+      "say": "trun off zonign districts",
+      "same": "turn off zoning districts"
+    },
+    {
+      "say": "turn on fire hydrnats",
+      "same": "turn on fire hydrants"
+    },
+    {
+      "say": "turn on fier hydrants",
+      "same": "turn on fire hydrants"
+    },
+    {
+      "say": "unhide parcels",
+      "same": "turn on parcels"
+    },
+    {
+      "say": "make visible the flood zones",
+      "same": "turn on flood zones"
+    },
+    {
+      "say": "switch on trails",
+      "same": "turn on trails"
+    },
+    {
+      "say": "lsit layers",
+      "same": "list layers"
+    },
+    {
+      "say": "list layres",
+      "same": "list layers"
+    },
+    {
+      "say": "list lay ers",
+      "same": "list layers"
+    },
+    {
+      "say": "listlayers",
+      "same": "list layers"
+    },
+    {
+      "say": "what layers are there",
+      "same": "list layers"
+    },
+    {
+      "say": "list teh tools",
+      "same": "list the tools"
+    },
+    {
+      "say": "lsit tools",
+      "same": "list tools"
+    },
+    {
+      "say": "list bookmakrs",
+      "same": "list bookmarks"
+    },
+    {
+      "say": "opne the legend",
+      "same": "open the legend"
+    },
+    {
+      "say": "open the legnd",
+      "same": "open the legend"
+    },
+    {
+      "say": "oepn print",
+      "same": "open print"
+    },
+    {
+      "say": "pull up the legend",
+      "same": "open the legend"
+    },
+    {
+      "say": "clsoe the legend",
+      "same": "close the legend"
+    },
+    {
+      "say": "zom in",
+      "same": "zoom in"
+    },
+    {
+      "say": "zoomin",
+      "same": "zoom in"
+    },
+    {
+      "say": "zooom out",
+      "same": "zoom out"
+    },
+    {
+      "say": "get closer",
+      "same": "zoom in"
+    },
+    {
+      "say": "take me home",
+      "same": "zoom to full extent"
+    },
+    {
+      "say": "zoom to full extnet",
+      "same": "zoom to full extent"
+    },
+    {
+      "say": "hwo many parcels",
+      "same": "how many parcels"
+    },
+    {
+      "say": "how mnay parcels in veiw",
+      "same": "how many parcels in view"
+    },
+    {
+      "say": "cuont parcels",
+      "same": "count parcels"
+    },
+    {
+      "say": "tally parcels",
+      "same": "count parcels"
+    },
+    {
+      "say": "only shwo parcels",
+      "same": "only show parcels"
+    },
+    {
+      "say": "trun everything off",
+      "same": "turn everything off"
+    },
+    {
+      "say": "turn off all teh layers",
+      "same": "turn off all the layers"
+    },
+    {
+      "say": "where is the parcels layer",
+      "same": "where is the parcels layer"
+    },
+    {
+      "say": "wehre is the parcels layer",
+      "same": "where is the parcels layer"
+    },
+    {
+      "say": "set parcles opacity to 50%",
+      "same": "set parcels opacity to 50%"
+    },
+    {
+      "say": "waht can you do",
+      "same": "what can you do"
+    },
+    {
+      "say": "thnaks",
+      "same": "thanks"
+    },
+    {
+      "say": "helo",
+      "same": "hello"
+    },
+    {
+      "say": "look for 123 main st",
+      "same": "find 123 main st"
+    },
+    {
+      "say": "pls trun on zoning",
+      "same": "turn on zoning"
+    },
+    {
+      "say": "show me the legend plz",
+      "same": "show me the legend"
+    },
+    {
+      "say": "opn legend",
+      "same": "open legend"
+    },
+    {
+      "say": "where is teh legend",
+      "same": "where is the legend"
+    },
+    {
+      "say": "whats this app",
+      "same": "what's this app"
+    },
+    {
+      "say": "go hoem",
+      "same": "go home"
+    },
+    {
+      "say": "turn on floodzones",
+      "same": "turn on flood zones"
+    },
+    {
+      "say": "thnak you",
+      "same": "thank you"
+    },
+    {
+      "say": "turn everythign off",
+      "same": "turn everything off"
+    },
+    {
+      "say": "cna you turn on the parcels",
+      "same": "turn on the parcels"
+    },
+    {
+      "say": "zoom ot",
+      "same": "zoom out"
+    },
+    {
+      "say": "turn no zoning districts",
+      "same": "turn on zoning districts"
+    },
+    {
+      "say": "turn on skools",
+      "same": "turn on schools"
+    },
+    {
+      "say": "open the lejend",
+      "same": "open the legend"
+    },
+    {
+      "say": "turn on all teh layers",
+      "same": "turn on all layers"
+    },
+    {
+      "say": "turn everything on",
+      "same": "turn on all layers"
+    },
+    {
+      "say": "lost layers",
+      "same": "list layers"
+    },
+    {
+      "say": "lits bookmarks",
+      "same": "list bookmarks"
+    },
+    {
+      "say": "close the leged",
+      "same": "close the legend"
+    },
+    {
+      "say": "thans",
+      "same": "thanks"
+    },
+    {
+      "say": "where is the parcels layr",
+      "same": "where is the parcels layer"
+    },
+    {
+      "say": "turn on everyting",
+      "same": "turn on all layers"
+    },
+    {
+      "say": "make parcels 75 percent transparent",
+      "same": "set parcels opacity to 25%"
+    },
+    {
+      "say": "set parcels opacity to fifty percent",
+      "same": "set parcels opacity to 50%"
+    },
+    {
+      "say": "fade the parcels",
+      "same": "set parcels opacity to 50%"
+    },
+    {
+      "say": "make zoning districts solid",
+      "same": "set zoning districts opacity to 100%"
+    }
+  ],
+  "keep": [
+    "find Smith in parcels",
+    "find O'Brien in parcels",
+    "find \"Teh Bakery\" in parcels",
+    "find 123 Mian St",
+    "how many parcels where owner equals Jonhson",
+    "count parcels where ACRES > 5",
+    "zoom to 39.06, -108.55",
+    "turn on parcels",
+    "list layers",
+    "how many of those?",
+    "show table parcels sorted by acres desc",
+    "show the 5 largest parcels by acres",
+    "summarize Lot Area in parcels in view",
+    "count parcels by STATUS",
+    "next page",
+    "show the first result",
+    "explore parcels",
+    "zoom to mesa county",
+    "zoom to canyon view park",
+    "show the river",
+    "find elm ave",
+    "find ute ave",
+    "turn on whitewater",
+    "zoom to las colonias",
+    "zoom to gateway",
+    "find pitkin ave",
+    "zoom to cortez",
+    "geocode 715 rood ave",
+    "find owner jose",
+    "where is caf\u00e9 rio",
+    "zeige alle ebenen",
+    "find Drew in parcels",
+    "how many parcels where owner equals Drew",
+    "zoom to grand mesa",
+    "find orchard ave",
+    "find patterson rd",
+    "zoom to fruita"
+  ],
+  "ask": [
+    {
+      "ask": "how do i print a map",
+      "expect": "print"
+    },
+    {
+      "ask": "how do i pritn a map",
+      "expect": "print"
+    },
+    {
+      "ask": "how do i mesure distance",
+      "expect": "measurement"
+    },
+    {
+      "ask": "how do I measure the length of a road",
+      "expect": "measurement"
+    },
+    {
+      "ask": "show me the legned",
+      "expect": "legend"
+    },
+    {
+      "ask": "what do the symbols mean",
+      "expect": "legend"
+    },
+    {
+      "ask": "change the background imagery",
+      "expect": "basemap-gallery"
+    },
+    {
+      "ask": "switch to satelite view",
+      "expect": "basemap-gallery"
+    },
+    {
+      "ask": "how do I draw on the map",
+      "expect": "draw"
+    },
+    {
+      "ask": "can I mark up the map with notes",
+      "expect": "draw"
+    },
+    {
+      "ask": "saved places",
+      "expect": "bookmark"
+    },
+    {
+      "ask": "share a link to this map",
+      "expect": "share"
+    },
+    {
+      "ask": "see coordinates of a point",
+      "expect": "coordinates"
+    },
+    {
+      "ask": "elevaton profile along a path",
+      "expect": "elevation-profile"
+    },
+    {
+      "ask": "compare two layers side by side",
+      "expect": "swipe"
+    },
+    {
+      "ask": "find what is near me",
+      "expect": "near-me"
+    },
+    {
+      "ask": "attribute table rows",
+      "expect": "table"
+    },
+    {
+      "ask": "add my own data to the map",
+      "expect": "add-data"
+    },
+    {
+      "ask": "show my location on the map",
+      "expect": "my-location"
+    },
+    {
+      "ask": "how far is it between two points",
+      "expect": "measurement"
+    },
+    {
+      "ask": "filter the map to show only some features",
+      "expect": "filter"
+    },
+    {
+      "ask": "chart of the data",
+      "expect": "chart"
+    },
+    {
+      "ask": "see the data in a table",
+      "expect": "table"
+    }
+  ]
+}

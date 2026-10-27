@@ -44,6 +44,16 @@ export interface Config {
   typewriter?: boolean
   /** Offer "Read answers aloud" in his menu (browser speech). Undefined means on. */
   allowReadAloud?: boolean
+  /** Fix typos before reading a request ("trun on parcles"). Undefined means on. Turn off for apps used mostly in other languages. */
+  typoFix?: boolean
+  /** A newer language pack pulled in settings ("Get language updates"); used when newer than the bundled one. */
+  languagePack?: any
+  /**
+   * An MCP server (Model Context Protocol, Streamable HTTP) whose tools Mappy can use: url,
+   * label, auth ('none' | 'arcgis' | 'header'), headerName/headerValue, fallback, enabled, and
+   * tools [{ name, enabled, confirm }] chosen in settings. See docs/mcp.md.
+   */
+  mcp?: any
   /** Usage telemetry through the shared Beacon module. Explicit opt-in only. */
   telemetry?: boolean
 }

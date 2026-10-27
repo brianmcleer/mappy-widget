@@ -1,3 +1,22 @@
+## 1.6.0 (2026-10-27)
+
+- Forgive typos like a person would: swapped, neighbouring, doubled and missing letters, run-together and split words, and shorthand. Words snap to command words, then names in the app, then map words, then everyday English; known words, quoted text, numbers, conditions and search values are protected. Mappy says how he read a fixed request.
+- Read with a language pack (everyday words, synonyms, other phrasings, known misspellings) built from Open English WordNet and reported phrases. A weekly GitHub Action rebuilds it, tests it against the phrase test set and the regression suites, and opens a pull request only when Mappy understands more.
+- Settings, Language: get the newest pack (saved with the app, no rebuild), go back to the built-in pack, and report a missed phrase.
+- Add an optional MCP server connection (Streamable HTTP): list tools, pick and fill a tool from plain words, ask first before tools that could change data, show results as text, tables, pictures and a Zoom there button, and offer the server when stuck. Settings, MCP server: address, sign-in (none, ArcGIS user, header key), per-tool choices.
+- Read typos that spell real words by choosing the reading that makes the most sense ("lose the legend", "lost layers", "only sow parcels"), sound-alikes ("elevashun", "skools"), two-letter slips after a command ("zoom ot", "turn of", "turn no") and run-together words. Reads through every generated one-slip typo in the phrase test set and about nine in ten harder ones (two slips, or a missing first letter).
+- When stuck, Mappy asks "Did you mean ...?" with the closest requests he can do as buttons ("zmo in" offers "zoom in", "hlo" offers "hello").
+- Numbers in words and other ways to say transparency: "set parcels opacity to fifty percent", "make parcels 75 percent transparent", "fade the parcels", "make zoning solid".
+- Add "turn on all layers" / "turn everything on" (pick-one groups left alone; asks first above 25 layers).
+- Settings, Behavior: Fix typos switch (turn off for apps used mostly in other languages). Try it shows how a request was read.
+- MCP: inputs a request leaves out, or calls "here" / "this area", come from the map (center, zoom, extent); "Use ArcGIS Location Services (beta)" fills in Esri's hosted MCP server; pictures from tools show in the bubble.
+- Real words and place names are never "fixed": every English word in Open English WordNet counts as known (a compact filter in the language pack), unknown words only snap to command words, app names and map words, values and names never take shorthand fixes, non-ASCII words are left alone, and a request mostly in another language is left as typed.
+- MCP: tools whose names say they change data ("deleteFeatures", "apply_edits") always ask first; tool and choice names from a server can no longer slow or break input filling; answers sent as a stream that stays open are read as soon as they arrive; the protocol version the server chooses is used; "use ..." requests fall back to the app when the server is offline.
+- Language pack versions compare as numbers ("2026.11.02.10" is newer than ".9").
+- Fixed: a turned-off layer showed two Undo buttons.
+- The typo reader is built while the page is idle and shares its word index, so answers stay fast.
+- Add `tests/typos.cjs` and `tests/mcp.cjs`; `npm test` runs all three suites.
+
 ## 1.5.0 (2026-10-27)
 
 - Add metadata-backed null-completeness reports with one aggregate query for up to twelve fields.

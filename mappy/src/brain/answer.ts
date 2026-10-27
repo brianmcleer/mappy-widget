@@ -12,6 +12,8 @@ export interface Reply {
   text: string
   sources?: Array<{ title: string, detail: string }>
   table?: { columns: string[], rows: string[][] }
+  /** A picture from an MCP tool (a static map), as a data: or https: address. */
+  image?: { src: string, alt: string }
   page?: { offset: number, size: number, hasNext: boolean }
   actions?: MappyAction[]
   /** Follow-up suggestions shown as chips. */

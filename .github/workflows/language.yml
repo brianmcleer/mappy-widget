@@ -1,0 +1,96 @@
+# Weekly language pack build: open word data plus reported phrases, tested before it ships.
+# Opens (or updates) one pull request when Mappy understands more. Run it by hand from the
+# Actions tab, or label an issue "language" to run it right away.
+name: Language pack
+
+on:
+  schedule:
+    - cron: '17 9 * * 1'   # Mondays 09:17 UTC
+  workflow_dispatch:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: language-pack
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'issues' || contains(github.event.issue.labels.*.name, 'language')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache Open English WordNet
+        uses: actions/cache@v4
+        with:
+          path: language/.cache
+          key: wordnet-${{ hashFiles('language/build.mjs') }}
+          restore-keys: wordnet-
+
+      - name: Install TypeScript (to run the widget's own code)
+        run: npm i --no-save --no-audit --no-fund typescript@5
+
+      - name: Collect reported phrases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create language --color 1D76DB --description "Mappy missed a phrase" 2>/dev/null || true
+          gh api "repos/${{ github.repository }}/issues?labels=language&state=open&per_page=100" > issues.json
+
+      - name: Build and test the language pack
+        id: build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node language/build.mjs --issues issues.json
+
+      - name: Regression suite and phrase gate
+        if: steps.build.outputs.changed == 'true'
+        run: |
+          cd mappy
+          node tests/local-assistant.cjs
+          node tests/typos.cjs
+          node tests/mcp.cjs
+          cd ..
+          node language/build.mjs --check
+
+      # Pull requests opened with the built-in token do not start other workflows, so the checks
+      # above are the gate. To have the Test workflow run on these pull requests too, add a
+      # repository secret LANGUAGE_PR_TOKEN (a fine-grained token with contents and pull request
+      # write access to this repository); it is used when present.
+      - name: Open or update the pull request
+        if: steps.build.outputs.changed == 'true'
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.LANGUAGE_PR_TOKEN || github.token }}
+          branch: language-pack
+          delete-branch: true
+          title: Language pack ${{ steps.build.outputs.version }}
+          commit-message: Language pack ${{ steps.build.outputs.version }}
+          body-path: language/report.md
+          labels: language-pack
+          add-paths: |
+            language/language-pack.json
+            language/learned.json
+            language/passing.json
+            mappy/src/brain/languagePack.ts
+
+      - name: Merge automatically when tests pass (repository variable LANGUAGE_AUTOMERGE = true)
+        if: steps.pr.outputs.pull-request-number && vars.LANGUAGE_AUTOMERGE == 'true' && steps.build.outputs.trusted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.LANGUAGE_PR_TOKEN || github.token }}
+        run: gh pr merge ${{ steps.pr.outputs.pull-request-number }} --squash --auto || gh pr merge ${{ steps.pr.outputs.pull-request-number }} --squash
+
+      - name: Show the report
+        if: always()
+        run: cat language/report.md >> "$GITHUB_STEP_SUMMARY" || true

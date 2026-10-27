@@ -1,8 +1,8 @@
 {
   "name": "mappy",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "scripts": {
-    "test": "node tests/local-assistant.cjs"
+    "test": "node tests/local-assistant.cjs && node tests/typos.cjs && node tests/mcp.cjs"
   },
   "description": "ArcGIS Experience Builder widget: a friendly folded-map assistant that knows every page, widget, link, layer and field in the app it is dropped into, answers questions, opens tools, switches layers and finds features, all in the browser.",
   "keywords": [
@@ -14,7 +14,8 @@
     "chatbot",
     "help",
     "search",
-    "onboarding"
+    "onboarding",
+    "mcp"
   ],
   "license": "Apache-2.0",
   "author": "Brian McLeer",

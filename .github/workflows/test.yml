@@ -1,0 +1,28 @@
+# Every push and pull request: the regression suite, the typo suite and the phrase test set.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm i --no-save --no-audit --no-fund typescript@5
+      - name: Regression suite
+        working-directory: mappy
+        run: |
+          node tests/local-assistant.cjs
+          node tests/typos.cjs
+          node tests/mcp.cjs
+      - name: Phrase test set
+        run: node language/build.mjs --check

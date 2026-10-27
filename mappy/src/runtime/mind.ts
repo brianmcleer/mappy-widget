@@ -17,6 +17,9 @@ import type { GeocoderSource } from '../brain/addresses'
 import { geocodeAddress } from './geocoder'
 import type { AddressResult } from './geocoder'
 import { contextualCommand, normalizeCommand, splitCommands } from '../brain/conversation'
+import { lexiconFor, readRequest, didYouMean } from '../brain/language'
+import { matchTool, fillArgs, usableTools, needsConfirm, toolLabel, describeArgs, viewResult } from '../brain/mcpTools'
+import type { McpPort, McpTool, MapContext } from '../brain/mcpTools'
 import { parseAnalysis, analysisFollowup } from '../brain/analysis'
 import type { AnalysisRequest } from '../brain/analysis'
 import { dataIdeas } from '../brain/ideas'
@@ -44,6 +47,10 @@ export interface MindContext {
   layerListIds: string[]
   layerListLabel: string
   beacon?: { action: (n: string, d?: string) => void, error: (e: unknown, d?: string) => void } | null
+  /** Fix typos before reading (settings, Behavior). Undefined means on. */
+  typoFix?: boolean
+  /** An MCP server the builder connected in settings (the second way Mappy can help). */
+  mcp?: McpPort | null
 }
 
 const STATUS_GLYPH: { [s: string]: string } = { on: '●', off: '○', hidden: '◐', scale: '◑' }
@@ -70,6 +77,10 @@ export class Mind {
   private addressChoices: { sequence: number, view: any, results: AddressResult[], selected?: number } | null = null
   private tablePage: { key: string, offset: number, size: number, hasNext: boolean, condition?: string, field?: string, order?: 'asc' | 'desc' } | null = null
   private contextView: any = null
+  private mcpTools: McpTool[] = []
+  private mcpSequence = 0
+  private mcpPending: { sequence: number, tool: McpTool, args: { [k: string]: any } } | null = null
+  private mcpFailedAt = 0
   constructor (ctx: MindContext) { this.ctx = ctx }
 
   private track (n: string): void { try { this.ctx.beacon?.action('ask', n) } catch (e) { } }
@@ -79,7 +90,203 @@ export class Mind {
     return this.ctx.live.bridge?.label || this.ctx.layerListLabel || 'the layer list'
   }
 
+  /** Names in this app (tools, pages, layers, fields), so typos snap to what is really here. */
+  private appNames (): string[] {
+    const names: string[] = []
+    for (const d of this.ctx.index.docs) { if (d.title) names.push(d.title) }
+    for (const tool of this.mcpTools) names.push(tool.name, toolLabel(tool))
+    try {
+      for (const e of this.ctx.live.entries()) {
+        names.push(e.title)
+        for (const f of ((e.sublayer || e.layer)?.fields || []) as any[]) names.push(f.name, f.alias || '')
+      }
+    } catch (e) { }
+    return names
+  }
+
+  /** Builds the typo reader ahead of the first question (about a tenth of a second), while the page is idle. */
+  warm (): void {
+    if (this.ctx.typoFix === false) return
+    try { readRequest('hello', lexiconFor(this.appNames(), this.ctx.index)) } catch (e) { }
+  }
+
+  /**
+   * Reads past typos first ("trun on parcles"), like a person would, then answers. When a word
+   * was fixed he says how he read it, so a wrong guess is easy to spot and retype.
+   */
   async respond (input: string): Promise<Reply> {
+    let read = { text: input, changed: false, swaps: [] as Array<[string, string]> }
+    if (this.ctx.typoFix !== false && !this.lastAddress && !this.addressChoices && !/^__/.test(input)) {
+      try { read = readRequest(input, lexiconFor(this.appNames(), this.ctx.index)) } catch (e) { }
+    }
+    // The reading is the request with typos fixed, polite words dropped, numbers in words as
+    // digits ("fifty percent" to 50%) and other phrasings made plain; it equals the input otherwise.
+    const text = read.text || input
+    let reply = await this.mcpCommand(text)
+    if (reply) this.lastReply = reply
+    else reply = await this.offerServer(text, await this.respondRead(text))
+    // Stuck: offer the closest requests he can do, the way Clippy asked "It looks like you're...".
+    if (reply.mood === 'confused' && this.ctx.typoFix !== false && !/^__/.test(input) && input.length < 120) {
+      try {
+        const guesses = didYouMean(input, lexiconFor(this.appNames(), this.ctx.index)).filter(g => g.toLowerCase() !== text.toLowerCase())
+        if (guesses.length) {
+          reply = {
+            ...reply,
+            text: `${reply.text}\n\nDid you mean ${guesses.map(g => `“${g}”`).join(' or ')}?`,
+            actions: [...guesses.map(g => ({ type: 'ask' as const, q: g, label: clip(g, 40) })), ...(reply.actions || [])].slice(0, 4)
+          }
+        }
+      } catch (e) { }
+    }
+    if (!read.swaps.length || reply.mood === 'sleep') return reply
+    return { ...reply, text: `${reply.text}\n\n(I read that as “${read.text.replace(/[*_`]/g, '')}”.)` }
+  }
+
+  // ------------------------------------------------------------ MCP server
+
+  private async serverTools (): Promise<McpTool[]> {
+    const port = this.ctx.mcp
+    if (!port) return []
+    this.mcpTools = usableTools(await port.tools(), port.prefs)
+    return this.mcpTools
+  }
+
+  /** Server commands: list its tools, "ask the server ...", "use <tool> with ...", and the Run and Cancel buttons. */
+  private async mcpCommand (text: string): Promise<Reply | null> {
+    const port = this.ctx.mcp
+    const t = text.trim()
+    const listAsk = /^(?:(?:list|show)(?: me)?(?: the)? (?:server|mcp|remote) tools|what can (?:the )?(?:mcp |remote )?server do|(?:server|mcp) tools)[?.!]*$/i.test(t)
+    const askServer = t.match(/^(?:ask|use|try|search)\s+(?:the\s+)?(?:mcp\s+)?server\s+(?:to\s+|for\s+|about\s+)?(.+)$/i)
+    if (!port) return listAsk || askServer || /^__mcp:/.test(t) ? { text: 'No MCP server is connected. The app builder can add one in Mappy\'s settings, under MCP server.', mood: 'confused' } : null
+    try {
+      const run = t.match(/^__mcp:run:(\d+)$/)
+      if (run) {
+        const p = this.mcpPending
+        this.mcpPending = null
+        if (!p || p.sequence !== Number(run[1])) return { text: 'That request is no longer waiting. Ask again and I will set it up fresh.', mood: 'confused' }
+        return this.runTool(p.tool, p.args)
+      }
+      if (/^__mcp:cancel$/.test(t)) { this.mcpPending = null; return { text: `Cancelled. Nothing was sent to ${port.label}.`, mood: 'acknowledge' } }
+      const asked = t.match(/^__mcp:ask:([\s\S]+)$/)
+      if (asked) return this.askServer(asked[1])
+      if (listAsk) {
+        const tools = await this.serverTools()
+        if (!tools.length) return { text: `${port.label} has no tools turned on for this app.`, mood: 'confused' }
+        return {
+          text: `${port.label} has ${tools.length} ${tools.length === 1 ? 'tool' : 'tools'} I can use. Pick one, or just ask and I will choose.`,
+          mood: 'talk',
+          list: tools.slice(0, 30).map(tool => ({ label: toolLabel(tool), detail: clip(tool.description || '', 140), action: { type: 'ask' as const, q: `use ${tool.name}`, label: toolLabel(tool) } }))
+        }
+      }
+      if (askServer) return this.askServer(askServer[1])
+      const labelWords = flat(port.label).split(' ').filter(Boolean)
+      if (labelWords.length) {
+        const named = t.match(new RegExp('^ask\\W+(?:the\\W+)?' + labelWords.map(w => w.replace(/[^a-z0-9]/g, '')).join('\\W+') + '\\W*\\s+([\\s\\S]+)$', 'i'))
+        if (named) return this.askServer(named[1].trim())
+      }
+      const use = t.match(/^(?:use|run|call)\s+(?:the\s+)?(?:tool\s+)?([A-Za-z][\w.-]*)\b\s*([\s\S]*)$/i)
+      if (use) {
+        // "use the measure tool" is usually about the app; only a server tool's exact name goes to the server.
+        let tools = this.mcpTools
+        if (!tools.length && Date.now() - this.mcpFailedAt > 60000) {
+          try { tools = await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return null }
+        }
+        const tool = tools.find(x => x.name.toLowerCase() === use[1].toLowerCase() || flat(x.name) === flat(use[1]))
+        if (tool) return this.prepareTool(tool, use[2])
+      }
+    } catch (e) {
+      this.ctx.beacon?.error(e, 'mcp')
+      return { text: e instanceof Error ? e.message : `${port.label} did not answer.`, mood: 'confused' }
+    }
+    return null
+  }
+
+  private async askServer (q: string): Promise<Reply> {
+    const port = this.ctx.mcp!
+    const tools = await this.serverTools()
+    const hit = matchTool(q, tools)
+    if (!hit) {
+      return { text: `I couldn't tell which of ${port.label}'s tools fits “${clip(q, 80)}”. Say “list server tools” to see them.`, mood: 'confused', suggest: ['List server tools'] }
+    }
+    return this.prepareTool(hit.tool, q)
+  }
+
+  private async prepareTool (tool: McpTool, text: string): Promise<Reply> {
+    const port = this.ctx.mcp!
+    const { args, missing } = fillArgs(tool, text, this.mapContext())
+    const name = toolLabel(tool)
+    if (missing.length) {
+      const props = tool.inputSchema?.properties || {}
+      return {
+        text: `**${name}** needs ${missing.map(k => `${k}${props[k]?.description ? ` (${clip(props[k].description!, 60)})` : ''}`).join(', ')}. Try: “use ${tool.name} with ${missing.map(k => `${k}=...`).join(', ')}”.`,
+        mood: 'think'
+      }
+    }
+    if (needsConfirm(tool, port.prefs)) {
+      const sequence = ++this.mcpSequence
+      this.mcpPending = { sequence, tool, args }
+      return {
+        text: `Run **${name}** on ${port.label} with ${describeArgs(args)}? ${tool.annotations?.readOnlyHint === true ? '' : 'It may change data on the server.'}`.trim(),
+        mood: 'attention',
+        actions: [{ type: 'ask', q: `__mcp:run:${sequence}`, label: `Run ${name}` }, { type: 'ask', q: '__mcp:cancel', label: 'Cancel' }]
+      }
+    }
+    return this.runTool(tool, args)
+  }
+
+  /** The map right now, in longitude and latitude, for tool inputs the request leaves out. */
+  private mapContext (): MapContext | undefined {
+    const view: any = this.ctx.live.view
+    if (!view) return undefined
+    const toLL = (x: number, y: number): [number, number] | null => {
+      const sr = view.spatialReference
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      if (sr?.isWGS84 || sr?.wkid === 4326) return [y, x]
+      if (sr?.isWebMercator || [102100, 3857, 102113].includes(sr?.wkid)) {
+        const lon = x / 6378137 * 180 / Math.PI
+        const lat = (Math.PI / 2 - 2 * Math.atan(Math.exp(-y / 6378137))) * 180 / Math.PI
+        return [lat, lon]
+      }
+      return null
+    }
+    const c = view.center
+    const center = c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? [c.latitude, c.longitude] as [number, number] : (c ? toLL(c.x, c.y) : null)
+    const e = view.extent
+    const lo = e ? toLL(e.xmin, e.ymin) : null; const hi = e ? toLL(e.xmax, e.ymax) : null
+    return {
+      center: center || undefined,
+      zoom: Number.isFinite(view.zoom) && view.zoom >= 0 ? view.zoom : undefined,
+      extent: lo && hi ? [lo[1], lo[0], hi[1], hi[0]] : undefined
+    }
+  }
+
+  private async runTool (tool: McpTool, args: { [k: string]: any }): Promise<Reply> {
+    const port = this.ctx.mcp!
+    this.track('mcp:' + tool.name)
+    const view = viewResult(await port.call(tool.name, args), port.label)
+    const actions: MappyAction[] = []
+    if (view.point) actions.push({ type: 'ask', q: `zoom to ${view.point[0]}, ${view.point[1]}`, label: 'Zoom there' })
+    const reply: Reply = { text: view.text, mood: view.error ? 'confused' : 'pleased', actions, sources: [{ title: port.label, detail: `${toolLabel(tool)} (${describeArgs(args)})` }] }
+    if (view.table) reply.table = view.table
+    if (view.image) reply.image = view.image
+    return reply
+  }
+
+  /** When Mappy is stuck, offer the server's best-fitting tool as a button (nothing is sent until it is pressed). */
+  private async offerServer (text: string, reply: Reply): Promise<Reply> {
+    const port = this.ctx.mcp
+    if (!port || port.fallback === false || reply.mood !== 'confused' || /^__/.test(text)) return reply
+    try {
+      if (Date.now() - this.mcpFailedAt < 60000) return reply
+      let tools: McpTool[] = []
+      try { tools = await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return reply }
+      const hit = matchTool(text, tools)
+      if (!hit) return reply
+      return { ...reply, actions: [{ type: 'ask' as const, q: '__mcp:ask:' + text, label: `Ask ${port.label}` }, ...(reply.actions || [])].slice(0, 4) }
+    } catch (e) { return reply }
+  }
+
+  private async respondRead (input: string): Promise<Reply> {
     if (this.contextView !== this.ctx.live.view) { this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.lastReadScope = ''; this.lastAddress = ''; this.lastAnalysis = null; this.addressChoices = null; this.tablePage = null; this.contextView = this.ctx.live.view }
     input = normalizeCommand(input)
     if (input.length > 2000) return { text: 'Please keep each request under 2,000 characters.', mood: 'confused' }
@@ -174,7 +381,7 @@ export class Mind {
     const reply = replies.length > 1 || commands.length > 1
       ? { ...last, text: replies.map((r, i) => `${i + 1}. ${r.text}`).join('\n\n') + (replies.length < commands.length ? '\n\nStopped here; the remaining steps were not run.' : '') }
       : last
-    if (changed) reply.actions = [{ type: 'ask' as const, q: 'undo', label: 'Undo layer changes' }, ...(reply.actions || [])].slice(0, 4)
+    if (changed) reply.actions = [{ type: 'ask' as const, q: 'undo', label: 'Undo layer changes' }, ...(reply.actions || []).filter(a => a.label !== 'Undo')].slice(0, 4)
     this.lastReply = reply
     if (reply.results) this.lastResults = reply.results
     return reply
@@ -265,6 +472,7 @@ export class Mind {
         case 'favorites': return this.favorites()
         case 'openLayerList': return this.openLayerList()
         case 'allOff': return this.needMap(async () => this.allOff())
+        case 'allOn': return this.needMap(async () => this.allOn(it.value === 'force'))
         case 'solo': return this.needMap(async () => this.solo(it.target!))
         case 'reveal': return this.needMap(async () => this.revealByName(it.target!))
         case 'layerOn': case 'layerOff': return this.toggle(it.target!, it.name === 'layerOn', raw)
@@ -667,6 +875,17 @@ export class Mind {
   async allOff (): Promise<Reply> {
     const n = this.ctx.live.allOff()
     return { text: n ? `Turned off ${n} layer${n === 1 ? '' : 's'}. The map is clear.` : 'Nothing was on.', mood: 'acknowledge', actions: this.layerListAction() }
+  }
+
+  /** "Turn everything on": asks first when that is a lot of layers, since every one adds drawing work. */
+  async allOn (force: boolean): Promise<Reply> {
+    const todo = this.ctx.live.allOnCandidates()
+    if (!todo.length) return { text: 'Everything is already on.', mood: 'acknowledge', actions: this.layerListAction() }
+    if (todo.length > 25 && !force) {
+      return { text: `That would turn on ${todo.length} layers, which can slow the map down. Turn them all on?`, mood: 'attention', actions: [{ type: 'ask', q: 'turn on every layer anyway', label: `Turn on all ${todo.length}` }, { type: 'ask', q: 'list layers', label: 'Pick from the list' }] }
+    }
+    const n = this.ctx.live.allOn()
+    return { text: `Turned on ${n} layer${n === 1 ? '' : 's'}. Pick-one groups were left as they were.`, mood: 'pleased', actions: this.layerListAction() }
   }
 
   async revealByName (target: string): Promise<Reply> {

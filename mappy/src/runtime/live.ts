@@ -447,6 +447,18 @@ export class LiveMap {
     return n
   }
 
+  /** Layers "turn everything on" would switch on: off layers outside pick-one groups. */
+  allOnCandidates (): LayerEntry[] {
+    return this.entries().filter(x => !x.isTable && !x.isGroup && !this.isOn(x) && !x.ancestors.some((a: any) => a?.visibilityMode === 'exclusive'))
+  }
+
+  /** Turns on every layer the list shows (and the groups above them), skipping pick-one groups. */
+  allOn (): number {
+    let n = 0
+    for (const x of this.allOnCandidates()) { this.setVisible(x, true); n++ }
+    return n
+  }
+
   /** Shows the row in the layer list (opens the groups above it and flashes it). */
   reveal (e: LayerEntry): boolean {
     const b = this.bridge

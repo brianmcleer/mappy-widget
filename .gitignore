@@ -15,3 +15,8 @@ Thumbs.db
 
 # Community attachment zips built by publish-all.ps1 never get committed
 *.zip
+
+# Language pack build: WordNet download cache and exported issues
+language/.cache/
+issues.json
+language/report.md

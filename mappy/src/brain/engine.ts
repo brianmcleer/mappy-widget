@@ -6,6 +6,7 @@
 */
 import type { Doc, DocKind, SearchHit } from './types'
 import { tokenize, synonyms, editDistance, flat } from './text'
+import './language'
 
 interface Posting { d: number, tf: number }
 
@@ -91,7 +92,7 @@ export class MappyIndex {
           if (v === t) continue
           if (v.startsWith(t) && v.length > t.length) { put(v, this.post.has(t) ? 0.35 : 0.7); continue }
           if (t.length >= 4 && fuzzyHits < 6) {
-            const cap = t.length >= 7 ? 2 : 1
+            const cap = t.length >= 7 || (!this.post.has(t) && t.length >= 5) ? 2 : 1
             if (editDistance(t, v, cap) <= cap) { put(v, this.post.has(t) ? 0.3 : 0.75); fuzzyHits++ }
           }
         }

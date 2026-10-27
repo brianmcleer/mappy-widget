@@ -8,6 +8,22 @@ Everything runs in the browser. There is no model download, API key, outside AI 
 
 The downloadable widget lives in the `mappy` subfolder. See [mappy/README.md](mappy/README.md) for the feature list, setup and install steps, and [mappy/docs/local-assistant.md](mappy/docs/local-assistant.md) for what users can ask.
 
+## Always improving: the language pack
+
+Mappy forgives typos and reads with a language pack built from open word data ([Open English WordNet](https://github.com/globalwordnet/english-wordnet), CC BY 4.0) and from phrases people report. The **Language pack** GitHub Action rebuilds it every week, tests every change against the phrase test set and the regression suites, and opens a pull request only when Mappy understands more. Report a missed phrase with the **Mappy didn't understand me** issue form.
+
+Get the improvements without waiting for a release:
+
+- in the builder: Mappy's settings, **Language**, **Get language updates** (saved with the app, no rebuild);
+- a clone: `git pull`;
+- a zip install: `node language/sync.mjs "<your widget folder>"`, then rebuild.
+
+See [language/README.md](language/README.md).
+
+## MCP server (optional)
+
+Mappy can also use the tools of an MCP (Model Context Protocol) server you connect in his settings, such as ArcGIS Location Platform's MCP or a portal MCP server. He asks first before any tool that could change data. See [mappy/docs/mcp.md](mappy/docs/mcp.md).
+
 ## Repository layout
 
 ```
@@ -16,6 +32,8 @@ mappy-widget/                    <- this repo
 ├── LICENSE                      <- Apache-2.0
 ├── .gitignore                   <- ignores node_modules, .vs, dist, OS cruft
 ├── publish.ps1                  <- one-command publish/update automation
+├── .github/workflows/           <- Test (every push) and Language pack (weekly)
+├── language/                    <- language pack: seed words, test phrases, build and sync scripts
 └── mappy/                       <- the widget (drops into your-extensions/widgets)
     ├── package.json
     ├── manifest.json
@@ -23,6 +41,7 @@ mappy-widget/                    <- this repo
     ├── CHANGELOG.md
     ├── LICENSE
     ├── docs/local-assistant.md  <- what users can ask, with examples and limits
+    ├── docs/mcp.md              <- connecting an MCP server
     ├── scripts/                 <- build-time help pack loader
     ├── tests/                   <- Node regression suite
     └── src/ ...
@@ -53,10 +72,10 @@ The widget is developed in the Experience Builder install, then synced into this
 powershell -ExecutionPolicy Bypass -File .\publish.ps1
 
 # Code update plus a new downloadable release
-powershell -ExecutionPolicy Bypass -File .\publish.ps1 -Release v1.5.0
+powershell -ExecutionPolicy Bypass -File .\publish.ps1 -Release v1.6.0
 ```
 
-The script mirrors the widget from the EB folder into the `mappy` subfolder (skipping `node_modules`, `.vs` and `Claude outputs`), commits, pushes, and optionally cuts a versioned GitHub release with a downloadable zip. Tags must increase and never repeat.
+The script first pulls this repo and copies a newer language pack (merged by the Language pack Action) into the EB folder, then mirrors the widget from the EB folder into the `mappy` subfolder (skipping `node_modules`, `.vs` and `Claude outputs`), commits, pushes, and optionally cuts a versioned GitHub release with a downloadable zip. Tags must increase and never repeat.
 
 ## Credits and license
 

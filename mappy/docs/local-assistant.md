@@ -1,5 +1,16 @@
 # Mappy local assistant guide
 
+## Added in 1.6: typos, the language pack, and MCP tools
+
+- Typos are forgiven: "trun on parcles", "lsit layres", "zoomin", "list lay ers", "opne the legnd", "pls turn on zoning". When a word was fixed, the answer ends with "(I read that as ...)". Values are never changed: quoted text, numbers, conditions after "where" or "equals", and search values ("find Smith in parcels") except a small slip in a name that is in this app.
+- Real words typed by mistake are read in context: "lose the legend" is "close the legend", "lost layers" is "list layers", "only sow parcels" is "only show parcels". Sound-alikes work too ("turn on the elevashun layer", "skools").
+- When Mappy cannot make sense of a request he asks "Did you mean ...?" and offers the closest requests he can do as buttons.
+- Numbers can be words, and transparency can be said several ways: "set parcels opacity to fifty percent", "make parcels 75 percent transparent", "fade the parcels", "make zoning solid".
+- "turn on all layers" or "turn everything on" turns on every layer outside pick-one groups (Mappy asks first above 25 layers). "turn everything off" clears the map.
+- Builders can turn typo fixing off in settings (Behavior, Fix typos) for apps used mostly in other languages.
+- Other phrasings: "unhide parcels", "make visible the flood zones", "get closer", "take me home", "look for 123 Main St", "tally parcels", "what's on the map".
+- MCP server (when the builder connected one): "list server tools", "ask the server where is 250 N 5th St", "use route from City Hall to the library walking", "use elevation at 39.06, -108.55", "elevation here", "map picture of this area". "Here" and "this area" mean the map as it is now. Tools that could change data show Run and Cancel first. When Mappy is stuck he offers an "Ask (server)" button; nothing is sent until it is pressed. See [mcp.md](mcp.md).
+
 ## Added in 1.5: missing-value reports
 
 Ask `what's missing in parcels?`, `check data quality for parcels`, or `check missing values in parcels in view`. Conditions also work: `check data quality for parcels where status equals Active`.
@@ -122,10 +133,12 @@ English phrasing is supported by explicit patterns, retrieval, synonyms and fuzz
 
 Explore opens the guide. New chat clears the transcript and layer context. Save chat downloads a text transcript including analysis tables and source details. Chat content is held in page memory. Source disclosures distinguish live app/map knowledge, saved scans, imported help, app-author answers and built-in guides.
 
+When an MCP server is connected, the request text and the tool inputs are sent to it only when a tool runs (asked directly, used by name, or a button pressed).
+
 Telemetry is disabled unless `telemetry: true` is explicitly set. The existing Beacon destination and data fields are documented in the README. Reload after changing telemetry settings. Map data, service queries, manifests and optional help scans may use the network; the assistant itself does not call an AI provider.
 
 ## Validation and installation
 
-Run `node tests/local-assistant.cjs` from the installed widget folder. It uses the host's TypeScript dependency. An explicit TypeScript package path may be supplied as the first argument when testing a staged copy. No test libraries need to be installed.
+Run `npm test` (or `node tests/local-assistant.cjs`, `node tests/typos.cjs` and `node tests/mcp.cjs`) from the installed widget folder. It uses the host's TypeScript dependency. An explicit TypeScript package path may be supplied as the first argument when testing a staged copy. No test libraries need to be installed.
 
 The settings Try it panel remains a knowledge-search preview; run the app with an active map to test map commands. After replacing the widget source, let the running Experience Builder watcher rebuild, or run the existing client build/start command. Refresh the experience. Existing map selection, FAQ, scans and appearance settings remain compatible.

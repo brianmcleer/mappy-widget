@@ -202,6 +202,7 @@ export default function ChatBubble (props: Props): any {
               </table>
               <button type='button' className='mappy-btn' onClick={() => download(tableCsv(m.reply!.table!.columns, m.reply!.table!.rows), 'mappy-table.csv', 'text/csv;charset=utf-8')}>Save these rows as CSV</button>
             </div>}
+            {!typingNow(m) && m.reply?.image && /^(data:image\/(png|jpe?g|gif|webp);base64,|https:\/\/)/.test(m.reply.image.src) && <img className='mappy-img' src={m.reply.image.src} alt={m.reply.image.alt} style={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 6, margin: '6px 0' }} />}
             {!typingNow(m) && m.reply?.sources?.length > 0 && <details className='mappy-sources'><summary>Sources ({m.reply.sources.length})</summary>{m.reply.sources.map((s, i) => <div key={i}><strong>{s.title}</strong><br />{s.detail}</div>)}</details>}
             {!typingNow(m) && m.reply?.actions && m.reply.actions.length > 0 && (
               <div className='mappy-actions'>

@@ -21,6 +21,9 @@ import { defaultMapIds } from './setup'
 import { esriDocsForApp } from '../brain/docsPack'
 import { ESRI_DOCS_READ } from '../brain/esriDocs'
 import { __setIntl, __t } from './i18n-t'
+import LanguageSection from './LanguageSection'
+import McpSection from './McpSection'
+import { lexiconFor, readRequest } from '../brain/language'
 
 /** Local structural type: the shim declares jimu-for-builder shorthand (WIDGETHANDOFF 12.3). */
 interface SettingProps {
@@ -163,7 +166,11 @@ export default function Setting (props: SettingProps): any {
   }, [appConfig, brain, faq, config.notes])
   const [q, setQ] = React.useState('')
   const [preview, setPreview] = React.useState<any>(null)
-  const runTry = () => { if (q.trim()) setPreview(answerQuestion(index, q.trim())) }
+  const runTry = () => {
+    if (!q.trim()) return
+    const read = readRequest(q.trim(), lexiconFor(index.docs.map(d => d.title), index))
+    setPreview({ ...answerQuestion(index, read.text), readAs: read.swaps.length ? read.text : '' })
+  }
 
   // ------------------------------------------------------------ FAQ
   const setFaq = (list: FaqEntry[]) => set('faq', Immutable(list))
@@ -258,6 +265,7 @@ export default function Setting (props: SettingProps): any {
         {preview && (
           <SettingRow>
             <div style={{ ...row, fontSize: 12, lineHeight: 1.45, background: 'var(--sys-color-surface-background, #f7f7f7)', padding: 8, borderRadius: 6 }} role='status' aria-live='polite'>
+              {preview.readAs && <div style={{ opacity: 0.8, marginBottom: 4 }}>{`Read as “${preview.readAs}”`}</div>}
               <div>{String(preview.text).replace(/\*\*/g, '')}</div>
               {preview.actions?.length > 0 && <div style={{ marginTop: 4, opacity: 0.8 }}>{'→ '}{preview.actions.map((a: any) => a.label).join(' · ')}</div>}
               {preview.list?.length > 0 && <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>{preview.list.map((it: any, i: number) => <li key={i}>{it.label}</li>)}</ul>}
@@ -265,6 +273,10 @@ export default function Setting (props: SettingProps): any {
           </SettingRow>
         )}
       </SettingSection>
+
+      <LanguageSection stored={config.languagePack} onChange={(pack: any) => set('languagePack', pack)} />
+
+      <McpSection value={config.mcp} onChange={(v: any) => set('mcp', v)} />
 
       <details><summary style={{ padding: 16, cursor: 'pointer' }}>Custom answers and notes</summary>
       <SettingSection title={__t('knowledge')}>
@@ -356,6 +368,10 @@ export default function Setting (props: SettingProps): any {
         <SettingRow tag='label' label={__t('allowReadAloud')}>
           <Switch checked={config.allowReadAloud !== false} onChange={(e: any) => set('allowReadAloud', e.target.checked)} />
         </SettingRow>
+        <SettingRow tag='label' label='Fix typos ("trun on parcles")'>
+          <Switch checked={config.typoFix !== false} onChange={(e: any) => set('typoFix', e.target.checked)} />
+        </SettingRow>
+        <SettingRow><div style={hint}>Turn off when most people use the app in a language other than English.</div></SettingRow>
         <SettingRow tag='label' label={__t('featureSearch')}>
           <Switch checked={config.featureSearch !== false} onChange={(e: any) => set('featureSearch', e.target.checked)} />
         </SettingRow>

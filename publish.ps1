@@ -8,6 +8,10 @@
   3. Auto-runs 'git init' on first use if the folder is not a git repo yet.
   4. Commits.
   5. Publishes the repo to GitHub on first run, or pushes updates after.
+  0. Pulls this repo and copies a newer language pack into the EB folder. The weekly
+     "Language pack" GitHub Action merges language/language-pack.json and
+     mappy/src/brain/languagePack.ts on GitHub; without this step the mirror below would
+     revert them. Skip with -SkipLanguage. A failed pull warns and goes on.
   0. Pulls the latest shared translations into the widget's language files first
      (exb-i18n-kit sync, when the kit clone sits next to this repo and the widget has been
      localized). New English strings get machine translations from the kit's GitHub Action;
@@ -31,7 +35,8 @@
 param(
     [string]$Release = "",
     [string]$CommitMessage = "Update widget ($(Get-Date -Format 'yyyy-MM-dd'))",
-    [switch]$SkipTranslations
+    [switch]$SkipTranslations,
+    [switch]$SkipLanguage
 )
 
 $ErrorActionPreference = "Stop"
@@ -126,6 +131,31 @@ if ($SkipTranslations) {
         if ($LASTEXITCODE -ne 0) { Write-Warning "Translations: exb-i18n sync exited with code $LASTEXITCODE. Publishing with the language files as they are." }
     } catch {
         Write-Warning "Translations: $($_.Exception.Message). Publishing with the language files as they are."
+    } finally { $ErrorActionPreference = $o }
+}
+
+# ----- Language pack: bring the Action's newest pack into the EB folder ---------------
+# The Language pack Action (language/README.md) improves Mappy's language pack weekly and
+# merges it on GitHub. Pull it, then let language\sync.mjs copy it into the EB folder when it
+# is newer than the one there, so the /MIR mirror below carries it instead of reverting it.
+$langSync = Join-Path $RepoPath "language\sync.mjs"
+if ($SkipLanguage) {
+    Write-Host "`n==> Language pack: skipped (-SkipLanguage)."
+} elseif (-not (Test-Path $langSync)) {
+    Write-Host "`n==> Language pack: no language\sync.mjs; skipped."
+} elseif (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Warning "Language pack: node not on PATH; skipped."
+} else {
+    $o = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try {
+        if (Test-Path (Join-Path $RepoPath ".git")) {
+            git -C $RepoPath pull --ff-only --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Language pack: git pull did not fast-forward; using the pack already in this repo." }
+        }
+        Write-Host "`n==> Language pack: checking for a newer pack ..."
+        & node $langSync "$ExbWidgetPath" 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    } catch {
+        Write-Warning "Language pack: $($_.Exception.Message). Publishing with the pack in the EB folder."
     } finally { $ErrorActionPreference = $o }
 }
 

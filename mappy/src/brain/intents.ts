@@ -30,6 +30,9 @@ const RULES: Rule[] = [
   [/^(?:commands|command guide|examples|what can you do|help)[!.?]*$/i, (m, raw) => ({ name: 'help', raw })],
   [/^(?:forget context|start over|new conversation)[!.?]*$/i, (m, raw) => ({ name: 'forget', raw })],
   [/^(?:zoom|go|fly) to\s+(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)[!?]*$/i, (m, raw) => ({ name: 'coordinates', target: m[1], value: m[2], raw })],
+  [/^(?:make|set|turn)\s+(?:the\s+)?(.+?)\s+(?:(\d{1,3})\s*%\s*|half\s+|partly\s+|a\s+bit\s+|somewhat\s+)?(?:transparent|see[- ]through|faded|translucent)[!.?]*$/i, (m, raw) => ({ name: 'opacity', target: clean(m[1]), value: String(m[2] ? 100 - Number(m[2]) : 50), raw })],
+  [/^(?:make|set|turn)\s+(?:the\s+)?(.+?)\s+(?:solid|opaque|fully visible|not transparent)[!.?]*$/i, (m, raw) => ({ name: 'opacity', target: clean(m[1]), value: '100', raw })],
+  [/^fade(?: out)?\s+(?:the\s+)?(.+?)[!.?]*$/i, (m, raw) => ({ name: 'opacity', target: clean(m[1]), value: '50', raw })],
   [/^(?:set )?scale(?: to)?\s+1\s*:\s*([\d,]+)[!.?]*$/i, (m, raw) => ({ name: 'scale', value: m[1].replace(/,/g, ''), raw })],
   [/^(?:set\s+)?(.+?)\s+(opacity|transparency)\s+(?:to\s+)?(\d+(?:\.\d+)?)\s*%[!.?]*$/i, (m, raw) => ({ name: 'opacity', target: clean(m[1]), value: String(m[2].toLowerCase() === 'transparency' ? 100 - Number(m[3]) : Number(m[3])), raw })],
   [/^(hi|hello|hey|yo|sup|howdy|hiya|greetings|good (morning|afternoon|evening))\b[\s!.,]*(mappy)?[\s!.]*$/i, (m, raw) => ({ name: 'greet', raw })],
@@ -57,6 +60,8 @@ const RULES: Rule[] = [
 
   // Layer list (before the generic layer rules)
   [/^(?:turn|switch|shut)\s+(?:off\s+)?(?:all|every|everything)(?:\s+(?:the\s+)?layers?)?\s*(?:off)?[?.!]*$|^(?:hide|clear)\s+(?:all|every)\s+(?:the\s+)?layers?[?.!]*$|^all layers off[?.!]*$/i, (m, raw) => ({ name: 'allOff', raw })],
+  [/^turn on every layer anyway[?.!]*$/i, (m, raw) => ({ name: 'allOn', value: 'force', raw })],
+  [/^(?:turn|switch|flip)\s+(?:on\s+)?(?:all|every|everything)(?:\s+(?:of\s+)?(?:the\s+)?layers?)?\s*(?:on)?[?.!]*$|^(?:turn|switch)\s+on\s+(?:all|every)(?:\s+(?:of\s+)?(?:the\s+)?layers?)?[?.!]*$|^all layers on[?.!]*$|^(?:show|display) (?:all|every|everything)(?: of)?(?: the)? layers? on the map[?.!]*$/i, (m, raw) => (/\bon\b|^show|^display/i.test(raw) ? { name: 'allOn', raw } : null)],
   [new RegExp('^(?:only show|show only|just show|solo|isolate|only)\\s+' + ART + '(.+?)(?:\\s+layers?)?' + TAIL, 'i'), (m, raw) => ({ name: 'solo', target: clean(m[1]), raw })],
   [/^(?:where(?:'s| is| are)|show me|find|reveal|highlight|point to|open|expand)\s+(?:the\s+)?(.+?)\s+(?:layer|layers|group)\s+(?:in|on)\s+(?:the\s+)?(?:layer list|map layers|layers list|layers panel|table of contents|toc)[?.!]*$/i, (m, raw) => ({ name: 'reveal', target: clean(m[1]), raw })],
   [/^(?:where(?:'s| is| are)|show me|find|reveal|point to)\s+(?:the\s+)?(.+?)\s+(?:in|on)\s+(?:the\s+)?(?:layer list|map layers|layers list|layers panel|table of contents|toc)[?.!]*$/i, (m, raw) => ({ name: 'reveal', target: clean(m[1]), raw })],

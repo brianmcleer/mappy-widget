@@ -12,7 +12,7 @@
   positions, so no transformed layout container can trap them, and placement.ts keeps all
   three inside the browser tab at any size, on resize, and while he is dragged.
 */
-import { React, ReactRedux, ReactDOM } from 'jimu-core'
+import { React, ReactRedux, ReactDOM, SessionManager } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
@@ -20,6 +20,7 @@ import type { IMConfig } from '../config'
 import type { Brain, Doc, LayerHint, MappyAction } from '../brain/types'
 import type { Reply } from '../brain/answer'
 import { MappyIndex } from '../brain/engine'
+import { applyLanguagePack, languagePack } from '../brain/language'
 import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
@@ -31,6 +32,8 @@ import { loadMissingManifests } from '../brain/manifests'
 import type { ManifestMap } from '../brain/manifests'
 import { LiveMap } from './live'
 import { Mind } from './mind'
+import { McpClient } from './mcp'
+import type { McpPort } from '../brain/mcpTools'
 import { configuredGeocoders } from '../brain/addresses'
 import { useDesktopWindow } from './desktop'
 import MappyCharacter from './components/MappyCharacter'
@@ -126,6 +129,12 @@ export default function Widget (props: Props): any {
     return m
   }, [brain, seen])
 
+  // A language pack the builder pulled in settings (newer words, phrasings, misspellings).
+  const langVersion = React.useMemo(() => {
+    if (cfg.languagePack) applyLanguagePack(plain<any>(cfg.languagePack))
+    return languagePack().version
+  }, [cfg.languagePack])
+
   const index = React.useMemo(() => {
     const docs: Doc[] = []
     docs.push(...extracted.docs)
@@ -133,7 +142,18 @@ export default function Widget (props: Props): any {
     if (live.ready) docs.push(...live.docs())
     docs.push(...adminDocs(faq, cfg.notes))
     return new MappyIndex(docs)
-  }, [extracted, brain, faq, cfg.notes, liveVersion, seen])
+  }, [extracted, brain, faq, cfg.notes, liveVersion, seen, langVersion])
+
+  // The MCP server the builder connected (the second way Mappy can help). The signed-in
+  // ArcGIS user's token is sent only when the builder chose "ArcGIS sign-in".
+  const mcpConfig = React.useMemo(() => plain<any>(cfg.mcp) || null, [cfg.mcp])
+  const mcp = React.useMemo<McpPort | null>(() => {
+    if (!mcpConfig?.url || mcpConfig.enabled === false) return null
+    try {
+      const client = new McpClient(mcpConfig, () => { try { return SessionManager.getInstance().getMainSession()?.token || null } catch (e) { return null } })
+      return { label: mcpConfig.label || 'the MCP server', fallback: mcpConfig.fallback !== false, prefs: mcpConfig.tools || [], tools: () => client.listTools(), call: (n: string, a: any) => client.callTool(n, a) }
+    } catch (e) { return null }
+  }, [mcpConfig])
 
   const beaconRef = React.useRef<BeaconHandle | null>(null)
   const mindRef = React.useRef<Mind | null>(null)
@@ -151,12 +171,14 @@ export default function Widget (props: Props): any {
     showInLayerList: cfg.showInLayerList !== false,
     layerListIds: layerList.ids,
     layerListLabel: layerList.label,
-    beacon: beaconRef.current
+    beacon: beaconRef.current,
+    mcp,
+    typoFix: cfg.typoFix !== false
     }
     if (!mindRef.current) mindRef.current = new Mind(context)
     else mindRef.current.ctx = context
     return mindRef.current
-  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders])
+  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix])
 
   // ------------------------------------------------------------------ map
   const mapWidgetId: string | undefined = React.useMemo(() => {
@@ -472,6 +494,13 @@ export default function Widget (props: Props): any {
   }, [])
 
   React.useEffect(() => { mind.ctx.beacon = beaconRef.current }, [mind])
+  // Warm up the typo reader while the page is idle, so the first answer is not slower.
+  React.useEffect(() => {
+    const w: any = window
+    const run = () => mind.warm()
+    const id = w.requestIdleCallback ? w.requestIdleCallback(run, { timeout: 4000 }) : setTimeout(run, 1500)
+    return () => { try { if (w.cancelIdleCallback) w.cancelIdleCallback(id); else clearTimeout(id) } catch (e) { } }
+  }, [mind, index])
 
   // Alt+Shift+M from anywhere: show him, open the chat, put the cursor in the question box.
   React.useEffect(() => {

@@ -1,0 +1,27 @@
+name: Mappy didn't understand me
+description: Teach Mappy a phrase. The weekly language build tests it and learns it.
+title: "Mappy missed: "
+labels: [language]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what was typed and what it should have meant. Write the meaning as a request Mappy already understands, such as `turn on parcels`, `list layers` or `open the legend`. Please leave out anything private (addresses, names of people).
+  - type: input
+    id: typed
+    attributes:
+      label: What did you type?
+      placeholder: make parcels visable
+    validations:
+      required: true
+  - type: input
+    id: meant
+    attributes:
+      label: What should Mappy have understood?
+      placeholder: turn on parcels
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else? (optional)

@@ -1,0 +1,542 @@
+{
+  "about": "Words people use with a map app, and which meaning of each to pull synonyms from in Open English WordNet. 'sense' is matched against the WordNet definition (a regular expression, case-insensitive). Add a line, open a pull request, and the weekly build tests it. 'fixes' are shorthand and common slips Mappy should read as the word meant.",
+  "words": [
+    {
+      "w": "address",
+      "pos": "n",
+      "sense": "place where a person or organization can be found"
+    },
+    {
+      "w": "area",
+      "pos": "n",
+      "sense": "geographical region"
+    },
+    {
+      "w": "boundary",
+      "pos": "n",
+      "sense": "line determining the limits of an area"
+    },
+    {
+      "w": "building",
+      "pos": "n",
+      "sense": "structure that has a roof and walls"
+    },
+    {
+      "w": "close",
+      "pos": "v",
+      "sense": "make shut"
+    },
+    {
+      "w": "coordinate",
+      "pos": "n",
+      "sense": "identifies a position relative to an axis"
+    },
+    {
+      "w": "count",
+      "pos": "v",
+      "sense": "determine the number or amount"
+    },
+    {
+      "w": "display",
+      "pos": "v",
+      "sense": "make visible or apparent"
+    },
+    {
+      "w": "distance",
+      "pos": "n",
+      "sense": "size of the gap between two places"
+    },
+    {
+      "w": "district",
+      "pos": "n",
+      "sense": "marked off for administrative"
+    },
+    {
+      "w": "draw",
+      "pos": "v",
+      "sense": "make a mark or lines on a surface"
+    },
+    {
+      "w": "elevation",
+      "pos": "n",
+      "sense": "above a reference point"
+    },
+    {
+      "w": "enlarge",
+      "pos": "v",
+      "sense": "^make large$"
+    },
+    {
+      "w": "explore",
+      "pos": "v",
+      "sense": "inquire into$"
+    },
+    {
+      "w": "export",
+      "pos": "v",
+      "sense": "electronic data"
+    },
+    {
+      "w": "flood",
+      "pos": "n",
+      "sense": "overflowing onto normally dry land"
+    },
+    {
+      "w": "hide",
+      "pos": "v",
+      "sense": "prevent from being seen or discovered"
+    },
+    {
+      "w": "highlight",
+      "pos": "v",
+      "sense": "move into the foreground"
+    },
+    {
+      "w": "hydrant",
+      "pos": "n",
+      "sense": "water"
+    },
+    {
+      "w": "locate",
+      "pos": "v",
+      "sense": "determine or indicate the place"
+    },
+    {
+      "w": "map",
+      "pos": "n",
+      "sense": "diagrammatic representation of the earth"
+    },
+    {
+      "w": "measure",
+      "pos": "v",
+      "sense": "determine the measurements"
+    },
+    {
+      "w": "neighborhood",
+      "pos": "n",
+      "sense": "area within a city or town"
+    },
+    {
+      "w": "open",
+      "pos": "v",
+      "sense": "cause to open or to become open"
+    },
+    {
+      "w": "owner",
+      "pos": "n",
+      "sense": "person who owns something"
+    },
+    {
+      "w": "park",
+      "pos": "n",
+      "sense": "large area of land preserved in its natural state"
+    },
+    {
+      "w": "parcel",
+      "pos": "n",
+      "sense": "extended area of land"
+    },
+    {
+      "w": "print",
+      "pos": "v",
+      "sense": "put into print"
+    },
+    {
+      "w": "remove",
+      "pos": "v",
+      "sense": "remove something concrete"
+    },
+    {
+      "w": "river",
+      "pos": "n",
+      "sense": "large natural stream of water"
+    },
+    {
+      "w": "road",
+      "pos": "n",
+      "sense": "open way .*for travel"
+    },
+    {
+      "w": "school",
+      "pos": "n",
+      "sense": "^an educational institution$"
+    },
+    {
+      "w": "search",
+      "pos": "v",
+      "sense": "search or seek"
+    },
+    {
+      "w": "select",
+      "pos": "v",
+      "sense": "pick out, select, or choose"
+    },
+    {
+      "w": "sewer",
+      "pos": "n",
+      "sense": "waste"
+    },
+    {
+      "w": "share",
+      "pos": "v",
+      "sense": "communicate|have in common"
+    },
+    {
+      "w": "shrink",
+      "pos": "v",
+      "sense": "become smaller|reduce in size"
+    },
+    {
+      "w": "show",
+      "pos": "v",
+      "sense": "make visible or noticeable"
+    },
+    {
+      "w": "trail",
+      "pos": "n",
+      "sense": "track or mark left by something|path"
+    },
+    {
+      "w": "zone",
+      "pos": "n",
+      "sense": "area or region distinguished"
+    },
+    {
+      "w": "bridge",
+      "pos": "n",
+      "sense": "cross an obstacle"
+    },
+    {
+      "w": "bus",
+      "pos": "n",
+      "sense": "public transport"
+    },
+    {
+      "w": "cemetery",
+      "pos": "n",
+      "sense": "used for burials"
+    },
+    {
+      "w": "crosswalk",
+      "pos": "n",
+      "sense": "can be crossed"
+    },
+    {
+      "w": "fence",
+      "pos": "n",
+      "sense": "barrier that serves to enclose"
+    },
+    {
+      "w": "hospital",
+      "pos": "n",
+      "sense": "health facility"
+    },
+    {
+      "w": "sidewalk",
+      "pos": "n",
+      "sense": "paved area for pedestrians"
+    },
+    {
+      "w": "pipe",
+      "pos": "n",
+      "sense": "carry water or oil or gas"
+    },
+    {
+      "w": "route",
+      "pos": "n",
+      "sense": "established line of travel"
+    },
+    {
+      "w": "slope",
+      "pos": "n",
+      "sense": "departs from the horizontal"
+    },
+    {
+      "w": "vicinity",
+      "pos": "n",
+      "sense": "surrounding or nearby region"
+    }
+  ],
+  "block": [
+    "act",
+    "bed",
+    "cut",
+    "fix",
+    "get",
+    "put",
+    "set",
+    "run",
+    "key",
+    "lot",
+    "tax",
+    "pin",
+    "fly",
+    "go",
+    "do",
+    "make",
+    "take",
+    "have",
+    "be",
+    "shut",
+    "unveil",
+    "bring out",
+    "wipe out",
+    "evince",
+    "expose",
+    "exhibit",
+    "edifice",
+    "thoroughfare",
+    "inundation",
+    "deluge",
+    "alluvion",
+    "dumbfound",
+    "flummox",
+    "bewilder",
+    "mystify",
+    "chart",
+    "function",
+    "mapping",
+    "single",
+    "space",
+    "orbit",
+    "arena",
+    "sphere",
+    "domain",
+    "field",
+    "country",
+    "side",
+    "post",
+    "arm",
+    "heap",
+    "jalopy",
+    "neck of the woods",
+    "charabanc",
+    "jitney",
+    "necropolis",
+    "memorial park",
+    "crossover",
+    "incline",
+    "itinerary",
+    "path",
+    "proprietor",
+    "possessor"
+  ],
+  "phrasings": [
+    [
+      "unhide",
+      "turn on"
+    ],
+    [
+      "make visible",
+      "turn on"
+    ],
+    [
+      "switch on",
+      "turn on"
+    ],
+    [
+      "flip on",
+      "turn on"
+    ],
+    [
+      "light up",
+      "turn on"
+    ],
+    [
+      "turn of",
+      "turn off"
+    ],
+    [
+      "switch of",
+      "turn off"
+    ],
+    [
+      "switch off",
+      "turn off"
+    ],
+    [
+      "flip off",
+      "turn off"
+    ],
+    [
+      "get rid of",
+      "turn off"
+    ],
+    [
+      "make invisible",
+      "turn off"
+    ],
+    [
+      "pull up",
+      "open"
+    ],
+    [
+      "bring up",
+      "open"
+    ],
+    [
+      "fire up",
+      "open"
+    ],
+    [
+      "pop open",
+      "open"
+    ],
+    [
+      "take me home",
+      "zoom to full extent"
+    ],
+    [
+      "reset the map",
+      "zoom to full extent"
+    ],
+    [
+      "reset map",
+      "zoom to full extent"
+    ],
+    [
+      "back to start",
+      "zoom to full extent"
+    ],
+    [
+      "zoom way out",
+      "zoom to full extent"
+    ],
+    [
+      "get closer",
+      "zoom in"
+    ],
+    [
+      "move closer",
+      "zoom in"
+    ],
+    [
+      "move in",
+      "zoom in"
+    ],
+    [
+      "back up",
+      "zoom out"
+    ],
+    [
+      "pull back",
+      "zoom out"
+    ],
+    [
+      "move out",
+      "zoom out"
+    ],
+    [
+      "look for",
+      "find"
+    ],
+    [
+      "hunt for",
+      "find"
+    ],
+    [
+      "track down",
+      "find"
+    ],
+    [
+      "search up",
+      "search for"
+    ],
+    [
+      "what layers are there",
+      "list layers"
+    ],
+    [
+      "what layers do you have",
+      "list layers"
+    ],
+    [
+      "what tools are there",
+      "list tools"
+    ],
+    [
+      "what tools do you have",
+      "list tools"
+    ],
+    [
+      "whats on the map",
+      "list visible layers"
+    ],
+    [
+      "what's on the map",
+      "list visible layers"
+    ],
+    [
+      "what is on the map",
+      "list visible layers"
+    ],
+    [
+      "give me a count of",
+      "count"
+    ],
+    [
+      "tally",
+      "count"
+    ],
+    [
+      "tally up",
+      "count"
+    ],
+    [
+      "how far",
+      "how do i measure the distance"
+    ],
+    [
+      "how big is",
+      "how do i measure the area of"
+    ],
+    [
+      "what's the distance",
+      "how do i measure the distance"
+    ],
+    [
+      "whats the distance",
+      "how do i measure the distance"
+    ]
+  ],
+  "fixes": {
+    "pls": "please",
+    "plz": "please",
+    "plez": "please",
+    "u": "you",
+    "ur": "your",
+    "thx": "thanks",
+    "thnx": "thanks",
+    "ty": "thanks",
+    "teh": "the",
+    "hte": "the",
+    "adn": "and",
+    "nad": "and",
+    "taht": "that",
+    "thta": "that",
+    "waht": "what",
+    "wat": "what",
+    "whta": "what",
+    "hwo": "how",
+    "cna": "can",
+    "yuo": "you",
+    "wiht": "with",
+    "whats": "what's",
+    "wheres": "where's",
+    "hows": "how's",
+    "dont": "don't",
+    "cant": "can't",
+    "wont": "won't",
+    "isnt": "isn't",
+    "doesnt": "doesn't",
+    "im": "i'm",
+    "ive": "i've",
+    "lyr": "layer",
+    "lyrs": "layers",
+    "bkmk": "bookmark",
+    "abt": "about",
+    "thru": "through",
+    "nxt": "next",
+    "prev": "previous"
+  }
+}

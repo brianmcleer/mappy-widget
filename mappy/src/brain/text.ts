@@ -8,11 +8,16 @@ const STOP = new Set((
   'me my of on or our please so that the their them then there these this those to us was we were what when ' +
   'where which who why will with would you your yours about any some all just get got show tell give let ' +
   'find search look see want need like know thing things also only very much many more most here hey hi mappy ' +
-  'widget tool panel button app application map maps'
+  'widget tool panel button app application map maps own'
 ).split(' '))
 
 /** Words that carry meaning in a question but are not worth indexing as content. */
 export function isStop (t: string): boolean { return STOP.has(t) }
+
+/** Synonyms from the language pack (language.ts), kept apart so a newer pack replaces them. */
+let EXTRA = new Map<string, Set<string>>()
+/** Known misspellings and irregular forms from the language pack: "teh" to "the", "drew" to "draw". */
+let FIX = new Map<string, string>()
 
 /** Groups of words that mean the same thing to someone using a map. Every member maps to every other. */
 const SYN_GROUPS: string[][] = [
@@ -63,10 +68,36 @@ for (const g of SYN_GROUPS) {
   }
 }
 
+/** Installs the language pack's synonyms and fixes. Called by language.ts. */
+export function setLanguageWords (groups: string[][], fixes: { [w: string]: string }): void {
+  const extra = new Map<string, Set<string>>()
+  for (const g of groups) {
+    const stems = uniq(g.flatMap(w => tokenize(w, false)))
+    for (const s of stems) {
+      if (!extra.has(s)) extra.set(s, new Set())
+      for (const o of stems) if (o !== s) extra.get(s)!.add(o)
+    }
+  }
+  const fix = new Map<string, string>()
+  for (const k of Object.keys(fixes || {})) if (/^[a-z]+$/.test(fixes[k])) fix.set(k, fixes[k])
+  FIX = fix
+  EXTRA = extra
+}
+
+/** Every word in a synonym group (built in and from the pack), for the typo fixer. */
+export function SYNONYM_WORDS (): string[] {
+  const out = new Set<string>()
+  for (const g of SYN_GROUPS) for (const w of g) for (const p of w.split(' ')) out.add(p)
+  EXTRA.forEach((v, k) => out.add(k))
+  return Array.from(out)
+}
+
 /** Synonym stems for a stem (not including itself). */
 export function synonyms (stem: string): string[] {
   const s = SYN.get(stem)
-  return s ? Array.from(s) : []
+  const e = EXTRA.get(stem)
+  if (!e) return s ? Array.from(s) : []
+  return Array.from(new Set([...(s || []), ...e]))
 }
 
 /** A light English stemmer: enough to match "layers" with "layer" and "parcels" with "parcel". */
@@ -92,7 +123,8 @@ export function tokenize (text: string, dropStop = true): string[] {
     .toLowerCase()
   const raw = spaced.match(/[a-z0-9]+/g) || []
   const out: string[] = []
-  for (const r of raw) {
+  for (const word of raw) {
+    const r = FIX.get(word) || word
     if (r.length < 2 && !/\d/.test(r)) continue
     if (dropStop && STOP.has(r)) continue
     out.push(stem(r))

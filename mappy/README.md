@@ -4,7 +4,9 @@ A friendly folded-map assistant for any ArcGIS Experience Builder app. Drop him 
 
 He works in any app with no setup. A **deep scan** in the builder makes him much smarter.
 
-The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server. ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
+The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
+
+**New in 1.6:** forgives typos like a person would ("trun on parcles", "lsit layres", "zoomin"), reads with a language pack that a GitHub Action improves every week (pull it in settings, no rebuild), and can use the tools of an MCP server you connect (ArcGIS Location Platform MCP, a portal MCP server or your own). See [Language](#language-always-improving) and [MCP server](#mcp-server-optional).
 
 **New in 1.3:** automatic initial setup, one refresh button, layer selection/expansion, paged tables and CSV, ranked and filtered summaries, visibility troubleshooting, additional character routines, and desktop floating in browsers supporting Document Picture-in-Picture. See [the local assistant guide](docs/local-assistant.md) for examples and limits.
 
@@ -29,6 +31,18 @@ The assistant runs in the browser. There is no model download, API key, outside 
 - Commands: "list layers", "what layers are on", "turn on X", "turn off X", "only show X", "turn everything off", "where is the X layer", "open the layer list", "list presets", "apply the X preset", "my favorite layers", "set X opacity to 50%".
 
 The bridge contract (`window.__exbLayerLists`, event `exb-layer-list-change`) is documented in Map Layers Custom's `src/runtime/lib/layer-bridge.ts`; any layer list can publish it.
+
+## Language, always improving
+
+- **Forgives typos.** Before reading a request Mappy fixes slips: swapped letters, neighbouring keys, doubled or missing letters, run-together and split words, shorthand ("pls", "teh"). Words snap to command words, names in this app (layers, tools, fields) and map words, never to other everyday English. Real English words (all of Open English WordNet) are never changed, so place and road names like "Mesa County", "Elm Ave" or "Canyon View" stay as typed; a request mostly in another language is left alone too. Other words he knows are never changed, and values are protected: quoted text, numbers, anything after "where" or "equals", and the thing being searched for ("find Smith in parcels") only snaps to names in the app. When he fixes something he says how he read it.
+- **Language pack.** Everyday words, synonyms, other phrasings and known misspellings, built from Open English WordNet (CC BY 4.0) and from phrases people report. A GitHub Action rebuilds it weekly, tests every change against the phrase test set and the regression suites, and opens a pull request only when Mappy understands more. Pull the newest pack in **Language**, **Get language updates** (saved with the app, no rebuild), with `git pull`, or with `node language/sync.mjs <widget folder>`. Details: [language/README.md](https://github.com/brianmcleer/mappy-widget/blob/main/language/README.md).
+- **Reads in context.** A typo that spells a real word ("lose the legend", "lost layers") is read the way that makes sense in this app; sound-alikes ("elevashun") and two-letter slips after a command ("zoom ot", "turn of") work too. Turn it off in **Behavior**, **Fix typos** for apps used mostly in other languages.
+- **Asks when unsure.** When a request still makes no sense he asks "Did you mean ...?" with the closest requests he can do as buttons, the way Clippy asked "It looks like you're ...".
+- **Teach him.** **Language**, **Teach Mappy a phrase** opens a short GitHub report; the next weekly build learns it.
+
+## MCP server (optional)
+
+A second way for Mappy to help: connect a Model Context Protocol server in **MCP server** settings and he can use its tools, such as ArcGIS Location Platform's MCP (geocoding, routing, elevation, static maps) or a portal MCP server. He picks the tool and fills it in from what was typed (still no language model), shows the answer as words, a table, a picture or a **Zoom there** button, and asks first before any tool that could change data. Say "list server tools", "ask the server where is 250 N 5th St", "elevation here", or "use route from City Hall to the library"; "here" and "this area" mean the map as it is now. **Use ArcGIS Location Services (beta)** fills in Esri's hosted server; add an API key. Setup, CORS and safety: [docs/mcp.md](docs/mcp.md).
 
 ## Help guides and ArcGIS documentation
 
