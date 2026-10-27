@@ -1,3 +1,7 @@
+## 1.6.1 (2026-10-27)
+
+- Fixed: Get language updates, `language/sync.mjs` and the Test workflow pointed at a `main` branch; they now use the repository's default branch.
+
 ## 1.6.0 (2026-10-27)
 
 - Forgive typos like a person would: swapped, neighbouring, doubled and missing letters, run-together and split words, and shorthand. Words snap to command words, then names in the app, then map words, then everyday English; known words, quoted text, numbers, conditions and search values are protected. Mappy says how he read a fixed request.

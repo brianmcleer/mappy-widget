@@ -14,7 +14,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO = process.env.MAPPY_LANGUAGE_REPO || 'brianmcleer/mappy-widget'
-const URL = `https://raw.githubusercontent.com/${REPO}/main/language/language-pack.json`
+const URL = `https://raw.githubusercontent.com/${REPO}/HEAD/language/language-pack.json`
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 const target = path.resolve(process.argv[2] || '.')

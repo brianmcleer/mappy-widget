@@ -36,7 +36,7 @@ export interface LanguagePack {
 
 /** Where builders get newer packs. Forks change this one line. */
 export const LANGUAGE_REPO = 'brianmcleer/mappy-widget'
-export const LANGUAGE_URL = `https://raw.githubusercontent.com/${LANGUAGE_REPO}/main/language/language-pack.json`
+export const LANGUAGE_URL = `https://raw.githubusercontent.com/${LANGUAGE_REPO}/HEAD/language/language-pack.json`
 
 const WORD = /^[a-z][a-z' -]{0,38}[a-z]$|^[a-z]$/
 /** A phrasing: plain words, with at most one * standing for the rest of the request. */
