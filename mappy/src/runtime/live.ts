@@ -917,6 +917,19 @@ export class LiveMap {
     return false
   }
 
+  /** Zooms to the feature whose popup is open. False when there is none. */
+  async zoomToSelected (): Promise<boolean> {
+    try {
+      const f = this.view?.popup?.selectedFeature
+      if (!f?.geometry) return false
+      await this.view.goTo(f.geometry.type === 'point' ? { target: f.geometry, scale: Math.min(this.view.scale, 2500) } : f.geometry)
+      return true
+    } catch (e) { return false }
+  }
+
+  /** The basemap's title, when the map has one. */
+  basemapTitle (): string { try { return String(this.view?.map?.basemap?.title || '') } catch (e) { return '' } }
+
   whereAmI (): string {
     const view = this.view
     if (!view?.center) return ''

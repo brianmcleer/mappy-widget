@@ -89,6 +89,19 @@ for (const t of GLOSSARY) for (const k of [t.term, ...(t.aliases || [])]) TERM_I
 
 function norm (s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() }
 
+/** Terms from the knowledge feed. A built-in term keeps its meaning; new words are added. Returns how many were added. */
+export function addTerms (terms: Term[]): number {
+  let added = 0
+  for (const t of terms || []) {
+    if (!t?.term || !t.text) continue
+    for (const k of [t.term, ...(t.aliases || [])]) {
+      const n = norm(k)
+      if (n && !TERM_INDEX.has(n)) { TERM_INDEX.set(n, t); added++ }
+    }
+  }
+  return added
+}
+
 /** "parcels" -> "parcel", "easements" -> "easement" (keeps "address"). */
 function singular (s: string): string { return s.replace(/(?<=[a-z]{3})s$/, m => s.endsWith('ss') ? m : '') }
 

@@ -6,6 +6,10 @@
 - A light bulb when a popup opens (at most once every three minutes): what he can tell you about that layer's features.
 - Suggestions as you type: after two letters, up to five continuations under the box, from his starters ("turn on", "where are the", "what did I change") and from the app's own names ("turn on Par" offers "turn on Parcels", "open Le" offers "open Legend"). Tab takes the first, Escape hides them, clicking one fills the box.
 - Settings: a Preview section shows him in any of the 80 outfits and 30 acts now, without waiting for the day; Play again replays the act. Picks change nothing in the app.
+- Knowledge feed: once a day each browser fetches one JSON file (cached, never waited for, ETag-aware) with a newer language pack, questions and answers, glossary terms, fun facts and tips, so he keeps improving without an app update. The project's feed (`knowledge/feed.json`) is rebuilt by the weekly language build and whenever `knowledge/knowledge.json` changes. Settings: turn it off, point at your own copy (an internal web folder), Check now. Only https, only JSON under 2 MB, only the feed format; the bundled knowledge stays when a feed fails. Your own answers outrank the feed's; built-in terms keep their meanings. Diagnostics says what the feed gave him.
+- "What's on the map" (also "what am I looking at", "describe the map"): which layers are drawing, the basemap, the scale and center, whether a popup is open, and how many changes he has made.
+- "Copy that" copies his last answer; "export chat" (save the conversation) downloads it as a text file. "What did I click" now offers Zoom to it.
+- First visit: the greeting offers the tour ("New here? Say show me around") with Show me around, What is on the map and Help chips.
 - Help lists "Take the tour" and "Look back"; the "new since last time" line mentions the tour, history and suggestions.
 
 ## 1.8.0 (2026-10-29)

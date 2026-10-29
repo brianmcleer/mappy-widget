@@ -1004,3 +1004,85 @@ test('typeahead completes starters, layers after verbs and widgets after open', 
   }
   console.log(`${passed}/${tests.length} tests passed`)
 })()
+
+test("what's on the map, copy that, export chat and zoom to the selected feature", async () => {
+  const { mind, live, layer } = fixture()
+  assert.equal(parseIntent("what's on the map").name, 'mapSummary')
+  assert.equal(parseIntent('what am I looking at').name, 'mapSummary')
+  assert.equal(parseIntent('copy that').name, 'copyAnswer')
+  assert.equal(parseIntent('export chat').name, 'exportChat')
+  assert.equal(parseIntent('save this conversation').name, 'exportChat')
+  live.jmv.view.center = { latitude: 39.1, longitude: -108.5 }; live.jmv.view.scale = 5000
+  live.jmv.view.map.basemap = { title: 'Streets' }
+  const off = await mind.respond('what is on the map')
+  assert.match(off.text, /None of the 1 layers are turned on\. Basemap: \*\*Streets\*\*\. The map is centered at 39\.10000, -108\.50000/)
+  await mind.respond('turn on parcels')
+  const on = await mind.respond('what is on the map')
+  assert.match(on.text, /1 of 1 layers are drawing: \*\*Parcels\*\*\./)
+  assert.match(on.text, /1 layer change this session/)
+  assert.ok(on.suggest.includes('What did I change'))
+  const copy = await mind.respond('copy that')
+  assert.equal(copy.effect, 'copy')
+  const exp = await mind.respond('export chat')
+  assert.equal(exp.effect, 'export')
+  const goes = []
+  live.jmv.view.goTo = async t => { goes.push(t) }
+  live.jmv.view.popup = { selectedFeature: { layer, geometry: { type: 'point', x: 1, y: 2 }, attributes: { OWNER: 'Smith' } } }
+  const r = await mind.respond('what did I click')
+  assert.deepEqual(r.actions, [{ type: 'ask', q: '__zoomsel', label: 'Zoom to it' }])
+  const z = await mind.respond('__zoomsel')
+  assert.match(z.text, /There it is/)
+  assert.equal(goes.length, 1)
+  assert.equal(goes[0].scale, 2500)
+})
+
+
+test('knowledge feed: validation, docs, glossary terms and facts', async () => {
+  const { cleanFeed, feedDocs, describeFeed } = require('../src/brain/feed.ts')
+  const { addTerms, lookupTerm } = require('../src/brain/glossary.ts')
+  assert.equal(cleanFeed(null), null)
+  assert.equal(cleanFeed({ format: 2, version: '2026.10.29' }), null)
+  assert.equal(cleanFeed({ format: 1, version: 'latest' }), null)
+  assert.equal(cleanFeed([]), null)
+  const feed = cleanFeed({
+    format: 1, version: '2026.10.29.2', about: 'test <b>feed</b>',
+    languagePack: { format: 1, version: '2026.10.29' },
+    faq: [{ q: 'Is the map a survey?', a: 'No, it is <i>general</i> reference.', url: 'https://example.org/x' }, { q: 'x', a: 'short' }, { q: 'Bad link', a: 'An answer here.', url: 'javascript:alert(1)' }],
+    glossary: [{ term: 'Hillshade', aliases: ['shaded relief', 'x'], text: 'Shading that makes terrain stand out.' }, { term: 'z', text: 'too short' }],
+    facts: ['A fact long enough to keep.', 'short', 42],
+    tips: ['Say "undo" to reverse a layer change.']
+  })
+  assert.ok(feed)
+  assert.equal(feed.version, '2026.10.29.2')
+  assert.equal(feed.about, 'test feed')
+  assert.equal(feed.languagePack.version, '2026.10.29')
+  assert.deepEqual(feed.faq, [{ q: 'Is the map a survey?', a: 'No, it is general reference.', url: 'https://example.org/x' }, { q: 'Bad link', a: 'An answer here.', url: undefined }])
+  assert.deepEqual(feed.glossary, [{ term: 'hillshade', aliases: ['shaded relief'], text: 'Shading that makes terrain stand out.' }])
+  assert.deepEqual(feed.facts, ['A fact long enough to keep.'])
+  assert.equal(feed.tips.length, 1)
+  assert.equal(describeFeed(feed), 'feed 2026.10.29.2: language pack 2026.10.29, 2 answers, 1 term, 1 fact, 1 tip')
+  const docs = feedDocs(feed)
+  assert.equal(docs.length, 3)
+  assert.equal(docs[0].kind, 'faq'); assert.equal(docs[0].boost, 1.2); assert.equal(docs[0].actions[0].url, 'https://example.org/x')
+  assert.equal(docs[2].kind, 'guide')
+  assert.deepEqual(feedDocs(null), [])
+  // Terms: new words are added, built-in meanings are kept.
+  assert.equal(lookupTerm('hillshade'), null)
+  const before = lookupTerm('parcel').text
+  assert.equal(addTerms([...feed.glossary, { term: 'parcel', text: 'Something else entirely, long enough.' }]), 2)
+  assert.equal(lookupTerm('shaded relief').text, 'Shading that makes terrain stand out.')
+  assert.equal(lookupTerm('hillshades').term, 'hillshade')
+  assert.equal(lookupTerm('parcel').text, before)
+  // The feed's facts and answers reach Mappy through the context, like the builder's own.
+  const { live } = fixture()
+  const mind = new Mind({ live, index: new MappyIndex(docs), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', place: { org: 'the City', name: '', website: '', facts: feed.facts }, feedInfo: describeFeed(feed) })
+  const d = await mind.respond('diagnostics')
+  assert.match(d.text, /Knowledge feed 2026\.10\.29\.2: language pack/)
+  const a = await mind.respond('is the map a survey')
+  assert.match(a.text, /general reference/)
+  // The project's own feed passes the same checks.
+  const shipped = cleanFeed(JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'knowledge', 'feed.json'), 'utf8')))
+  assert.ok(shipped && shipped.faq.length >= 3 && shipped.facts.length >= 10 && shipped.languagePack)
+  for (const f of shipped.facts) assert.doesNotMatch(f, /grand junction|colorado/i)
+})
+

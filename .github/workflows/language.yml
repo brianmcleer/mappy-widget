@@ -63,6 +63,10 @@ jobs:
           cd ..
           node language/build.mjs --check
 
+      - name: Rebuild the knowledge feed (what the widget fetches at runtime)
+        if: steps.build.outputs.changed == 'true'
+        run: node knowledge/build.mjs
+
       # Pull requests opened with the built-in token do not start other workflows, so the checks
       # above are the gate. To have the Test workflow run on these pull requests too, add a
       # repository secret LANGUAGE_PR_TOKEN (a fine-grained token with contents and pull request
@@ -84,6 +88,7 @@ jobs:
             language/learned.json
             language/passing.json
             mappy/src/brain/languagePack.ts
+            knowledge/feed.json
 
       - name: Merge automatically when tests pass (repository variable LANGUAGE_AUTOMERGE = true)
         if: steps.pr.outputs.pull-request-number && vars.LANGUAGE_AUTOMERGE == 'true' && steps.build.outputs.trusted == 'true'

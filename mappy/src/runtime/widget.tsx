@@ -21,6 +21,10 @@ import type { Brain, Doc, LayerHint, MappyAction } from '../brain/types'
 import type { Reply } from '../brain/answer'
 import { MappyIndex } from '../brain/engine'
 import { applyLanguagePack, languagePack } from '../brain/language'
+import { DEFAULT_FEED_URL, feedDocs, describeFeed } from '../brain/feed'
+import type { KnowledgeFeed } from '../brain/feed'
+import { cachedFeed, loadFeed } from './feed'
+import { addTerms } from '../brain/glossary'
 import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
@@ -139,20 +143,38 @@ export default function Widget (props: Props): any {
     return m
   }, [brain, seen])
 
-  // A language pack the builder pulled in settings (newer words, phrasings, misspellings).
+  // The knowledge feed: fetched once a day (cached in this browser), never waited for. He
+  // starts with the bundled knowledge and takes the feed's newer words, answers, terms,
+  // facts and tips when they arrive. Off, or your own copy, in settings.
+  const feedUrl = (cfg.feedUrl || '').trim() || DEFAULT_FEED_URL
+  const feedOn = cfg.feed !== false
+  const [feed, setFeed] = React.useState<KnowledgeFeed | null>(() => (feedOn ? cachedFeed(feedUrl) : null))
+  React.useEffect(() => {
+    if (!feedOn) { setFeed(null); return }
+    let alive = true
+    const ctl = new AbortController()
+    loadFeed(feedUrl, { signal: ctl.signal }).then(r => { if (alive && r.feed) setFeed(r.feed) }).catch(() => {})
+    return () => { alive = false; ctl.abort() }
+  }, [feedOn, feedUrl])
+  React.useEffect(() => { if (feed?.glossary.length) { try { addTerms(feed.glossary) } catch (e) { } } }, [feed])
+
+  // A language pack the builder pulled in settings (newer words, phrasings, misspellings),
+  // and the feed's pack when that is newer still.
   const langVersion = React.useMemo(() => {
     if (cfg.languagePack) applyLanguagePack(plain<any>(cfg.languagePack))
+    if (feed?.languagePack) { try { applyLanguagePack(feed.languagePack) } catch (e) { } }
     return languagePack().version
-  }, [cfg.languagePack])
+  }, [cfg.languagePack, feed])
 
   const index = React.useMemo(() => {
     const docs: Doc[] = []
     docs.push(...extracted.docs)
     if (brain?.docs) docs.push(...brain.docs.filter(d => !d.layer || !seen || seen.has(d.layer)))
     if (live.ready) docs.push(...live.docs())
+    docs.push(...feedDocs(feed))
     docs.push(...adminDocs(faq, cfg.notes))
     return new MappyIndex(docs)
-  }, [extracted, brain, faq, cfg.notes, liveVersion, seen, langVersion])
+  }, [extracted, brain, faq, cfg.notes, liveVersion, seen, langVersion, feed])
 
   // The MCP server the builder connected (the second way Mappy can help). The signed-in
   // ArcGIS user's token is sent only when the builder chose "ArcGIS sign-in".
@@ -189,8 +211,9 @@ export default function Widget (props: Props): any {
       org: (cfg.orgName || '').trim() || (portalSelf?.name ? String(portalSelf.name) : '') || 'the City',
       name: (cfg.placeName || '').trim(),
       website: (cfg.website || '').trim(),
-      facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean)
+      facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean).concat(feed?.facts || [])
     },
+    feedInfo: feed ? describeFeed(feed) : undefined,
     widgetId: props.id,
     myLocation: () => new Promise<[number, number] | null>(resolve => {
       try {
@@ -203,7 +226,7 @@ export default function Widget (props: Props): any {
     if (!mindRef.current) mindRef.current = new Mind(context)
     else mindRef.current.ctx = context
     return mindRef.current
-  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, portalSelf?.name, props.id])
+  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, feed, portalSelf?.name, props.id])
 
   // ------------------------------------------------------------------ map
   const mapWidgetId: string | undefined = React.useMemo(() => {
@@ -316,6 +339,26 @@ export default function Widget (props: Props): any {
     } catch (e) { }
   }, [readAloud, cfg.allowReadAloud])
 
+  const messagesRef = React.useRef<ChatMsg[]>([]); messagesRef.current = messages
+  const copyText = (text: string) => {
+    const plain = String(text || '').replace(/\*\*/g, '')
+    try { navigator.clipboard?.writeText(plain) } catch (e) {
+      try { const ta = document.createElement('textarea'); ta.value = plain; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove() } catch (err) { }
+    }
+  }
+  /** The conversation as a text file the browser saves ("export chat"). */
+  const exportChat = () => {
+    try {
+      const stamp = new Date()
+      const lines = [`${name} chat, ${appTitle}, ${stamp.toLocaleString()}`, ''].concat(messagesRef.current.map(m => `${m.from === 'user' ? 'You' : name}: ${String(m.text).replace(/\*\*/g, '')}`))
+      const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = `${name.toLowerCase()}-chat-${stamp.toISOString().slice(0, 10)}.txt`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    } catch (e) { }
+  }
+
   const say = React.useCallback((text: string, reply?: Reply) => {
     setMessages(list => [...list.slice(-60), { id: msgSeq++, from: 'mappy', text, reply }])
     speak(text)
@@ -337,16 +380,19 @@ export default function Widget (props: Props): any {
 
   // The greeting, plus a line for the time of year (Halloween, GIS Day, Thanksgiving...).
   // Once per update, a line about what is new (returning people only; a first visit gets the plain greeting).
-  const NEWS_KEY = '2026-10-29c'
-  const NEWS = 'New since last time: say "show me around" for a tour of the app\'s tools, "what did I change" for everything I did to the map, "try again" after a hiccup, and "what did I click" when a popup is open. Suggestions appear as you type (Tab takes the first). Plus an outfit for 80 days of the year and "what is an easement".'
+  const NEWS_KEY = '2026-10-29d'
+  const NEWS = 'New since last time: say "show me around" for a tour of the app\'s tools, "what did I change" for everything I did to the map, "try again" after a hiccup, and "what did I click" when a popup is open. "What is on the map" sums up the view; "copy that" and "export chat" keep answers. Suggestions appear as you type (Tab takes the first). Plus an outfit for 80 days of the year and "what is an easement".'
   const greet = React.useCallback(() => {
     const extra = cfg.fun === false ? '' : [season().greeting, dayFeel().line].filter(Boolean).join(' ')
     let news = ''
+    let first = false
     try {
       const greetedKey = 'mappy-greeted:' + appId
-      if (!store(greetedKey)) { store(greetedKey, '1'); store('mappy-news', NEWS_KEY) } else if (store('mappy-news') !== NEWS_KEY) { news = NEWS; store('mappy-news', NEWS_KEY) }
+      if (!store(greetedKey)) { store(greetedKey, '1'); store('mappy-news', NEWS_KEY); first = true } else if (store('mappy-news') !== NEWS_KEY) { news = NEWS; store('mappy-news', NEWS_KEY) }
     } catch (e) { }
-    say((cfg.greeting || V.greet(name, appTitle)) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : ''))
+    // First visit: offer the tour, so nobody has to guess what to type.
+    const text = (cfg.greeting || V.greet(name, appTitle)) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : '') + (first ? '\n\nNew here? Say "show me around" and I will walk you through the app.' : '')
+    say(text, first ? { text, suggest: ['Show me around', 'What is on the map', 'Help'] } : undefined)
   }, [cfg.greeting, name, appTitle, say, appId])
 
   const toggleChat = React.useCallback(() => {
@@ -376,6 +422,9 @@ export default function Widget (props: Props): any {
     try {
       const reply = await mind.respond(text)
       clearTimeout(gears)
+      // "Copy that": the last answer before this one. "Export chat": the whole conversation as text.
+      if (reply.effect === 'copy') { const prev = [...messagesRef.current].reverse().find(m => m.from === 'mappy'); if (prev) copyText(prev.text) }
+      if (reply.effect === 'export') exportChat()
       say(reply.text, reply)
       setMood((reply.mood as Mood) || 'talk')
       handlePoint(reply.pointAt)

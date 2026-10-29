@@ -59,6 +59,13 @@ export interface Config {
   /** Little synthesized sounds (a pop when he arrives, a knock for a tip, a ta-da). Off unless turned on. */
   sounds?: boolean
   /**
+   * The knowledge feed: a JSON file fetched once a day with newer words and phrasings, answers,
+   * glossary terms, facts and tips, so he improves without an app update. Undefined means on,
+   * from the project's feed on GitHub; feedUrl points at your own copy (an internal web folder).
+   */
+  feed?: boolean
+  feedUrl?: string
+  /**
    * Who runs this app and where it is, so his wording fits any city, county, district or utility:
    * "the City's website" becomes "<orgName>'s website". Empty uses the portal's organization
    * name, then "the City". placeName is the town or area for his lines ("Summer in Springfield").

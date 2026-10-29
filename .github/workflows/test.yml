@@ -26,3 +26,5 @@ jobs:
           node tests/mcp.cjs
       - name: Phrase test set
         run: node language/build.mjs --check
+      - name: Knowledge feed is current
+        run: node knowledge/build.mjs --check

@@ -43,6 +43,11 @@ const RULES: Rule[] = [
   [/^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again)[!.?]*$/i, (m, raw) => ({ name: 'tryAgain', raw })],
   // What Mappy has changed on the map this session
   [/^(?:what (?:did|have) (?:i|you|we) (?:change|changed|do|done)(?: so far| to the map| on the map)?|what changed|what(?:'s| is| has) (?:been )?changed|changes|history|show (?:my |the )?(?:changes|history))[!.?]*$/i, (m, raw) => ({ name: 'changes', raw })],
+  // The whole picture in one answer
+  [/^(?:what(?:'s| is) on the map(?: right now)?|what am i looking at|describe (?:the|this) map|summari[sz]e (?:the|this) map|map summary|what(?:'s| is) (?:showing|visible|turned on)(?: right now)?|overview)[!.?]*$/i, (m, raw) => ({ name: 'mapSummary', raw })],
+  // Copy or save the conversation
+  [/^(?:copy (?:that|it|this|the answer|your answer|the last answer)|copy)[!.?]*$/i, (m, raw) => ({ name: 'copyAnswer', raw })],
+  [/^(?:export|save|download)(?: (?:this|the|our))? (?:chat|conversation|transcript)|^(?:export|save|download) (?:this|the) (?:chat|conversation)(?: as (?:a )?(?:text|txt|file))?[!.?]*$/i, (m, raw) => ({ name: 'exportChat', raw })],
   // The feature under an open popup
   [/^(?:what (?:did i|did i just|have i) (?:click|clicked|select|selected|pick|picked)(?: on)?|what(?:'s| is) (?:this|that|selected|highlighted)(?: feature| thing| one)?|tell me about (?:this|that|the selected)(?: feature| one)?|about this(?: feature)?|details|more details|show (?:me )?(?:the )?details)[!.?]*$/i, (m, raw) => ({ name: 'clicked', raw })],
   [/^(?:commands|command guide|examples|what can you do|help)[!.?]*$/i, (m, raw) => ({ name: 'help', raw })],

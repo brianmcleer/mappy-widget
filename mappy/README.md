@@ -8,7 +8,7 @@ He works in any app with no setup. A **deep scan** in the builder makes him much
 
 The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
 
-**New in 1.9:** a guided tour ("show me around" walks the app's tools one at a time, pointing at each), "what did I change" (everything he did to the map, with undo), "try again" after a server hiccup, "what did I click" (the feature under an open popup, as a table), suggestions as you type (Tab takes the first), a light bulb with ideas when a popup opens, and a Preview section in settings to see any of the 80 outfits and 30 acts now.
+**New in 1.9:** a knowledge feed (one JSON file fetched once a day, so words, answers, terms, facts and tips keep improving without an app update; see [Knowledge feed](#knowledge-feed)), a guided tour ("show me around" walks the app's tools one at a time, pointing at each), "what did I change" (everything he did to the map, with undo), "try again" after a server hiccup, "what did I click" (the feature under an open popup, as a table), suggestions as you type (Tab takes the first), a light bulb with ideas when a popup opens, and a Preview section in settings to see any of the 80 outfits and 30 acts now.
 
 **New in 1.8:** a plain-language glossary ("what is an easement", "what does R-4 mean"), questions about places ("who owns 250 N 5th St", "closest hydrant to my address", "directions to City Hall"), layers by name ("where are the parks"), labels, basemaps, "go back", comparisons of two addresses, kind pointers for things a map cannot answer, a resizable, draggable chat that survives a reload, an outfit for 80 days of the year (hat, hand, feet and a buddy; "why the pumpkin"), the Clippy pack of little performances (gears, paper airplane, bike ride, wizard hat, a knock on the glass for tips, optional sound effects), and a "Your place" setting with local fun facts built from Wikipedia, so nothing in him is tied to one town. See [the changelog](CHANGELOG.md).
 
@@ -45,6 +45,12 @@ The bridge contract (`window.__exbLayerLists`, event `exb-layer-list-change`) is
 - **Reads in context.** A typo that spells a real word ("lose the legend", "lost layers") is read the way that makes sense in this app; sound-alikes ("elevashun") and two-letter slips after a command ("zoom ot", "turn of") work too. Turn it off in **Behavior**, **Fix typos** for apps used mostly in other languages.
 - **Asks when unsure.** When a request still makes no sense he asks "Did you mean ...?" with the closest requests he can do as buttons, the way Clippy asked "It looks like you're ...".
 - **Teach him.** **Language**, **Teach Mappy a phrase** opens a short GitHub report; the next weekly build learns it.
+
+## Knowledge feed
+
+Mappy keeps improving without an app update. Once a day each browser fetches `knowledge/feed.json` from this repository (cached, ETag-aware, never waited for): the newest language pack, community questions and answers, glossary terms, fun facts and tips. The weekly language build and every change to `knowledge/knowledge.json` rebuild the feed through a pull request. Settings has a **Knowledge feed** section to turn it off, point at your own copy (an https folder on your web server, kept current by a scheduled task that pulls this repository), and check it. Only https, only JSON under 2 MB, only the feed format is used; a feed that fails is ignored and the bundled knowledge stays. Your own questions and answers always outrank the feed's. Format and limits: [knowledge/README.md](../knowledge/README.md).
+
+Code changes (new commands, art, settings) still need a widget update and an app rebuild; the feed carries data only.
 
 ## MCP server (optional)
 
@@ -135,7 +141,9 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | What time does City Hall close? / Do I need a permit? | A kind pointer to the right place, not a wrong answer |
 | Show me around / Next / Stop tour | A guided tour of the app's tools, pointing at each one |
 | What did I change? / Undo / Try again | His layer changes so far, the last one reversed, the last request run again |
-| What did I click? | The feature under the open popup, as a table of its fields |
+| What did I click? | The feature under the open popup, as a table of its fields, with Zoom to it |
+| What's on the map? | Layers drawing, basemap, scale, center, open popup, changes so far |
+| Copy that / Export chat | Copies the last answer; saves the conversation as a text file |
 | Tell me a joke | Regrets nothing |
 
 ## Configuration

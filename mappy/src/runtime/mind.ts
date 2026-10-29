@@ -67,6 +67,8 @@ export interface MindContext {
   place?: Place
   /** This widget's id, named as the source when records go to the Table widget. */
   widgetId?: string
+  /** What the knowledge feed gave him ("feed 2026.10.29: language pack ..., 18 answers"), for diagnostics. */
+  feedInfo?: string
   /** Puts records in the app's Table widget; absent when the app has none (or in tests). */
   openInTable?: (entry: LayerEntry, req: TableRequest) => Promise<TableResult>
 }
@@ -79,7 +81,7 @@ class LayerChoice extends Error {
 }
 
 /** Requests about the conversation itself: "try again" never re-runs these. */
-const META = new Set(['tryAgain', 'tourNext', 'tourStop', 'changes', 'repeat', 'speak', 'help', 'diagnostics', 'greet', 'thanks', 'ack', 'cancel', 'undo', 'forget', 'clicked', 'tip', 'joke', 'whoami', 'about', 'sleep', 'resize', 'moveCorner', 'pause'])
+const META = new Set(['tryAgain', 'mapSummary', 'copyAnswer', 'exportChat', 'tourNext', 'tourStop', 'changes', 'repeat', 'speak', 'help', 'diagnostics', 'greet', 'thanks', 'ack', 'cancel', 'undo', 'forget', 'clicked', 'tip', 'joke', 'whoami', 'about', 'sleep', 'resize', 'moveCorner', 'pause'])
 
 export class Mind {
   ctx: MindContext
@@ -1597,6 +1599,7 @@ export class Mind {
     // "open hydrants in the table", "the parcels table": the same as "show table ...".
     const raw = tablePhrase(input.trim()) || input.trim()
     if (raw.startsWith('__doc:')) return this.aboutDoc(raw.slice(6))
+    if (raw === '__zoomsel') return await this.zoomToSelected()
     if (raw.startsWith('__table:')) return this.runTableJob(raw.slice(8))
     // Easter eggs: jokes, riddles, dances, games. Only exact little phrases, never a real question.
     if (this.ctx.fun !== false) this.fun.setPlace(this.ctx.place)
@@ -1790,6 +1793,9 @@ export class Mind {
           return { text: `What I changed on this map, oldest first (${done.length}):`, mood: 'explain', list: done.map((label, i) => ({ label: `${i + 1}. ${label}` })), suggest: ['Undo', 'Reset the map'] }
         }
         case 'clicked': return this.aboutSelected()
+        case 'mapSummary': return this.mapSummary()
+        case 'copyAnswer': return this.lastReply ? { text: 'Copied my last answer.', mood: 'acknowledge', effect: 'copy' } : { text: 'Nothing to copy yet.', mood: 'think' }
+        case 'exportChat': return { text: 'Saving this conversation as a text file.', mood: 'save', effect: 'export' }
         case 'repeat': return this.lastReply ? { ...this.lastReply, pointAt: undefined } : { text: 'I have not said anything yet. Ask me something!', mood: 'think' }
         case 'speak': { const last = this.lastReply; return last ? { ...last, text: `Reading that aloud: ${last.text.replace(/\*\*/g, '')}`, mood: 'talk', effect: 'speak', pointAt: undefined } : { text: 'Nothing to read yet.', mood: 'think' } }
         case 'resize': return { text: it.value === 'smaller' ? 'Shrinking!' : 'Growing!', mood: 'excited', effect: it.value === 'smaller' ? 'smaller' : 'bigger' }
@@ -1882,7 +1888,7 @@ export class Mind {
         { label: 'Ask what things mean', detail: 'What is an easement · what does R-4 mean · what zoning types are there', action: { type: 'ask', q: 'What is a parcel?' } },
         { label: 'Move around', detail: 'Zoom to 39.0639, -108.5506 · scale 1:5000 · go back · satellite view · directions to City Hall' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
-        { label: 'Look back', detail: 'What did I change · undo · try again · what did I click (with a popup open)', action: { type: 'ask', q: 'What did I change' } },
+        { label: 'Look back', detail: "What's on the map · what did I change · undo · try again · what did I click (with a popup open) · copy that · export chat", action: { type: 'ask', q: 'What did I change' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
       ],
       suggest: [
@@ -1931,7 +1937,7 @@ export class Mind {
     const entries = this.ctx.live.entries()
     const sources = new Map<string, number>()
     for (const doc of this.ctx.index.docs) sources.set(doc.src || 'live', (sources.get(doc.src || 'live') || 0) + 1)
-    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} No LLM is used. Map services and imported help may still require network access.`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
+    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} No LLM is used. Map services and imported help may still require network access.${this.ctx.feedInfo ? ' Knowledge ' + this.ctx.feedInfo + '.' : ''}`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
   }
 
   diagnoseLayer (target: string): Reply {
@@ -2006,6 +2012,36 @@ export class Mind {
     }
   }
 
+  /** "What's on the map": the layers drawing, the basemap, the scale and the center, in one answer. */
+  private mapSummary (): Reply {
+    const live = this.ctx.live
+    if (!live.ready) return { text: V.noMap(), mood: 'confused' }
+    const all = live.entries().filter(e => !e.isTable && !e.isGroup)
+    const on = all.filter(e => live.isVisible(e))
+    const off = all.length - on.length
+    const names = on.slice(0, 12).map(e => `**${e.title}**`).join(', ') + (on.length > 12 ? ` and ${on.length - 12} more` : '')
+    const base = live.basemapTitle()
+    const sel = live.selectedFeature()
+    const lines = [
+      on.length ? `${on.length} of ${all.length} layers are drawing: ${names}.` : `None of the ${all.length} layers are turned on.`,
+      base ? `Basemap: **${base}**.` : '',
+      live.whereAmI(),
+      sel ? `A **${sel.title}** popup is open (ask "what did I click").` : ''
+    ].filter(Boolean)
+    const changes = live.changesSoFar().length
+    return {
+      text: lines.join(' ') + (changes ? ` I have made ${changes} layer change${changes === 1 ? '' : 's'} this session.` : ''),
+      mood: 'explain',
+      suggest: [off ? 'List layers' : 'Show me around', changes ? 'What did I change' : 'Tip', 'What is the scale'].slice(0, 3)
+    }
+  }
+
+  /** Zooms to the feature under the open popup (the "Zoom to it" button after "what did I click"). */
+  async zoomToSelected (): Promise<Reply> {
+    const ok = await this.ctx.live.zoomToSelected()
+    return ok ? { text: 'There it is.', mood: 'point', pointAt: this.ctx.live.mapElement() } : { text: 'Nothing is selected to zoom to.', mood: 'think' }
+  }
+
   /** The feature whose popup is open, as a short table of its fields. */
   private aboutSelected (): Reply {
     const f = this.ctx.live.selectedFeature()
@@ -2023,6 +2059,7 @@ export class Mind {
       text: rows.length ? `That is a **${name}** feature. Here is what it says:` : `That is a **${name}** feature, but it has no fields I can show.`,
       mood: 'explain',
       table: rows.length ? { columns: ['Field', 'Value'], rows } : undefined,
+      actions: [{ type: 'ask', q: '__zoomsel', label: 'Zoom to it' }],
       suggest: [`How many ${name} in view`, `Fields in ${name}`, `Explore ${name}`].slice(0, 3)
     }
   }

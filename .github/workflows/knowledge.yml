@@ -1,0 +1,48 @@
+# Knowledge feed: when knowledge.json changes, rebuild feed.json (the file the widget fetches
+# once a day) and open one pull request with it. Also runs by hand from the Actions tab.
+name: Knowledge feed
+
+on:
+  push:
+    branches: [master]
+    paths: [knowledge/knowledge.json, knowledge/build.mjs]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: knowledge-feed
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm i --no-save --no-audit --no-fund typescript@5
+      - name: Build the feed
+        id: build
+        run: node knowledge/build.mjs
+      - name: Open or update the pull request
+        if: steps.build.outputs.changed == 'true'
+        id: pr
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          token: ${{ secrets.LANGUAGE_PR_TOKEN || github.token }}
+          branch: knowledge-feed
+          delete-branch: true
+          title: Knowledge feed ${{ steps.build.outputs.version }}
+          commit-message: Knowledge feed ${{ steps.build.outputs.version }}
+          body: Rebuilt knowledge/feed.json from knowledge/knowledge.json and the current language pack.
+          labels: language-pack
+          add-paths: knowledge/feed.json
+      - name: Merge automatically (repository variable LANGUAGE_AUTOMERGE = true)
+        if: steps.pr.outputs.pull-request-number && vars.LANGUAGE_AUTOMERGE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.LANGUAGE_PR_TOKEN || github.token }}
+        run: gh pr merge ${{ steps.pr.outputs.pull-request-number }} --squash --auto || gh pr merge ${{ steps.pr.outputs.pull-request-number }} --squash

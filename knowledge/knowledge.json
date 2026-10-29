@@ -1,0 +1,96 @@
+{
+  "about": "Community knowledge for Mappy. Edit this file in a pull request; the feed is rebuilt from it. Keep everything place-neutral and work-safe.",
+  "faq": [
+    {
+      "q": "Is anything I type sent to an AI service?",
+      "a": "No. Mappy answers in your browser from the app's own tools, help and map data. There is no AI model or outside service. Place questions go only to the GIS server the app's builder connected, if any."
+    },
+    {
+      "q": "Why is the map slow to draw?",
+      "a": "Usually a layer with a lot of detail is on while zoomed out. Turn off layers you are not using (say \"turn off <layer>\"), zoom in, or switch to a simpler basemap. Say \"nothing is on the map\" if you cannot tell what is drawing."
+    },
+    {
+      "q": "How accurate is the map?",
+      "a": "Map layers are general reference, not a survey. Property lines, utilities and addresses can be off by several feet. For legal boundaries use a licensed surveyor; ask \"when was <layer> updated\" to see how current a layer is."
+    },
+    {
+      "q": "Can I print or share what I am looking at?",
+      "a": "Say \"print the map\" to open the Print tool, or \"share the map\" for a link to this view. Mappy can also copy its last answer (\"copy that\") or save the conversation (\"export chat\")."
+    },
+    {
+      "q": "What is a coded value?",
+      "a": "A short code the data stores instead of a long description, like R-4 for a zoning district. Ask \"what does R-4 mean\" and Mappy reads the meaning from the layer's own code list."
+    }
+  ],
+  "glossary": [
+    {
+      "term": "slope",
+      "text": "How steep the ground is, as a percent or in degrees. Slope layers come from elevation data and matter for building, drainage and trails."
+    },
+    {
+      "term": "digital elevation model",
+      "aliases": [
+        "elevation model"
+      ],
+      "text": "A grid of ground heights, usually from lidar. Contours, hillshade and slope are all made from it."
+    },
+    {
+      "term": "hillshade",
+      "text": "Shading that makes terrain look lit from one side, so hills and valleys stand out under other layers."
+    },
+    {
+      "term": "centroid",
+      "text": "The center point of a shape. Parcel labels and point versions of area layers usually sit on the centroid."
+    },
+    {
+      "term": "spatial join",
+      "text": "Matching features from two layers by where they are, like finding which zoning district each parcel falls in."
+    },
+    {
+      "term": "vector tiles",
+      "aliases": [
+        "vector tile layer"
+      ],
+      "text": "A fast way to draw a basemap: the shapes are sent in small squares and drawn by your browser, so labels stay sharp when you zoom."
+    },
+    {
+      "term": "raster",
+      "text": "A layer made of a grid of cells, like an aerial photo or an elevation model, rather than shapes with attributes."
+    },
+    {
+      "term": "point cloud",
+      "text": "Millions of 3D points from lidar or photos that describe the shape of the ground, buildings and trees."
+    },
+    {
+      "term": "clip",
+      "text": "Cutting a layer down to the area inside another shape, like parcels inside one neighborhood."
+    }
+  ],
+  "facts": [
+    "The first printed maps with north at the top became common only in the 1500s. Many medieval maps put east at the top, which is where the word orient comes from.",
+    "GPS satellites orbit about 12,500 miles up and each one carries atomic clocks. Your position comes from timing how long their signals take to arrive.",
+    "One degree of latitude is about 69 miles everywhere, but one degree of longitude shrinks from 69 miles at the equator to zero at the poles.",
+    "The Mercator projection makes Greenland look as big as Africa. Africa is about 14 times larger.",
+    "Most web maps use the same tile scheme: zoom level 0 is one tile for the whole world, and each zoom level has four times as many tiles as the last.",
+    "A parcel number usually encodes the map book, page and lot the parcel came from, which is why neighbors often have numbers that differ by one.",
+    "Fire hydrant colors are often a code for how much water they can deliver. Many cities paint the caps by flow rate.",
+    "The oldest known map of a town is a wall painting from Catalhoyuk in Turkey, made about 8,500 years ago.",
+    "Lidar can see the ground through trees by keeping only the last of each laser pulse's returns. That is how lost roads and ruins get found under forests.",
+    "Addresses on one side of a street are usually all odd or all even, and the numbers grow with distance from a baseline the city chose long ago.",
+    "The metric system and the meter were defined from a survey of the Earth. A meter was meant to be one ten-millionth of the distance from the equator to the North Pole.",
+    "Sewer manholes are spaced so a cleaning crew can reach the whole pipe, usually no more than a few hundred feet apart.",
+    "A floodplain map's 100-year flood does not mean once a century. It means a 1 percent chance in any given year, about 26 percent over a 30-year mortgage.",
+    "Storm drains and sanitary sewers are separate systems in most newer cities. What goes down a street drain usually reaches a creek untreated.",
+    "Aerial imagery for city maps is usually flown in early spring or late fall, when there are no leaves on the trees and no snow on the ground."
+  ],
+  "tips": [
+    "Join commands with \"then\": \"turn on parcels then zoom to downtown then label the parcels\".",
+    "After a search, say \"zoom to it\", \"how many in view\" or \"add to the table\" to keep going with the same results.",
+    "Say \"what did I click\" with a popup open to see the feature's fields as a table, then \"zoom to it\".",
+    "\"Show me around\" walks you through every tool in the app, one at a time.",
+    "Typos are fine. \"trun on parcles\" works, and Mappy says how he read it.",
+    "\"What's on the map\" sums up which layers are drawing, the basemap, the scale and where the map is.",
+    "\"Undo\" reverses Mappy's last layer change; \"what did I change\" lists all of them.",
+    "Ask \"what does <code> mean\" for any code you see in a popup; the meaning comes from the layer's own code list."
+  ]
+}
