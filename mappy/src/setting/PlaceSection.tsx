@@ -30,7 +30,7 @@ export default function PlaceSection (props: Props): any {
 
   const build = async () => {
     const place = (props.placeName || '').trim()
-    if (!place) { setStatus('Type the place name first, with its state or country: "Grand Junction, Colorado" or "Lyon, France".'); setTone('warn'); return }
+    if (!place) { setStatus('Type the place name first, with its state or country: "Springfield, Illinois" or "Lyon, France".'); setTone('warn'); return }
     abort.current?.abort()
     abort.current = new AbortController()
     setBusy(true); setTone(undefined); setStatus(`Looking up ${place}...`)
@@ -57,14 +57,14 @@ export default function PlaceSection (props: Props): any {
       <SettingRow flow='wrap' label='Organization'>
         <TextInput size='sm' style={full} value={props.orgName || ''} placeholder={portalOrg ? `${portalOrg} (from your portal)` : 'the City'} aria-label='Organization' onChange={(e: any) => props.set('orgName', e.target.value)} />
       </SettingRow>
-      <Hint>As it should read in a sentence: "the City", "Mesa County", "the Water District". Empty uses your portal's organization name{portalOrg ? ` (${portalOrg})` : ''}.</Hint>
+      <Hint>As it should read in a sentence: "the City", "the County", "the Water District". Empty uses your portal's organization name{portalOrg ? ` (${portalOrg})` : ''}.</Hint>
       <SettingRow flow='wrap' label='Place name'>
-        <TextInput size='sm' style={full} value={props.placeName || ''} placeholder='Grand Junction' aria-label='Place name' onChange={(e: any) => props.set('placeName', e.target.value)} />
+        <TextInput size='sm' style={full} value={props.placeName || ''} placeholder='Springfield' aria-label='Place name' onChange={(e: any) => props.set('placeName', e.target.value)} />
       </SettingRow>
       <SettingRow flow='wrap' label='State, province or country'>
-        <TextInput size='sm' style={full} value={props.placeRegion || ''} placeholder='Colorado, or France' aria-label='State, province or country' onChange={(e: any) => props.set('placeRegion', e.target.value)} />
+        <TextInput size='sm' style={full} value={props.placeRegion || ''} placeholder='Illinois, or France' aria-label='State, province or country' onChange={(e: any) => props.set('placeRegion', e.target.value)} />
       </SettingRow>
-      <Hint>Together these find the right page for the facts below: "Grand Junction" + "Colorado", "Lyon" + "France", "Springfield" + "Illinois". The place name alone is what he says in his lines.</Hint>
+      <Hint>Together these find the right page for the facts below: "Springfield" + "Illinois", "Lyon" + "France", "Calgary" + "Alberta". The place name alone is what he says in his lines.</Hint>
       <SettingRow flow='wrap' label='Website'>
         <TextInput size='sm' style={full} value={props.website || ''} placeholder='https://' aria-label='Website' onChange={(e: any) => props.set('website', e.target.value)} />
       </SettingRow>

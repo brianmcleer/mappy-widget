@@ -61,11 +61,11 @@ export interface Config {
   /**
    * Who runs this app and where it is, so his wording fits any city, county, district or utility:
    * "the City's website" becomes "<orgName>'s website". Empty uses the portal's organization
-   * name, then "the City". placeName is the town or area for his lines ("Summer in Grand Junction").
+   * name, then "the City". placeName is the town or area for his lines ("Summer in Springfield").
    */
   orgName?: string
   placeName?: string
-  /** State, province or country, for finding the place's Wikipedia page ("Colorado", "France"). */
+  /** State, province or country, for finding the place's Wikipedia page ("Illinois", "France"). */
   placeRegion?: string
   /** The organization's website, offered as a link when he points people off the map. */
   website?: string

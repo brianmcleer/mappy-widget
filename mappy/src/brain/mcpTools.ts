@@ -131,7 +131,7 @@ function cleanPlace (s: string): { place?: string, here?: boolean } {
   return { place: p }
 }
 
-/** Looks like a street address or a place, not a layer name: "250 N 5th St", "City Hall, Grand Junction". */
+/** Looks like a street address or a place, not a layer name: "250 N 5th St", "City Hall, Springfield". */
 export function looksLikePlace (s: string): boolean {
   return STREET.test(s) || /^\d+\s+\w+/.test(s.trim()) || /^-?\d{1,2}\.\d+\s*,\s*-?\d{1,3}\.\d+$/.test(s.trim()) || ME.test(s.trim())
 }

@@ -56,7 +56,7 @@ test('numbers in words and other ways to say transparency', () => {
   assert.deepEqual(pick(parseIntent(read('fade the parcels'))), ['opacity', 'parcels', '50'])
 })
 test('values, names and conditions are never rewritten', () => {
-  for (const s of ['zoom to mesa county', 'show the river', 'find elm ave', 'find ute ave', 'zoom to las colonias', 'find pitkin ave', 'zoom to cortez', 'geocode 715 rood ave', 'where is café rio', 'find Drew in parcels', 'how many parcels where owner equals Drew', 'find owner jose', 'find Smith in parcels', "find O'Brien in parcels", 'find "Teh Bakery" in parcels', 'find 123 Mian St', 'count parcels where ACRES > 5', 'how many parcels where owner equals Jonhson', 'zoom to 39.06, -108.55']) {
+  for (const s of ['zoom to the county', 'show the river', 'find elm ave', 'find ute ave', 'zoom to las palmas', 'find pitkin ave', 'zoom to cortland', 'geocode 715 rood ave', 'where is café rio', 'find Drew in parcels', 'how many parcels where owner equals Drew', 'find owner jose', 'find Smith in parcels', "find O'Brien in parcels", 'find "Teh Bakery" in parcels', 'find 123 Mian St', 'count parcels where ACRES > 5', 'how many parcels where owner equals Jonhson', 'zoom to 39.06, -108.55']) {
     assert.equal(read(s), s)
   }
 })

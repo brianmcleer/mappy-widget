@@ -322,7 +322,7 @@ test('Mind: parcels from the app\'s own map: who owns, yes or no, no server need
   const layer = (id, title, hit, extra = {}) => ({ id, title, type: 'feature', visible: false, geometryType: 'polygon', fields: Object.keys((hit || parcel).attributes).map(name => ({ name })), queryFeatures: async q => { queries.push([title, q]); return { features: hit ? [hit] : [] } }, ...extra })
   const parcels = layer('p', 'Parcels', parcel)
   // A boundary whose display field is an address (city hall), with the city name in another field.
-  const limits = layer('c', 'City Limits', { attributes: { OBJECTID: 1, HALL_ADDRESS: '250 N. 5th St', MUNICIPALITY: 'Grand Junction', PHONE: '970-244-1500', WEBSITE: 'https://www.gjcity.org', ZIP: '81501' }, geometry: { type: 'polygon' } }, { displayField: 'HALL_ADDRESS' })
+  const limits = layer('c', 'City Limits', { attributes: { OBJECTID: 1, HALL_ADDRESS: '250 N. 5th St', MUNICIPALITY: 'Springfield', PHONE: '555-010-0100', WEBSITE: 'https://www.example.org', ZIP: '81501' }, geometry: { type: 'polygon' } }, { displayField: 'HALL_ADDRESS' })
   const zoning = layer('z', 'Zoning', { attributes: { OBJECTID: 3, ZONE_CODE: 'R4', ORDINANCE: '4410', SITUS: '1138 WHITE AVE' }, geometry: { type: 'polygon' } }, { displayField: 'SITUS', fields: [{ name: 'OBJECTID' }, { name: 'ZONE_CODE', alias: 'Zone', domain: { codedValues: [{ code: 'R4', name: 'Residential 4 du/ac' }] } }, { name: 'ORDINANCE' }, { name: 'SITUS', alias: 'Address' }] })
   const flood = layer('f', 'FEMA Flood Zones', null)
   const live = new LiveMap()
@@ -335,9 +335,9 @@ test('Mind: parcels from the app\'s own map: who owns, yes or no, no server need
   assert.deepEqual(queries[0][1].geometry, { type: 'point', x: -108.56, y: 39.07, spatialReference: { wkid: 4326 } })
   assert.equal(queries[0][1].spatialRelationship, 'intersects')
   const yes = await mind.respond('is 39.07, -108.56 in city limits')
-  assert.match(yes.text, /^\*\*Yes\.\*\* that spot is in City Limits \(Grand Junction\)\./, 'the name, not the address field')
+  assert.match(yes.text, /^\*\*Yes\.\*\* that spot is in City Limits \(Springfield\)\./, 'the name, not the address field')
   const city = await mind.respond('what city is 39.07, -108.56 in')
-  assert.match(city.text, /is in \*\*Grand Junction\*\*/)
+  assert.match(city.text, /is in \*\*Springfield\*\*/)
   const zone = await mind.respond('what zone is 39.07, -108.56 in')
   assert.match(zone.text, /^That spot is zoned \*\*Residential 4 du\/ac\*\*\./, 'coded value name from the zone field')
   assert.equal(yes.table, undefined, 'a yes or no, not a table')
@@ -745,7 +745,7 @@ test('the time of year: friendly for everyone, nothing religious or political', 
   // Nothing in him is tied to one town: no Grand Junction or Colorado in the built-in lines, facts or art.
   const { Fun, outfitAsk } = require('../src/brain/fun.ts')
   const src = ['fun.ts', 'glossary.ts'].map(f => fs.readFileSync(__dirname + '/../src/brain/' + f, 'utf8')).join('\n') + art
-  assert.doesNotMatch(src, /grand junction|gunnison|mesa county|\bGJ\b/i)
+  assert.doesNotMatch(src, /grand junction|gunnison|mesa county|gjcity|\bGJ\b/i)
   // The organization's name flows into the asides; local facts flow into "fun fact".
   const { outOfScope } = require('../src/brain/glossary.ts')
   assert.match(outOfScope('what are the office hours').text, /The City's website/)

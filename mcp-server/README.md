@@ -32,14 +32,14 @@ In Mappy, just ask: "what is the closest sewer line to my address", "hydrants wi
 - Logs record the tool name, how long it took and the input names. They never record tokens or values. Logs are kept 30 days.
 - Layer names are read once an hour, using whoever asks first (or `discovery_token`). Only the names are shared between people; every query runs with the asker's own token.
 
-## Install (internal22-gis, same pattern as the Droplets relay)
+## Install (Windows Server with IIS)
 
 1. Copy this folder to the server.
 2. In PowerShell (**Run as administrator**), from that folder:
    ```
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
-   It creates `D:\GIS\Services\gis-mcp`, a `.venv` from ArcGIS Pro's Python with Flask and Waitress, the IIS app pool `gis-mcp` (No Managed Code, AlwaysRunning), and the application `/gis-mcp` under Default Web Site. It also sets folder permissions and checks `/health`.
+   It creates the target folder (default `D:\GIS\Services\gis-mcp`; pass `-Target` for another), a `.venv` from ArcGIS Pro's Python with Flask and Waitress, the IIS app pool `gis-mcp` (No Managed Code, AlwaysRunning), and the application `/gis-mcp` under Default Web Site. It also sets folder permissions and checks `/health`.
 3. Edit `D:\GIS\Services\gis-mcp\config.json`:
    - `service_folders`: REST folders whose layers should be searchable, for example `https://gis.example.org/arcgis/rest/services/Hub`. Every feature layer in them is added.
    - `layers`: single layers to add, with optional `search_fields` (the fields `find_features` looks in) and `fields` (what to show).

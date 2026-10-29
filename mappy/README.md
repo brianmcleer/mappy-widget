@@ -153,7 +153,7 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | Offer "Read answers aloud" | On | Browser speech, off until the user turns it on in his menu |
 | Jokes, games and holiday hats | On | Easter eggs and an outfit for 80 days of the year |
 | Sound effects | Off | Synthesized pop, knock, ta-da, wobble, boing; silent under reduced motion |
-| Your place: Organization | (portal org name) | "the City", "Mesa County", "the Water District": used in his wording |
+| Your place: Organization | (portal org name) | "the City", "the County", "the Water District": used in his wording |
 | Your place: Place name, Website | none | The town or area; the website is offered as a link when he points people off the map |
 | Your place: Local fun facts | none | One per line; "Build facts from Wikipedia" fills it from the place's page and nearby landmarks (CC BY-SA) for you to prune |
 | Usage telemetry | Off | Optional Beacon counts and errors (below); explicit opt-in required |

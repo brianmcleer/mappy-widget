@@ -67,7 +67,7 @@ async function summary (title: string, signal?: AbortSignal): Promise<any | null
   } catch (e) { return null }
 }
 
-/** Wikipedia's own search, for "Grand Junction, Colorado", "Lyon, France" or a misspelling: the best page title, or null. */
+/** Wikipedia's own search, for "Springfield, Illinois", "Lyon, France" or a misspelling: the best page title, or null. */
 async function searchTitle (q: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const r = await getJson(`${WIKI}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=8&format=json&origin=*`, signal)
@@ -80,7 +80,7 @@ async function searchTitle (q: string, signal?: AbortSignal): Promise<string | n
 }
 
 /**
- * Builds facts for a place: its own page first ("Grand Junction, Colorado", "Lyon, France"),
+ * Builds facts for a place: its own page first ("Springfield, Illinois", "Lyon, France"),
  * found by title and then by Wikipedia search, then up to eight pages within 10 km of it
  * (geosearch), skipping people, companies and lists. `progress` gets a line as it goes.
  */

@@ -234,7 +234,10 @@ export function readRequest (input: string, lex: Lexicon): Correction {
     }
   }
   const literal = src.search(/"|(?:^|\s)'|\s(?:where|with|equals?|contains|like|between|starts with|ends with)\s|[=<>]/i)
-  const search = src.match(/^(?:(?:find|search|locate|lookup|geocode)\s+|where(?: is|'s| are)\s+|(?:zoom|go|navigate) to\s+(?=\d))/i)
+  // "Where is 250 N 5th St" keeps its address as typed; "where is teh legend" (plain lowercase words, no digits) still gets its typos fixed.
+  const whereTail = src.match(/^where(?: is|'s| are)\s+(.*)$/i)?.[1] || ''
+  const whereLiteral = /\d|^[^ ]*[A-Z]|\s[A-Z]/.test(whereTail)
+  const search = src.match(/^(?:(?:find|search|locate|lookup|geocode)\s+|(?:zoom|go|navigate) to\s+(?=\d))/i) || (whereLiteral ? src.match(/^where(?: is|'s| are)\s+/i) : null)
   const cut = Math.min(literal < 0 ? src.length : literal, search ? search[0].length : src.length)
   if (cut < src.length) {
     const prefix = src.slice(0, cut)

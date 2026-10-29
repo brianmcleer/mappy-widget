@@ -42,7 +42,9 @@ const COMMAND_WORDS = (
   'diagnose troubleshoot status diagnostics forget context conversation cancel choose pick sleep nap quiet ' +
   'sort sorted order ordered asc desc ascending descending largest smallest biggest highest lowest top bottom ' +
   'over under above below greater less than between equals equal contains group grouped per each by ' +
-  'mean median sum min max unique distinct duplicate duplicates nulls blank blanks percent share'
+  'mean median sum min max unique distinct duplicate duplicates nulls blank blanks percent share ' +
+  // Place words people type as targets; never "corrected" into a command word (county is not counts).
+  'city county town village township parish borough district state province country region downtown airport river lake park'
 ).split(' ')
 
 const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm']

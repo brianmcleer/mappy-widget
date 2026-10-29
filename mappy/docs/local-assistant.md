@@ -57,13 +57,13 @@ After a filtered query, `how many of those?` counts the same matches and `show t
 
 ## Added in 1.3.2: conversational address corrections
 
-After `find address 123 Main St`, say `in Grand Junction` or `actually, in Fruita` to refine the location. A later city refinement replaces the previous refinement. To change a full address (including an existing city), say `no, 125 Main Street, Fruita`. You can refine an unsuccessful lookup without retyping the street.
+After `find address 123 Main St`, say `in Springfield` or `actually, in Shelbyville` to refine the location. A later city refinement replaces the previous refinement. To change a full address (including an existing city), say `no, 125 Main Street, Fruita`. You can refine an unsuccessful lookup without retyping the street.
 
 Choose candidates with `the second one`, `use number 2`, `pick the 2nd match`, or simply `2`. A bare street address is not treated as a result number. Saying thanks preserves the choices; a new topic, new chat, or map change clears them. Refinements retain the configured locator's restrictions and authentication.
 
 ## Added in 1.3.1: natural-language address searches
 
-Ask `take me to 250 North 5th Street, Grand Junction`, `find the address of City Hall`, `where is 123 Main St`, or paste a street address. Mappy uses locators already configured in Search Custom, app utilities, or the signed-in portal, in that order. No new AI service, API key, or hard-coded world locator is added. Address text goes to the selected ArcGIS locator using the existing SDK authentication flow.
+Ask `take me to 250 North 5th Street, Springfield`, `find the address of City Hall`, `where is 123 Main St`, or paste a street address. Mappy uses locators already configured in Search Custom, app utilities, or the signed-in portal, in that order. No new AI service, API key, or hard-coded world locator is added. Address text goes to the selected ArcGIS locator using the existing SDK authentication flow.
 
 Configured prefixes, suffixes, country/category restrictions and within-view limits are retained. The locator's single-line input field is read from its metadata when unspecified. Up to five candidates are shown; say `show the second result` or choose a row. A single result scoring at least 95 is shown automatically. A locator score is match quality, not a guarantee that an address is correct. Search responses and old candidate buttons are invalidated when the active map changes; new searches replace old choices.
 
