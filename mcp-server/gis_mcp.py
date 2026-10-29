@@ -94,7 +94,12 @@ log = logging.getLogger('gis_mcp')
 
 
 class ToolError(Exception):
-    """A problem to report to the person (the tool result has isError: true)."""
+    """A problem to report to the person (the tool result has isError: true). The message is
+    written for people and carries no internals; `said` is what the client gets."""
+
+    def __init__(self, said):
+        super().__init__(said)
+        self.said = str(said)
 
 
 class RpcError(Exception):
@@ -1652,7 +1657,7 @@ class Server:
                     return result
                 except ToolError as e:
                     log.info('upstream %s %s failed %.0fms: %s', up.name, name, (time.time() - started) * 1000, e)
-                    return {'content': [{'type': 'text', 'text': str(e)}], 'isError': True}
+                    return {'content': [{'type': 'text', 'text': e.said}], 'isError': True}
             self.layers.refresh(token, referer=referer)
             try:
                 text, data = self.tools.call(name, args, token, referer)
@@ -1660,7 +1665,7 @@ class Server:
                 return {'content': [{'type': 'text', 'text': text + '\n' + json.dumps(data, ensure_ascii=False)}], 'structuredContent': data, 'isError': False}
             except ToolError as e:
                 log.info('tool %s failed %.0fms: %s', name, (time.time() - started) * 1000, e)
-                return {'content': [{'type': 'text', 'text': str(e)}], 'isError': True}
+                return {'content': [{'type': 'text', 'text': e.said}], 'isError': True}
         if method in ('resources/list', 'prompts/list'):
             return {method.split('/')[0]: []}
         raise RpcError(-32601, 'Method not found: %s' % method)

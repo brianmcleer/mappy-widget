@@ -27,11 +27,15 @@ function buildPack (widgetsRoot, widgetRoot, watch = {}) {
   const pack = { version: 1, widgets: [], notes: [] }
   watch.context?.(widgetsRoot)
   function read (filename) {
-    let info
-    try { info = fs.lstatSync(filename) } catch (e) { watch.missing?.(filename); return '' }
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 2000000) return ''
-    watch.file?.(filename)
-    return fs.readFileSync(filename, 'utf8')
+    // One open handle: what is checked is what is read (no check-then-read gap).
+    let fd
+    try { fd = fs.openSync(filename, 'r') } catch (e) { watch.missing?.(filename); return '' }
+    try {
+      const info = fs.fstatSync(fd)
+      if (!info.isFile() || info.size > 2000000) return ''
+      watch.file?.(filename)
+      return fs.readFileSync(fd, 'utf8')
+    } finally { fs.closeSync(fd) }
   }
   for (const dir of fs.readdirSync(widgetsRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (!dir.isDirectory() || /^[_.]/.test(dir.name) || /backup|copy|claude outputs/i.test(dir.name)) continue
