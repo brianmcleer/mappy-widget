@@ -2,6 +2,8 @@
 
 A friendly folded-map assistant for any ArcGIS Experience Builder app. Drop him into an experience and he floats over the page, waves hello, and answers questions about everything in that app: its pages, views and windows, every widget (what it does and where it lives), the text and links configured in it, every layer and field on the map, and the answers you type in yourself. He can also do things: open a widget (walking the user to the right page, view, window or toolbar first), switch layers on and off, zoom, count features and find features by name, address or id.
 
+Discussion, questions and ideas: [Mappy on Esri Community](https://community.esri.com/en/discussion/1722041/mappy-a-clippy-style-assistant-for-experience-builder). Bugs and missed phrases: [GitHub issues](https://github.com/brianmcleer/mappy-widget/issues).
+
 He works in any app with no setup. A **deep scan** in the builder makes him much smarter.
 
 The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.

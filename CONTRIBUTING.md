@@ -3,6 +3,10 @@
 Thanks for looking. This widget is maintained by the City of Grand Junction GIS Division and
 shared as is; issues and pull requests are welcome, and there is no obligation on either side.
 
+## Questions and ideas
+
+The [Esri Community post](https://community.esri.com/en/discussion/1722041/mappy-a-clippy-style-assistant-for-experience-builder) is the place for questions, ideas and show and tell. GitHub issues are for bugs and missed phrases.
+
 ## Mappy didn't understand something
 
 Use the **Mappy didn't understand me** issue form. The weekly language build tests the phrase and learns it when it can.
