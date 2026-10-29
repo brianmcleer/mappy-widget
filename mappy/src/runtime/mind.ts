@@ -35,7 +35,7 @@ import { V, pick } from '../brain/voice'
 import { rand } from '../brain/random'
 import { flat, clip, tokenize, stripTags } from '../brain/text'
 import type { LiveMap, LayerEntry, ToggleResult } from './live'
-import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId } from './navigate'
+import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
 import { fieldLabel, keyLabel } from '../brain/fields'
 
@@ -78,10 +78,17 @@ class LayerChoice extends Error {
   constructor (public query: string, public entries: LayerEntry[]) { super('Choose a layer') }
 }
 
+/** Requests about the conversation itself: "try again" never re-runs these. */
+const META = new Set(['tryAgain', 'tourNext', 'tourStop', 'changes', 'repeat', 'speak', 'help', 'diagnostics', 'greet', 'thanks', 'ack', 'cancel', 'undo', 'forget', 'clicked', 'tip', 'joke', 'whoami', 'about', 'sleep', 'resize', 'moveCorner', 'pause'])
+
 export class Mind {
   ctx: MindContext
   private lastLayer = ''
   private lastReply: Reply | null = null
+  /** The last thing the user typed that was not a chip or control word, for "try again". */
+  private lastInput = ''
+  /** Guided tour: the widget docs still to visit, and the one being shown. */
+  private tour: { stops: Doc[], at: number } | null = null
   private lastResults: any[] = []
   private lastReadIntent = ''
   private lastReadScope = ''
@@ -298,9 +305,42 @@ export class Mind {
    */
   async respond (input: string): Promise<Reply> {
     this.locationNote = false
+    const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
     const reply = await this.respondInner(input)
+    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name)) this.lastInput = input
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
+    // A server hiccup: one chip runs the same request again.
+    if (reply.mood === 'alert' && this.lastInput && !control && !(reply.suggest || []).some(x => /try again/i.test(x))) reply.suggest = ['Try again', ...(reply.suggest || [])].slice(0, 5)
     return reply
+  }
+
+  /**
+   * Typeahead for the chat box: starters and app names that continue what was typed so far.
+   * Pure lookup, no network, at most five, shortest first.
+   */
+  complete (prefix: string): string[] {
+    const p = String(prefix || '').trim().toLowerCase()
+    if (p.length < 2) return []
+    const layers: string[] = []
+    try { for (const e of this.ctx.live.entries()) if (e.title && !e.isTable) layers.push(e.title) } catch (e) { }
+    const widgets = this.ctx.index.docs.filter(d => d.kind === 'widget').map(d => d.title)
+    const pool: string[] = [
+      'turn on ', 'turn off ', 'show only ', 'where are the ', 'how many ', 'fields in ', 'explore ', 'open ', 'close ', 'zoom to ', 'find ', 'what does ', 'what is ',
+      'list layers', 'list widgets', 'list bookmarks', 'show me around', 'what did I change', 'undo', 'tip', 'help', 'tell me a joke', 'print the map', 'share the map', 'measure', 'reset the map', 'who owns ', 'closest ', 'directions to '
+    ]
+    const out = new Set<string>()
+    const add = (x: string) => { if (x.toLowerCase() !== p && x.toLowerCase().startsWith(p)) out.add(x) }
+    for (const x of pool) add(x.trim())
+    // "turn on par" -> "turn on Parcels"; "open la" -> "open Layer List".
+    const verb = p.match(/^((?:turn on|turn off|show only|show|hide|where are the|where are|how many|fields in|explore|zoom to|find|open|close)\s+)(.*)$/)
+    if (verb) {
+      const names = /^(?:open|close)\s+$/.test(verb[1]) ? widgets : layers
+      for (const n of names) if (n.toLowerCase().startsWith(verb[2]) && verb[2].length) out.add(verb[1] + n)
+    } else {
+      for (const n of layers) if (n.toLowerCase().startsWith(p)) out.add('turn on ' + n)
+      for (const n of widgets) if (n.toLowerCase().startsWith(p)) out.add('open ' + n)
+    }
+    return Array.from(out).sort((a, b) => a.length - b.length).slice(0, 5)
   }
 
   private async respondInner (input: string): Promise<Reply> {
@@ -1736,6 +1776,20 @@ export class Mind {
           return { text: had ? 'Okay, never mind that.' : pick(['Okay.', 'No problem.', 'Sure thing.']), mood: 'acknowledge' }
         }
         case 'ack': return { text: pick(['Okay!', 'Got it.', '👍', 'Right on.', 'Sure thing.']), mood: 'pleased', suggest: this.suggestions().slice(0, 3) }
+        case 'tour': return this.startTour()
+        case 'tourNext': return this.tour ? this.tourStep() : (this.lastReply ? { ...this.lastReply, pointAt: undefined } : { text: 'Say "show me around" and I will walk you through the app.', mood: 'talk', suggest: ['Show me around'] })
+        case 'tourStop': { if (!this.tour) return { text: pick(['Okay.', 'Sure thing.']), mood: 'acknowledge' }; this.tour = null; return { text: 'Tour over. Ask me about any of those tools whenever you like.', mood: 'wave', pointAt: null } }
+        case 'tryAgain': {
+          if (!this.lastInput) return { text: 'Nothing to run again yet. Ask me something first.', mood: 'think' }
+          const again = await this.respondInner(this.lastInput)
+          return again.text.startsWith('(Again) ') ? again : { ...again, text: `(Again: ${clip(this.lastInput, 60)})\n\n${again.text}` }
+        }
+        case 'changes': {
+          const done = this.ctx.live.changesSoFar()
+          if (!done.length) return { text: 'I have not changed any layers on this map yet.', mood: 'talk', suggest: ['List layers'] }
+          return { text: `What I changed on this map, oldest first (${done.length}):`, mood: 'explain', list: done.map((label, i) => ({ label: `${i + 1}. ${label}` })), suggest: ['Undo', 'Reset the map'] }
+        }
+        case 'clicked': return this.aboutSelected()
         case 'repeat': return this.lastReply ? { ...this.lastReply, pointAt: undefined } : { text: 'I have not said anything yet. Ask me something!', mood: 'think' }
         case 'speak': { const last = this.lastReply; return last ? { ...last, text: `Reading that aloud: ${last.text.replace(/\*\*/g, '')}`, mood: 'talk', effect: 'speak', pointAt: undefined } : { text: 'Nothing to read yet.', mood: 'think' } }
         case 'resize': return { text: it.value === 'smaller' ? 'Shrinking!' : 'Growing!', mood: 'excited', effect: it.value === 'smaller' ? 'smaller' : 'bigger' }
@@ -1817,6 +1871,7 @@ export class Mind {
       mood: 'wave',
       list: [
         { label: 'Get questions for my data', detail: 'Choose a layer and get questions based on its actual fields.', action: { type: 'ask', q: 'Explore data' } },
+        { label: 'Take the tour', detail: 'Show me around · next · stop tour', action: { type: 'ask', q: 'Show me around' } },
         { label: 'Explore the app', detail: 'List tools · open print · list pages · list bookmarks', action: { type: 'ask', q: 'List tools' } },
         { label: 'Control layers', detail: 'Turn on parcels · only show zoning · set parcels opacity to 50%', action: { type: 'ask', q: 'List layers' } },
         { label: 'Find and count', detail: 'Find Smith in parcels · count parcels in view' },
@@ -1827,6 +1882,7 @@ export class Mind {
         { label: 'Ask what things mean', detail: 'What is an easement · what does R-4 mean · what zoning types are there', action: { type: 'ask', q: 'What is a parcel?' } },
         { label: 'Move around', detail: 'Zoom to 39.0639, -108.5506 · scale 1:5000 · go back · satellite view · directions to City Hall' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
+        { label: 'Look back', detail: 'What did I change · undo · try again · what did I click (with a popup open)', action: { type: 'ask', q: 'What did I change' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
       ],
       suggest: [
@@ -1915,6 +1971,60 @@ export class Mind {
     if (!pool.length) return null
     const d = pick(pool)
     return { text: `${V.tipLead()} ${describeDoc(d)}`, actions: d.actions?.slice(0, 2), mood: 'wave' }
+  }
+
+  /** "Show me around": the app's tools one at a time, pointing at each one that is on screen. */
+  startTour (): Reply {
+    const stops = this.ctx.index.docs.filter(d => d.kind === 'widget' && d.title && !/^mappy$/i.test(d.title))
+    if (!stops.length) return { text: 'There are no other tools in this app to show you, so this is the whole tour: the map, and me.', mood: 'wave' }
+    this.tour = { stops, at: -1 }
+    const first = this.tourStep()
+    return { ...first, text: `This app has ${stops.length} tool${stops.length === 1 ? '' : 's'}. I will point at each one; say "next" to move on or "stop tour" to end.\n\n${first.text}` }
+  }
+
+  private tourStep (): Reply {
+    const t = this.tour
+    if (!t) return { text: 'No tour running.', mood: 'talk' }
+    t.at++
+    if (t.at >= t.stops.length) {
+      this.tour = null
+      return { text: 'That is everything. Ask me how to use any of them, or say "list widgets" to see the whole set again.', mood: 'celebrate', pointAt: null, suggest: ['List widgets', 'Help'] }
+    }
+    const d = t.stops[t.at]
+    const ids = d.actions?.[0]?.ids || []
+    let el: HTMLElement | null = null
+    try { el = ids.length ? widgetEl(bestWidgetId(ids, this.ctx.model)) : null; if (el) pulse(el) } catch (e) { }
+    const sentence = clip(String(d.text || '').split(/(?<=[.!?])\s+/)[0] || '', 180)
+    const where = d.where ? ` It lives ${d.where}.` : ''
+    const last = t.at === t.stops.length - 1
+    return {
+      text: `**${d.title}** (${t.at + 1} of ${t.stops.length}).${sentence ? ' ' + sentence : ''}${where}`,
+      mood: el ? 'point' : 'explain',
+      pointAt: el,
+      actions: d.actions?.slice(0, 1),
+      suggest: last ? ['Finish tour', 'Stop tour'] : ['Next', 'Stop tour']
+    }
+  }
+
+  /** The feature whose popup is open, as a short table of its fields. */
+  private aboutSelected (): Reply {
+    const f = this.ctx.live.selectedFeature()
+    if (!f) return { text: 'Nothing is selected. Click a feature on the map to open its popup, then ask me again.', mood: 'think' }
+    const alias = new Map(f.fields.map(x => [x.name, x.alias || x.name]))
+    const skip = /^(?:objectid|oid|fid|shape|shape_*[._ ]?(?:length|area|len|starea|stlength)|globalid|global_id|st_area\(.*|st_length\(.*)$/i
+    const rows: string[][] = []
+    for (const [k, v] of Object.entries(f.attributes)) {
+      if (skip.test(k) || v === null || v === undefined || v === '') continue
+      rows.push([String(alias.get(k) || k), clip(String(v), 80)])
+      if (rows.length >= 12) break
+    }
+    const name = f.title || 'that layer'
+    return {
+      text: rows.length ? `That is a **${name}** feature. Here is what it says:` : `That is a **${name}** feature, but it has no fields I can show.`,
+      mood: 'explain',
+      table: rows.length ? { columns: ['Field', 'Value'], rows } : undefined,
+      suggest: [`How many ${name} in view`, `Fields in ${name}`, `Explore ${name}`].slice(0, 3)
+    }
   }
 
   aboutDoc (id: string): Reply {

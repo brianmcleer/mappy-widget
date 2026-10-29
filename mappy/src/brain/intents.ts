@@ -35,6 +35,16 @@ const RULES: Rule[] = [
   [/^select\s+(?:the\s+)?(.+?)[!.?]*$/i, (m, raw) => ({ name: 'layerOn', target: clean(m[1]), raw })],
   [/^(?:undo|undo that|go back one step|reverse that|undo (?:the )?(?:basemap|background)(?: change)?|put the (?:basemap|background) back)[!.?]*$/i, (m, raw) => ({ name: 'undo', raw })],
   [/^(?:diagnostics|status|what do you know|brain status)[!.?]*$/i, (m, raw) => ({ name: 'diagnostics', raw })],
+  // A guided tour of the app's tools, one stop at a time
+  [/^(?:(?:give me|take me on|start|begin)\s+(?:a |the )?(?:quick |guided )?tour(?: of (?:this |the )?app)?|show me around(?: (?:this |the )?app)?|tour(?: (?:this |the )?app)?|walk me through (?:this |the )?app|what(?:'s| is) (?:in|on) (?:this|the) (?:app|page))[!.?]*$/i, (m, raw) => ({ name: 'tour', raw })],
+  [/^(?:next(?: stop| one| tool| please)?|finish(?: the)? tour|continue(?: the)?(?: tour)?|keep going|go on|and then|what else|what(?:'s| is) next)[!.?]*$/i, (m, raw) => ({ name: 'tourNext', raw })],
+  [/^(?:stop|end|quit|exit|skip)(?: the)? tour[!.?]*$|^(?:that's enough|enough|i'm good|im good)[!.?]*$/i, (m, raw) => ({ name: 'tourStop', raw })],
+  // Run the last request once more (after a server hiccup, or just because)
+  [/^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again)[!.?]*$/i, (m, raw) => ({ name: 'tryAgain', raw })],
+  // What Mappy has changed on the map this session
+  [/^(?:what (?:did|have) (?:i|you|we) (?:change|changed|do|done)(?: so far| to the map| on the map)?|what changed|what(?:'s| is| has) (?:been )?changed|changes|history|show (?:my |the )?(?:changes|history))[!.?]*$/i, (m, raw) => ({ name: 'changes', raw })],
+  // The feature under an open popup
+  [/^(?:what (?:did i|did i just|have i) (?:click|clicked|select|selected|pick|picked)(?: on)?|what(?:'s| is) (?:this|that|selected|highlighted)(?: feature| thing| one)?|tell me about (?:this|that|the selected)(?: feature| one)?|about this(?: feature)?|details|more details|show (?:me )?(?:the )?details)[!.?]*$/i, (m, raw) => ({ name: 'clicked', raw })],
   [/^(?:commands|command guide|examples|what can you do|help)[!.?]*$/i, (m, raw) => ({ name: 'help', raw })],
   [/^(?:forget context|start over|new conversation)[!.?]*$/i, (m, raw) => ({ name: 'forget', raw })],
   [/^(?:zoom|go|fly) to\s+(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)[!?]*$/i, (m, raw) => ({ name: 'coordinates', target: m[1], value: m[2], raw })],

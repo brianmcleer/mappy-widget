@@ -914,6 +914,90 @@ test('task controls respect disabled queries, removed layers, reset, and ranked 
   assert.equal(mind.task(), null)
 })
 
+test('guided tour walks the widgets, next and stop', async () => {
+  const { live } = fixture()
+  const docs = [
+    { id: 'widget:legend:legend', kind: 'widget', title: 'Legend', text: 'Shows the symbols on the map. More words here.', where: 'in the sidebar', actions: [{ type: 'openWidget', ids: ['w1'], label: 'Open Legend' }], src: 'live' },
+    { id: 'widget:print:print', kind: 'widget', title: 'Print', text: 'Makes a PDF of the map.', actions: [{ type: 'openWidget', ids: ['w2'], label: 'Open Print' }], src: 'live' }
+  ]
+  const mind = new Mind({ live, index: new MappyIndex(docs), model: { isPlaced: () => true }, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' })
+  assert.equal(parseIntent('show me around').name, 'tour')
+  assert.equal(parseIntent('give me a tour').name, 'tour')
+  assert.equal(parseIntent('next').name, 'tourNext')
+  assert.equal(parseIntent('next page').name, 'ask')
+  assert.equal(parseIntent('stop tour').name, 'tourStop')
+  const r1 = await mind.respond('show me around')
+  assert.match(r1.text, /2 tools/)
+  assert.match(r1.text, /\*\*Legend\*\* \(1 of 2\)\. Shows the symbols on the map\. It lives in the sidebar\./)
+  assert.deepEqual(r1.suggest, ['Next', 'Stop tour'])
+  const r2 = await mind.respond('next')
+  assert.match(r2.text, /\*\*Print\*\* \(2 of 2\)/)
+  assert.deepEqual(r2.suggest, ['Finish tour', 'Stop tour'])
+  const r3 = await mind.respond('finish tour')
+  assert.match(r3.text, /That is everything/)
+  const r4 = await mind.respond('show me around')
+  assert.match(r4.text, /Legend/)
+  const r5 = await mind.respond('stop tour')
+  assert.match(r5.text, /Tour over/)
+  // "next" with no tour running repeats the last reply instead of erroring.
+  const r6 = await mind.respond('next')
+  assert.match(r6.text, /Tour over/)
+})
+
+test('try again re-runs the last real request, and what did I change reads the history', async () => {
+  const { mind, live, entry } = fixture()
+  assert.equal(parseIntent('try again').name, 'tryAgain')
+  assert.equal(parseIntent('what did I change').name, 'changes')
+  const first = await mind.respond('try again')
+  assert.match(first.text, /Nothing to run again/)
+  const none = await mind.respond('what did i change')
+  assert.match(none.text, /not changed any layers/)
+  await mind.respond('turn on parcels')
+  assert.equal(live.isVisible(entry), true)
+  live.setVisible(entry, false)
+  const again = await mind.respond('try again')
+  assert.match(again.text, /^\(Again: turn on parcels\)/)
+  assert.equal(live.isVisible(entry), true)
+  const done = await mind.respond('what did i change')
+  assert.match(done.text, /What I changed/)
+  assert.ok(done.list.length >= 2)
+  assert.match(done.list[0].label, /^1\. turn on parcels/i)
+  // Control words never become the thing to run again.
+  await mind.respond('undo')
+  const again2 = await mind.respond('again')
+  assert.match(again2.text, /^\(Again: turn on parcels\)/)
+})
+
+test('what did I click reads the open popup', async () => {
+  const { mind, live, layer } = fixture()
+  assert.equal(parseIntent('what did i click').name, 'clicked')
+  assert.equal(parseIntent("what's this").name, 'clicked')
+  assert.equal(parseIntent('what is this app').name, 'about')
+  const none = await mind.respond('what did I click')
+  assert.match(none.text, /Nothing is selected/)
+  live.jmv.view.popup = { selectedFeature: { layer, attributes: { OBJECTID: 7, OWNER: 'Smith', ACRES: 5, Shape__Area: 12 } } }
+  const r = await mind.respond('what did I click')
+  assert.match(r.text, /\*\*Parcels\*\* feature/)
+  assert.deepEqual(r.table.columns, ['Field', 'Value'])
+  assert.deepEqual(r.table.rows, [['Owner name', 'Smith'], ['Lot Area', '5']])
+  assert.deepEqual(r.suggest, ['How many Parcels in view', 'Fields in Parcels', 'Explore Parcels'])
+})
+
+test('typeahead completes starters, layers after verbs and widgets after open', () => {
+  const { live } = fixture()
+  const docs = [{ id: 'widget:legend:legend', kind: 'widget', title: 'Legend', text: 'Symbols.', actions: [{ type: 'openWidget', ids: ['w1'], label: 'Open Legend' }], src: 'live' }]
+  const mind = new Mind({ live, index: new MappyIndex(docs), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' })
+  assert.deepEqual(mind.complete('t'), [])
+  assert.ok(mind.complete('tu').includes('turn on'))
+  assert.deepEqual(mind.complete('turn on par'), ['turn on Parcels'])
+  assert.deepEqual(mind.complete('open le'), ['open Legend'])
+  assert.ok(mind.complete('parc').includes('turn on Parcels'))
+  assert.ok(mind.complete('leg').includes('open Legend'))
+  assert.ok(mind.complete('what did').includes('what did I change'))
+  assert.ok(mind.complete('show me around').length === 0)
+  assert.ok(mind.complete('zzz').length === 0)
+})
+
 ;(async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('PASS', name) } catch (e) { console.error('FAIL', name, e); process.exitCode = 1 }

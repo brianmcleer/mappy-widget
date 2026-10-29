@@ -1,3 +1,13 @@
+## 1.9.0 (2026-10-29)
+
+- Guided tour: "show me around", "give me a tour", "walk me through this app". He visits the app's tools one at a time, says what each does and where it lives, points at it and pulses it when it is on screen, with Next and Stop tour chips ("finish tour" on the last stop).
+- "What did I change": everything he has done to the map's layers this session, oldest first, with Undo and Reset the map offered. "Try again" (also "retry", "once more", "again") runs the last real request once more; a server hiccup reply now carries a Try again chip, and control words ("undo", "next", "yes") never become the thing to run again.
+- "What did I click" (also "what's this", "tell me about this feature", "details") reads the feature under the open popup as a table of its fields, with the layer's counts, fields and explore offered next. ID and shape fields are left out.
+- A light bulb when a popup opens (at most once every three minutes): what he can tell you about that layer's features.
+- Suggestions as you type: after two letters, up to five continuations under the box, from his starters ("turn on", "where are the", "what did I change") and from the app's own names ("turn on Par" offers "turn on Parcels", "open Le" offers "open Legend"). Tab takes the first, Escape hides them, clicking one fills the box.
+- Settings: a Preview section shows him in any of the 80 outfits and 30 acts now, without waiting for the day; Play again replays the act. Picks change nothing in the app.
+- Help lists "Take the tour" and "Look back"; the "new since last time" line mentions the tour, history and suggestions.
+
 ## 1.8.0 (2026-10-29)
 
 - Ask what things mean: a built-in glossary of 70 map and city words in plain language ("what is an easement", "what does floodplain mean", "define right of way"), with the matching layer or tool offered when the app has one. Codes come from the map itself: "what does R-4 mean" reads the layer's own code list (or the deep scan), and falls back to a plain reading of zoning-style and FEMA codes with a note to check the legend.

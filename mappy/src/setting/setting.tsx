@@ -23,6 +23,7 @@ import { ESRI_DOCS_READ } from '../brain/esriDocs'
 import { __setIntl, __t } from './i18n-t'
 import LanguageSection from './LanguageSection'
 import PlaceSection from './PlaceSection'
+import PreviewSection from './PreviewSection'
 import McpSection from './McpSection'
 import { SETTING_CSS, Hint, Note, Sub, FullButton, ButtonPair, Group, toneOf } from './ui'
 import { lexiconFor, readRequest } from '../brain/language'
@@ -273,6 +274,8 @@ export default function Setting (props: SettingProps): any {
       </SettingSection>
 
       <PlaceSection orgName={config.orgName || ''} placeName={config.placeName || ''} placeRegion={config.placeRegion || ''} website={config.website || ''} localFacts={config.localFacts || ''} set={set} />
+
+      <PreviewSection />
 
       <LanguageSection stored={config.languagePack} onChange={(pack: any) => set('languagePack', pack)} />
 

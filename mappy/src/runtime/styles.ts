@@ -250,6 +250,10 @@ const CSS = `
 .mappy-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;flex:0 0 auto}
 .mappy-chip{border:1px solid var(--mappy-chip-border);background:transparent;color:inherit;border-radius:999px;padding:2px 12px;min-height:28px;font-size:.8125rem;cursor:pointer;font-family:inherit}
 .mappy-chip:hover{background:var(--mappy-hover)}
+.mappy-hints{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 4px;flex:0 0 auto}
+.mappy-hint{border:1px dashed var(--mappy-chip-border);background:transparent;color:inherit;border-radius:8px;padding:1px 8px;min-height:22px;font-size:.75rem;opacity:.85;cursor:pointer;font-family:inherit}
+.mappy-hint:hover{background:var(--mappy-hover);opacity:1}
+.mappy-hint:first-child::after{content:' ⇥';opacity:.6}
 .mappy-form{display:flex;gap:6px;padding:8px 10px 10px;border-top:1px solid var(--mappy-line);flex:0 0 auto}
 .mappy-input{flex:1;min-width:0;border:1px solid var(--mappy-border);border-radius:6px;padding:4px 8px;min-height:32px;font-size:.875rem;background:var(--mappy-input-bg);color:var(--mappy-input-fg);font-family:inherit}
 .mappy-input::placeholder{color:var(--mappy-muted);opacity:1}

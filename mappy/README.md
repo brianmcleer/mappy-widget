@@ -8,6 +8,8 @@ He works in any app with no setup. A **deep scan** in the builder makes him much
 
 The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
 
+**New in 1.9:** a guided tour ("show me around" walks the app's tools one at a time, pointing at each), "what did I change" (everything he did to the map, with undo), "try again" after a server hiccup, "what did I click" (the feature under an open popup, as a table), suggestions as you type (Tab takes the first), a light bulb with ideas when a popup opens, and a Preview section in settings to see any of the 80 outfits and 30 acts now.
+
 **New in 1.8:** a plain-language glossary ("what is an easement", "what does R-4 mean"), questions about places ("who owns 250 N 5th St", "closest hydrant to my address", "directions to City Hall"), layers by name ("where are the parks"), labels, basemaps, "go back", comparisons of two addresses, kind pointers for things a map cannot answer, a resizable, draggable chat that survives a reload, an outfit for 80 days of the year (hat, hand, feet and a buddy; "why the pumpkin"), the Clippy pack of little performances (gears, paper airplane, bike ride, wizard hat, a knock on the glass for tips, optional sound effects), and a "Your place" setting with local fun facts built from Wikipedia, so nothing in him is tied to one town. See [the changelog](CHANGELOG.md).
 
 **New in 1.6:** forgives typos like a person would ("trun on parcles", "lsit layres", "zoomin"), reads with a language pack that a GitHub Action improves every week (pull it in settings, no rebuild), and can use the tools of an MCP server you connect (ArcGIS Location Platform MCP, a portal MCP server or your own). See [Language](#language-always-improving) and [MCP server](#mcp-server-optional).
@@ -131,6 +133,9 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | Compare 1718 White Ave and 250 N 5th St | Two parcels side by side |
 | When was parcels updated? / Is this map accurate? | The layer's last edit and source, with a general-reference note |
 | What time does City Hall close? / Do I need a permit? | A kind pointer to the right place, not a wrong answer |
+| Show me around / Next / Stop tour | A guided tour of the app's tools, pointing at each one |
+| What did I change? / Undo / Try again | His layer changes so far, the last one reversed, the last request run again |
+| What did I click? | The feature under the open popup, as a table of its fields |
 | Tell me a joke | Regrets nothing |
 
 ## Configuration

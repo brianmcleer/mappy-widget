@@ -84,6 +84,19 @@ export class LiveMap {
     return true
   }
 
+  /** What Mappy changed on this map so far, oldest first ("turning on Parcels"). */
+  changesSoFar (): string[] { return this.history.map(h => h.label) }
+
+  /** The feature whose popup is open, with its layer's title, or null. */
+  selectedFeature (): { title: string, attributes: { [k: string]: any }, fields: Array<{ name: string, alias?: string }> } | null {
+    try {
+      const f = this.view?.popup?.selectedFeature
+      if (!f) return null
+      const layer = f.layer || f.sourceLayer
+      return { title: String(layer?.title || ''), attributes: f.attributes || {}, fields: (layer?.fields || []).map((x: any) => ({ name: x.name, alias: x.alias })) }
+    } catch (e) { return null }
+  }
+
   undo (): string {
     const item = this.history.pop()
     if (!item) return 'There are no Mappy layer changes to undo on this map.'
@@ -112,6 +125,8 @@ export class LiveMap {
   onBusy: (() => void) | null = null
   /** Layers added, removed, switched, or a layer list appeared: Mappy rebuilds what he sees. */
   onLayersChanged: (() => void) | null = null
+  /** The user opened a popup on a feature: Mappy can offer what he knows about that layer. */
+  onPopup: ((layerTitle: string, feature: any) => void) | null = null
 
   get view (): any { return this.jmv?.view || null }
   get ready (): boolean { return !!this.view }
@@ -145,6 +160,14 @@ export class LiveMap {
         } catch (e) { }
       })
       this.listeners.push(() => h3?.remove?.())
+    } catch (e) { }
+    // The feature under an open popup, for "what did I click" and popup tips.
+    try {
+      const h4 = view.watch?.('popup.selectedFeature', (f: any) => {
+        if (!f) return
+        try { this.onPopup?.(String(f.layer?.title || f.sourceLayer?.title || ''), f) } catch (e) { }
+      })
+      this.listeners.push(() => h4?.remove?.())
     } catch (e) { }
     this.listeners.push(onBridgeChange(() => this.changed(true)))
     // Visibility, scale and tree changes from anywhere (the layer list, presets, other

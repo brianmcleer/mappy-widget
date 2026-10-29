@@ -428,6 +428,13 @@ const WEAR: { [hat: string]: string } = {
 /** Every costume there is, for the builder's preview and the tests. */
 export function allHats (): Hat[] { return Array.from(new Set(CALENDAR.map(e => e.hat))) }
 
+/** Every outfit with the first day it is worn, for the builder's preview: [{ hat: 'pi', name: 'Pi Day' }, ...]. */
+export function allOutfits (): Array<{ hat: Hat, name: string }> {
+  const seen = new Map<Hat, string>()
+  for (const e of CALENDAR) if (!seen.has(e.hat)) seen.set(e.hat, e.name)
+  return Array.from(seen, ([hat, name]) => ({ hat, name })).sort((a, b) => a.name.localeCompare(b.name))
+}
+
 /**
  * How he feels right now, by the clock: a line for the greeting and a mood, so Monday morning
  * and Friday afternoon do not feel the same. Empty at ordinary hours.

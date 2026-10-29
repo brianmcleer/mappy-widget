@@ -154,7 +154,7 @@ export class McpClient {
   /** Opens the session once; later calls wait on the same handshake. */
   connect (): Promise<any> {
     if (!this.ready) {
-      const p = this.post('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'mappy', title: 'Mappy (ArcGIS Experience Builder)', version: '1.8.0' } })
+      const p = this.post('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'mappy', title: 'Mappy (ArcGIS Experience Builder)', version: '1.9.0' } })
         .then(async r => {
           const v = String(r?.protocolVersion || PROTOCOL)
           if (!SUPPORTED.includes(v)) throw new Error(`${this.label} speaks MCP ${v}; Mappy speaks ${SUPPORTED.join(' or ')}.`)

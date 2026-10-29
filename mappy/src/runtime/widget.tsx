@@ -214,10 +214,12 @@ export default function Widget (props: Props): any {
   }, [props.useMapWidgetIds, appConfig, extracted])
 
   const nudgeRef = React.useRef<() => void>(null)
+  const popupRef = React.useRef<(title: string) => void>(null)
   const onActiveViewChange = React.useCallback((jmv: JimuMapView) => {
     live.bind(jmv)
     live.onLayersChanged = () => setLiveVersion(v => v + 1)
     live.onBusy = () => nudgeRef.current?.()
+    live.onPopup = (title) => popupRef.current?.(title)
     setLiveVersion(v => v + 1)
     if (jmv?.view) {
       Promise.resolve(jmv.view.when?.()).then(() => live.warmFields()).then(() => setLiveVersion(v => v + 1)).catch(() => {})
@@ -335,8 +337,8 @@ export default function Widget (props: Props): any {
 
   // The greeting, plus a line for the time of year (Halloween, GIS Day, Thanksgiving...).
   // Once per update, a line about what is new (returning people only; a first visit gets the plain greeting).
-  const NEWS_KEY = '2026-10-29b'
-  const NEWS = 'New since last time: a different outfit for 80 days of the year (ask "what are you wearing"), ask what things mean ("what is an easement", "what does R-4 mean"), directions ("directions to City Hall"), "where are the parks", labels on and off, "satellite view", "go back", and "which is bigger, A or B".'
+  const NEWS_KEY = '2026-10-29c'
+  const NEWS = 'New since last time: say "show me around" for a tour of the app\'s tools, "what did I change" for everything I did to the map, "try again" after a hiccup, and "what did I click" when a popup is open. Suggestions appear as you type (Tab takes the first). Plus an outfit for 80 days of the year and "what is an easement".'
   const greet = React.useCallback(() => {
     const extra = cfg.fun === false ? '' : [season().greeting, dayFeel().line].filter(Boolean).join(' ')
     let news = ''
@@ -386,7 +388,7 @@ export default function Widget (props: Props): any {
       if (reply.effect === 'left' || reply.effect === 'right' || reply.effect === 'otherCorner') { const cur = sideRef.current; const want = reply.effect === 'otherCorner' ? (cur === 'right' ? 'left' : 'right') : reply.effect; if (want !== cur) swapRef.current(false) }
     } catch (e) {
       beaconRef.current?.error(e, 'respond')
-      say('Oops, I tripped over a fold. Try that again?')
+      say('Oops, I tripped over a fold. Try that again?', { text: 'Oops, I tripped over a fold. Try that again?', suggest: ['Try again'] })
       setMood('alert')
     } finally {
       clearTimeout(gears)
@@ -449,6 +451,19 @@ export default function Widget (props: Props): any {
   nudgeRef.current = () => {
     if (!tipsEnabled || open || bulb) return
     offerTip({ text: V.busyMap(), mood: 'attention' })
+  }
+
+  // A popup opened on a feature: once in a while, a bulb with what he can do for that layer.
+  const popupTipAt = React.useRef(0)
+  popupRef.current = (title: string) => {
+    if (!tipsEnabled || open || bulb || !title) return
+    if (Date.now() - popupTipAt.current < 180000) return
+    popupTipAt.current = Date.now()
+    offerTip({
+      text: `You opened a **${title}** feature. I can tell you what it says, count them in view, or list its fields.`,
+      mood: 'knock',
+      suggest: ['What did I click', `How many ${title} in view`, `Fields in ${title}`]
+    })
   }
 
   // ------------------------------------------------------------------ position, drag, keyboard
@@ -738,6 +753,7 @@ export default function Widget (props: Props): any {
       messages={messages}
       busy={busy}
       chips={chips}
+      complete={(p: string) => mind.complete(p)}
       vars={vars}
       placement={placement}
       size={chatSize}

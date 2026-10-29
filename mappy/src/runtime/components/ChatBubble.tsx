@@ -45,6 +45,8 @@ interface Props {
   onReset: () => void
   onMenu: (anchor: HTMLElement) => void
   onTyping: (typing: boolean) => void
+  /** Typeahead: requests that continue what has been typed so far. */
+  complete?: (prefix: string) => string[]
   inputRef: any
   /** Dragging the title bar moves Mappy, and the chat with him. */
   onHeadDrag?: (e: any) => void
@@ -161,7 +163,19 @@ export default function ChatBubble (props: Props): any {
     props.onTyping(false)
   }
 
+  // Typeahead: up to five continuations under the box. Tab takes the first, Escape hides them.
+  const [hints, setHints] = React.useState<string[]>([])
+  const [hintsOff, setHintsOff] = React.useState(false)
+  React.useEffect(() => {
+    if (!props.complete || hintsOff || hIdx >= 0 || draft.trim().length < 2) { setHints([]); return }
+    const h = setTimeout(() => { try { setHints(props.complete!(draft)) } catch (e) { setHints([]) } }, 120)
+    return () => clearTimeout(h)
+  }, [draft, hintsOff, hIdx, props.complete])
+  const takeHint = (h: string) => { setDraft(h.endsWith(' ') ? h : h + ' '); setHints([]); props.inputRef?.current?.focus?.() }
+
   const onKeyDown = (e: any) => {
+    if (e.key === 'Tab' && hints.length && !e.shiftKey) { e.preventDefault(); takeHint(hints[0]); return }
+    if (e.key === 'Escape' && hints.length) { e.preventDefault(); e.stopPropagation(); setHints([]); setHintsOff(true); return }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent?.isComposing) { e.preventDefault(); send() } else if (e.key === 'ArrowUp' && history.length && (!draft || hIdx >= 0)) {
       e.preventDefault()
       const i = Math.min(history.length - 1, hIdx + 1)
@@ -403,6 +417,11 @@ export default function ChatBubble (props: Props): any {
           ))}
         </div>
       )}
+      {hints.length > 0 && !busy && (
+        <div className='mappy-hints' id={props.id + '-hints'} role='group' aria-label='Suggestions, Tab takes the first'>
+          {hints.map((h, i) => <button key={i} type='button' className='mappy-hint' tabIndex={-1} onMouseDown={(e: any) => e.preventDefault()} onClick={() => takeHint(h)}>{h}</button>)}
+        </div>
+      )}
       <form className='mappy-form' onSubmit={(e: any) => { e.preventDefault(); send() }}>
         <label className='mappy-sr' htmlFor={props.id + '-q'}>{__t('askLabel', { name: props.name })}</label>
         <input
@@ -414,7 +433,8 @@ export default function ChatBubble (props: Props): any {
           autoComplete='off'
           maxLength={2000}
           enterKeyHint='send'
-          onChange={(e: any) => { setDraft(e.target.value); props.onTyping(!!e.target.value) }}
+          onChange={(e: any) => { setDraft(e.target.value); setHintsOff(false); props.onTyping(!!e.target.value) }}
+          aria-describedby={hints.length ? props.id + '-hints' : undefined}
           onBlur={() => props.onTyping(false)}
           onKeyDown={onKeyDown}
         />
