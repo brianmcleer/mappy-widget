@@ -127,7 +127,7 @@ export class Mind {
     }
   }
   /** The address "my address" means (kept in this browser). */
-  private myAddress = loadMyAddress()
+  private myAddress = ''
   /** A place question waiting for its place ("Closest to where?", "What's your address?"). */
   private awaitingPlace: { question: string, mine: boolean } | null = null
   /** Names for places asked about by coordinates ("39.0639, -108.5506" is "250 N 5th St"). */
@@ -484,7 +484,7 @@ export class Mind {
       if (/^my address$/i.test(answer)) {
         if (this.myAddress) return this.placeQuestion(placeInto(waiting.question, this.myAddress), '')
         this.awaitingPlace = { question: waiting.question, mine: true }
-        return { text: 'What is your address? I will remember it for next time.', mood: 'think' }
+        return { text: 'What is your address? I will remember it while this page is open.', mood: 'think' }
       }
       if (looksLikePlace(answer) || /,/.test(answer)) {
         if (waiting.mine) this.myAddress = saveMyAddress(answer)
@@ -564,7 +564,7 @@ export class Mind {
       if (!parsePlaceQuestion(placeInto(q, '1 Main St'))) return null
       if (!this.myAddress) {
         this.awaitingPlace = { question: q, mine: true }
-        return { text: 'What is your address? I will remember it for next time.', mood: 'think', actions: [{ type: 'ask', q: 'here', label: 'Use the map center' }] }
+        return { text: 'What is your address? I will remember it while this page is open.', mood: 'think', actions: [{ type: 'ask', q: 'here', label: 'Use the map center' }] }
       }
       q = placeInto(q, this.myAddress)
     }
@@ -2709,13 +2709,14 @@ function placeInto (question: string, place: string): string {
   return `${question.replace(/[?.!]+$/, '')} to ${place}`
 }
 
-function loadMyAddress (): string {
-  try { return (typeof localStorage !== 'undefined' && localStorage.getItem('mappy.myAddress')) || '' } catch (e) { return '' }
-}
-
+/**
+ * "My address" is kept in memory for this page only (never written to browser storage): it is
+ * a person's home address, and the one place it belongs is in their head. "Forget my address"
+ * clears it early.
+ */
 function saveMyAddress (address: string): string {
-  const a = clip(address.trim().replace(/[.!]+$/, ''), 200)
-  try { if (typeof localStorage !== 'undefined') { if (a) localStorage.setItem('mappy.myAddress', a); else localStorage.removeItem('mappy.myAddress') } } catch (e) { }
+  return clip(address.trim().replace(/[.!]+$/, ''), 200)
+}
   return a
 }
 

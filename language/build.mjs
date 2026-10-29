@@ -148,7 +148,10 @@ async function wordnetFile () {
     const body = Buffer.from(await r.arrayBuffer())
     // The release asset is a gzip file; anything else is not written to disk.
     if (body.length < 1000 || body[0] !== 0x1f || body[1] !== 0x8b) throw new Error('WordNet download is not a gzip file')
-    fs.writeFileSync(file, body, { flag: 'wx' })
+    // Decode and re-encode: only a well-formed gzip stream reaches the cache, byte for byte our own.
+    let clean
+    try { clean = zlib.gzipSync(zlib.gunzipSync(body)) } catch (e) { throw new Error('WordNet download is not a readable gzip file') }
+    fs.writeFileSync(file, clean, { flag: 'wx' })
   }
   return file
 }
