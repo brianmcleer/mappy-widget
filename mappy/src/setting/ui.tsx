@@ -90,6 +90,6 @@ export function Group (props: { title: string, children: any, open?: boolean }):
 /** Whether a status message reads as a failure, for its color. */
 export function toneOf (msg: string): Tone {
   if (/could not|failed|error|refused|must|needs a sign-in|answered [45]\d\d|not reach|took too long/i.test(msg)) return 'bad'
-  if (/^connected|updated|ready|done|saved|already have/i.test(msg)) return 'ok'
+  if (/^(?:connected|updated|ready|done|saved|already have)/i.test(msg)) return 'ok'
   return 'info'
 }

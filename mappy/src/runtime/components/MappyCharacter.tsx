@@ -14,6 +14,7 @@
 */
 import { React } from 'jimu-core'
 import { seasonalHat } from '../../brain/fun'
+import { rand } from '../../brain/random'
 import { Costume, HEART } from './Costumes'
 import { Act, ACT_MOODS, IDLE_ACTS } from './Acts'
 
@@ -137,7 +138,7 @@ export default function MappyCharacter (props: Props): any {
       const next_ = acts[skitIndex.current++ % acts.length]
       setSkit(next_)
       finish = setTimeout(() => setSkit(''), (IDLE_ACTS as readonly string[]).includes(next_) ? 4400 : 3600)
-      next = setTimeout(perform, 16000 + Math.random() * 8000)
+      next = setTimeout(perform, 16000 + rand() * 8000)
     }
     next = setTimeout(perform, 8000)
     return () => { clearTimeout(next); clearTimeout(finish) }

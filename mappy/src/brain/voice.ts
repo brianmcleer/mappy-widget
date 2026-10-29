@@ -3,7 +3,8 @@
   Every line is plain English; the widget's UI strings live in translations/default.ts.
 */
 
-export function pick<T> (arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
+import { pick } from './random'
+export { pick }
 
 export const V = {
   greet: (name: string, app: string) => pick([

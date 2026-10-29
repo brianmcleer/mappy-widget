@@ -569,7 +569,7 @@ export default function Widget (props: Props): any {
   const animate = () => {
     lastInteraction.current = Date.now()
     const moods: Mood[] = ['celebrate', 'wave', 'love', 'excited', 'confused', 'pleased', 'search', 'think', 'attention', 'listen', 'airplane', 'wizardy', 'artsy', 'techy', 'bike', 'trash', 'congratulate', 'processing', 'knock']
-    setMood(moods[Math.floor(Math.random() * moods.length)])
+    setMood(pick(moods))
   }
 
   const hide = () => {

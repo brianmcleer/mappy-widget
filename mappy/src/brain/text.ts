@@ -134,6 +134,13 @@ export function tokenize (text: string, dropStop = true): string[] {
 
 const ENTITIES: { [k: string]: string } = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" }
 
+/** Tags removed, repeated until nothing is left that looks like one ("<<b>script>" would otherwise survive one pass). */
+export function stripTags (s: string): string {
+  let t = String(s || '')
+  for (let i = 0; i < 5; i++) { const n = t.replace(/<[^>]*>?/g, ''); if (n === t) break; t = n }
+  return t
+}
+
 /** HTML to readable text. Keeps link targets as "text (url)". */
 export function stripHtml (html: string): string {
   if (!html) return ''
@@ -142,7 +149,7 @@ export function stripHtml (html: string): string {
   s = s.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
   s = s.replace(/<exp[^>]*>[\s\S]*?<\/exp>/gi, ' ')
   s = s.replace(/<a\s[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, txt) => {
-    const t = txt.replace(/<[^>]+>/g, '').trim()
+    const t = stripTags(txt).trim()
     if (!t || t === href) return ' ' + href + ' '
     return ' ' + t + ' (' + href.replace(/^mailto:/, '') + ') '
   })

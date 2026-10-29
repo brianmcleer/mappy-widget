@@ -27,8 +27,8 @@ function buildPack (widgetsRoot, widgetRoot, watch = {}) {
   const pack = { version: 1, widgets: [], notes: [] }
   watch.context?.(widgetsRoot)
   function read (filename) {
-    if (!fs.existsSync(filename)) { watch.missing?.(filename); return '' }
-    const info = fs.lstatSync(filename)
+    let info
+    try { info = fs.lstatSync(filename) } catch (e) { watch.missing?.(filename); return '' }
     if (!info.isFile() || info.isSymbolicLink() || info.size > 2000000) return ''
     watch.file?.(filename)
     return fs.readFileSync(filename, 'utf8')

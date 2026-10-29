@@ -160,7 +160,8 @@ class ArcGIS:
         except urllib.error.HTTPError as e:
             raise ToolError('The GIS server answered %s.' % e.code)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise ToolError('Could not reach the GIS server (%s).' % getattr(e, 'reason', e))
+            log.warning('GIS server unreachable: %s', getattr(e, 'reason', e))
+            raise ToolError('Could not reach the GIS server.')
         try:
             out = json.loads(body.decode('utf-8', 'replace'))
         except ValueError:
@@ -1410,7 +1411,7 @@ class Upstream:
             raise ValueError('upstream %s: auth must be none, api_key, user_token or user_or_key' % self.name)
         self.key = (os.environ.get(spec.get('api_key_env') or '') or '').strip()
         if self.auth in ('api_key', 'user_or_key') and not self.key:
-            log.warning('Upstream %s: no API key in environment variable %s', self.name, spec.get('api_key_env') or '(api_key_env not set)')
+            log.warning('Upstream %s: the environment variable named by api_key_env is empty or api_key_env is not set', self.name)
         # A user's Portal token only ever goes to a server in your own domain (or one you vouch for).
         portal_host = urllib.parse.urlparse(cfg.get('portal_url') or '').hostname or ''
         self.token_ok = bool(spec.get('trust_with_user_token')) or (portal_host and _registrable(portal_host) == _registrable(self.host)) or local

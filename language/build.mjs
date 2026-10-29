@@ -34,7 +34,7 @@ const CHECK = args.includes('--check')
 const WORDNET_FALLBACK = 'https://github.com/globalwordnet/english-wordnet/releases/download/2025-edition/english-wordnet-2025.xml.gz'
 
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch (e) { return d } }
-const writeIfChanged = (f, text) => { if (fs.existsSync(f) && fs.readFileSync(f, 'utf8') === text) return false; fs.writeFileSync(f, text); return true }
+const writeIfChanged = (f, text) => { let old = null; try { old = fs.readFileSync(f, 'utf8') } catch (e) { old = null }; if (old === text) return false; fs.writeFileSync(f, text); return true }
 const log = (...m) => console.log('[language]', ...m)
 
 // ---------------------------------------------------------------- the widget's own code
@@ -139,11 +139,16 @@ async function wordnetFile () {
     if (asset) url = asset.browser_download_url
   } catch (e) { }
   const file = path.join(cache, path.basename(url))
-  if (!fs.existsSync(file)) {
+  let cached = false
+  try { cached = fs.statSync(file).size > 0 } catch (e) { cached = false }
+  if (!cached) {
     log('downloading', url)
     const r = await fetch(url)
     if (!r.ok) throw new Error('WordNet download failed: ' + r.status)
-    fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()))
+    const body = Buffer.from(await r.arrayBuffer())
+    // The release asset is a gzip file; anything else is not written to disk.
+    if (body.length < 1000 || body[0] !== 0x1f || body[1] !== 0x8b) throw new Error('WordNet download is not a gzip file')
+    fs.writeFileSync(file, body, { flag: 'wx' })
   }
   return file
 }

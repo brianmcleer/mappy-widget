@@ -6,6 +6,8 @@
   never before the person has interacted with the page (browsers block sound until then).
 */
 
+import { rand } from '../brain/random'
+
 export type SoundName = 'pop' | 'whoosh' | 'knock' | 'tada' | 'alert' | 'boing' | 'tick' | 'ding'
 
 let ctx: AudioContext | null = null
@@ -40,7 +42,7 @@ function noise (ac: AudioContext, dur: number, gain: number, at = 0, lowpass = 1
   const n = Math.floor(ac.sampleRate * dur)
   const buf = ac.createBuffer(1, n, ac.sampleRate)
   const d = buf.getChannelData(0)
-  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n)
+  for (let i = 0; i < n; i++) d[i] = (rand() * 2 - 1) * (1 - i / n)
   const src = ac.createBufferSource(); src.buffer = buf
   const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lowpass
   const g = ac.createGain(); g.gain.value = gain

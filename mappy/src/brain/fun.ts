@@ -98,7 +98,7 @@ const SONG = [
   '🎵 Twinkle twinkle little pin,\n🎵 Where on Earth are you placed in?\n🎵 Up above the parcel line,\n🎵 Geocoded, looking fine! 🎵'
 ]
 
-function pick<T> (arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
+import { rand, pick, shuffle } from './random'
 
 /** Hands out items without repeats until all are used, then starts over. */
 class Deck<T> {
@@ -106,7 +106,7 @@ class Deck<T> {
   constructor (private readonly all: T[]) {}
   get size (): number { return this.all.length }
   draw (): T {
-    if (!this.left.length) this.left = [...this.all].sort(() => Math.random() - 0.5)
+    if (!this.left.length) this.left = shuffle(this.all)
     return this.left.pop() as T
   }
 }
@@ -158,8 +158,8 @@ export class Fun {
       // This time of year's jokes come up about a third of the time.
       const extra = season().jokes
       // Each seasonal joke once per season, mixed in among the regular ones.
-      if (extra.length && this.seasonKey !== extra[0]) { this.seasonKey = extra[0]; this.seasonJokes = [...extra].sort(() => Math.random() - 0.5) }
-      const text = this.seasonJokes.length && Math.random() < 0.34 ? this.seasonJokes.pop() as string : this.jokes.draw()
+      if (extra.length && this.seasonKey !== extra[0]) { this.seasonKey = extra[0]; this.seasonJokes = shuffle(extra) }
+      const text = this.seasonJokes.length && rand() < 0.34 ? this.seasonJokes.pop() as string : this.jokes.draw()
       return { text, mood: 'celebrate', suggest: ['Another joke', 'Tell me a knock knock joke'] }
     }
     if (/^(?:what(?:'s| is) (?:today|the occasion|special about today)|any holidays?|is it a holiday)$/.test(t)) { const s = season(); return { text: s.greeting || 'Just a regular great day for mapping. 🗺️', mood: s.mood || 'happy' } }
@@ -186,7 +186,7 @@ export class Fun {
       // "local fact" wants one about this place, when the app has any.
       if (/\blocal\b/.test(t) && this.localFacts.size) return { text: `📍 ${this.localFacts.draw()}`, mood: 'pleased', suggest: ['Another fact', 'Tell me a joke'] }
       // Local facts (from settings) come up about half the time when the app has them.
-      const local = this.localFacts.size && Math.random() < 0.5
+      const local = this.localFacts.size && rand() < 0.5
       return { text: `${local ? '📍' : '🗺️'} ${local ? this.localFacts.draw() : this.facts.draw()}`, mood: 'pleased', suggest: ['Another fact', 'Tell me a joke'] }
     }
 
@@ -196,9 +196,9 @@ export class Fun {
     if (/^(?:party|party mode|let'?s party|celebrate|confetti)$/.test(t)) return { text: '🎉 PARTY MODE! Everybody grab a legend!', mood: 'party', effect: 'party' }
     if (/^(?:take me to |go to |show me |where is )?null island$/.test(t)) return { text: 'Welcome to Null Island 🏝️ at 0°, 0°! Population: every address that ever failed to geocode. Lovely this time of year.', mood: 'excited', effect: 'nullIsland', suggest: ['Take me home'] }
     if (/^(?:magic (?:8|eight)[ -]?ball|magic compass|ask the (?:magic )?compass)\b/.test(t)) return { text: `🧭 ${pick(COMPASS)}`, mood: 'think' }
-    if (/^(?:flip a coin|coin flip|heads or tails)$/.test(t)) return { text: Math.random() < 0.5 ? '🪙 Heads!' : '🪙 Tails!', mood: 'excited' }
+    if (/^(?:flip a coin|coin flip|heads or tails)$/.test(t)) return { text: rand() < 0.5 ? '🪙 Heads!' : '🪙 Tails!', mood: 'excited' }
     const dice = t.match(/^roll (?:a |the )?(?:(\d+)[- ]sided )?(?:die|dice|d(\d+))$/)
-    if (dice) { const sides = Math.max(2, Math.min(100, Number(dice[1] || dice[2]) || 6)); return { text: `🎲 You rolled a **${1 + Math.floor(Math.random() * sides)}**${sides !== 6 ? ` (d${sides})` : ''}.`, mood: 'excited' } }
+    if (dice) { const sides = Math.max(2, Math.min(100, Number(dice[1] || dice[2]) || 6)); return { text: `🎲 You rolled a **${1 + Math.floor(rand() * sides)}**${sides !== 6 ? ` (d${sides})` : ''}.`, mood: 'excited' } }
     const rps = t.match(/^(?:(?:let'?s )?play )?(?:rock paper scissors[ ,:]*)?(rock|paper|scissors)$/)
     if (rps || /^(?:play )?rock paper scissors$/.test(t)) {
       if (!rps) return { text: 'Ready! Say rock, paper or scissors.', mood: 'excited' }

@@ -124,7 +124,7 @@ export function rewritePhrasing (text: string): string {
   for (const [from, to] of rewrites) {
     if (from.includes('*')) {
       const m = text.match(template(from))
-      if (m && m[1]) return to.replace('*', () => m[1])
+      if (m && m[1]) return to.split('*').join(m[1])
       continue
     }
     if (low === from || low.startsWith(from + ' ')) return to + text.slice(from.length)

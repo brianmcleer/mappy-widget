@@ -33,6 +33,19 @@ if (!pack) {
   pack = await r.json()
 }
 if (!pack || pack.format !== 1 || !/^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/.test(pack.version || '')) { console.error('That is not a Mappy language pack.'); process.exit(1) }
+// Only the pack's known fields, with their expected shapes, reach the generated file.
+const str = (v) => typeof v === 'string' ? v : ''
+const strs = (v) => Array.isArray(v) ? v.filter(x => typeof x === 'string') : []
+pack = {
+  format: 1,
+  version: str(pack.version),
+  synonyms: Array.isArray(pack.synonyms) ? pack.synonyms.map(strs).filter(g => g.length > 1) : [],
+  rewrites: Array.isArray(pack.rewrites) ? pack.rewrites.filter(r => Array.isArray(r) && r.length === 2 && r.every(x => typeof x === 'string')) : [],
+  fixes: Object.fromEntries(Object.entries(pack.fixes || {}).filter(([k, v]) => typeof k === 'string' && typeof v === 'string')),
+  words: str(pack.words),
+  known: pack.known && typeof pack.known === 'object' ? { m: Number(pack.known.m) || 0, k: Number(pack.known.k) || 0, n: Number(pack.known.n) || 0, b64: str(pack.known.b64) } : undefined,
+  stats: pack.stats && typeof pack.stats === 'object' ? Object.fromEntries(Object.entries(pack.stats).filter(([, v]) => typeof v === 'number')) : undefined
+}
 
 const have = (fs.readFileSync(file, 'utf8').match(/"version":"([^"]+)"|version: '([^']+)'/) || []).slice(1).find(Boolean) || '0000.00.00'
 const newer = (a, b) => { const x = a.split('.').map(Number); const y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) } return false }

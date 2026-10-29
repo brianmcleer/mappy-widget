@@ -482,7 +482,7 @@ function fillPlaceQuestion (tool: McpTool, text: string, map?: MapContext): { ar
   }
   if (pq.feet !== undefined) {
     const d = keys.find(k => /^(distance|radius|buffer)/i.test(k))
-    if (d) args[d] = /mile/i.test(d) ? Math.round(pq.feet / 5280 * 100) / 100 : /meter|metre|_m$/i.test(d) ? Math.round(pq.feet / 3.28084) : pq.feet
+    if (d) args[d] = /mile/i.test(d) ? Math.round(pq.feet / 5280 * 100) / 100 : (/meter|metre/i.test(d) || /_m$/i.test(d)) ? Math.round(pq.feet / 3.28084) : pq.feet
   }
   for (const k of keys) if (args[k] === undefined && props[k].default !== undefined) args[k] = props[k].default
   const missing = required.filter(k => args[k] === undefined || args[k] === '')

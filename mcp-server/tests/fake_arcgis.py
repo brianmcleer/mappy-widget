@@ -176,7 +176,7 @@ def query(lid):
         inside = -108.5510 <= g['x'] <= -108.5500 and 39.0635 <= g['y'] <= 39.0645
         rows = rows[:1] if inside else []
     else:
-        words = re.findall(r"LIKE '%(.+?)%'", where)
+        words = re.findall(r"LIKE '%((?:[^']|'')*)%'", where)
         if words:
             def hit(r):
                 text = ' '.join(str(v) for v in r.values()).upper()

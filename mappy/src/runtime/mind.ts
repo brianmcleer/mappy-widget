@@ -32,7 +32,8 @@ import type { TableRequest, TableResult } from './tableWidget'
 import { Fun, type Place } from '../brain/fun'
 import { definitionAsk, lookupTerm, codeGuess, outOfScope, CODE_SHAPE } from '../brain/glossary'
 import { V, pick } from '../brain/voice'
-import { flat, clip, tokenize } from '../brain/text'
+import { rand } from '../brain/random'
+import { flat, clip, tokenize, stripTags } from '../brain/text'
 import type { LiveMap, LayerEntry, ToggleResult } from './live'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId } from './navigate'
 import { isShown, waitForBridge } from './layerList'
@@ -1256,7 +1257,7 @@ export class Mind {
       else if (location.lat && location.lon && args[location.lat] !== undefined && args[location.lon] !== undefined) { updated.place = `${args[location.lat]}, ${args[location.lon]}`; updated.here = false }
       for (const key of Object.keys(args)) {
         if (/^(max_?results|limit|count|num)$/i.test(key)) updated.limit = args[key]
-        if (/^(distance|radius|buffer)/i.test(key)) updated.feet = /mile/i.test(key) ? args[key] * 5280 : /meter|metre|_m$/i.test(key) ? args[key] * 3.28084 : args[key]
+        if (/^(distance|radius|buffer)/i.test(key)) updated.feet = /mile/i.test(key) ? args[key] * 5280 : (/meter|metre/i.test(key) || /_m$/i.test(key)) ? args[key] * 3.28084 : args[key]
       }
       this.rememberPlaceQuestion(updated)
     }
@@ -1275,7 +1276,7 @@ export class Mind {
       const g = popup?.selectedFeature?.geometry
       const at = popup?.visible ? (popup?.location || (g && (g.type === 'point' ? g : g.extent?.center))) : null
       const ll = at ? this.toLatLon(at) : null
-      if (ll) return { label: String(popup?.selectedFeature?.attributes?.Match_addr || popup?.title || '').replace(/<[^>]+>/g, '').slice(0, 80) || 'that spot', lat: ll[0], lon: ll[1], popup: true }
+      if (ll) return { label: stripTags(String(popup?.selectedFeature?.attributes?.Match_addr || popup?.title || '')).slice(0, 80) || 'that spot', lat: ll[0], lon: ll[1], popup: true }
     } catch (e) { }
     // A Search widget result: the marker it drops on the map (Esri's Search adds its result
     // graphic to the view, often without a popup). The newest one still on screen wins.
@@ -1294,7 +1295,7 @@ export class Mind {
         if (!ll) continue
         if (ext && !(ll[1] >= ext[0] && ll[1] <= ext[2] && ll[0] >= ext[1] && ll[0] <= ext[3])) continue
         const a = g.attributes || {}
-        const label = String(a.Match_addr || a.LongLabel || a.ShortLabel || a.Address || a.name || a.Name || g.popupTemplate?.title || '').replace(/<[^>]+>/g, '').split(',')[0].slice(0, 80)
+        const label = stripTags(String(a.Match_addr || a.LongLabel || a.ShortLabel || a.Address || a.name || a.Name || g.popupTemplate?.title || '')).split(',')[0].slice(0, 80)
         return { label: label ? niceAddress(label) : 'the search result', lat: ll[0], lon: ll[1] }
       }
     } catch (e) { }
@@ -1657,7 +1658,7 @@ export class Mind {
           return { text: `Map scale set to 1:${scale.toLocaleString()}.`, mood: 'acknowledge' }
         })
         case 'greet': return { text: V.hello(), mood: 'wave' }
-        case 'thanks': return /(?:good|great|nice|awesome|amazing) (?:job|work|one)|well done|nailed it|you did it|bravo/i.test(it.raw || input) ? { text: pick(['🏆 Thank you! I\'d like to thank my layers, my projection and you.', '🏆 Aw, a trophy moment! Right back at you.', '🏆 We did it together. Mostly you typed, I folded.']), mood: 'congratulate' } : /love|best|bff|buddy|pal|amazing|awesome|cute|hug|high five|rock|good boy|smart/i.test(it.raw || input) ? { text: V.bff(), mood: 'love' } : { text: V.thanks(), mood: Math.random() < 0.5 ? 'love' : 'pleased' }
+        case 'thanks': return /(?:good|great|nice|awesome|amazing) (?:job|work|one)|well done|nailed it|you did it|bravo/i.test(it.raw || input) ? { text: pick(['🏆 Thank you! I\'d like to thank my layers, my projection and you.', '🏆 Aw, a trophy moment! Right back at you.', '🏆 We did it together. Mostly you typed, I folded.']), mood: 'congratulate' } : /love|best|bff|buddy|pal|amazing|awesome|cute|hug|high five|rock|good boy|smart/i.test(it.raw || input) ? { text: V.bff(), mood: 'love' } : { text: V.thanks(), mood: rand() < 0.5 ? 'love' : 'pleased' }
         case 'whoami': return { text: V.whoami(this.ctx.name), mood: 'wave' }
         case 'help': return withAct(this.help(), 'explain')
         case 'joke': return this.ctx.fun === false ? { text: 'Jokes are turned off in this app. I am all business today.', mood: 'talk' } : { text: V.joke(), mood: 'celebrate' }
