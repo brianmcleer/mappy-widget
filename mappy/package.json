@@ -1,6 +1,6 @@
 {
   "name": "mappy",
-  "version": "1.6.1",
+  "version": "1.8.0",
   "scripts": {
     "test": "node tests/local-assistant.cjs && node tests/typos.cjs && node tests/mcp.cjs"
   },

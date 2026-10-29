@@ -6,6 +6,8 @@ He works in any app with no setup. A **deep scan** in the builder makes him much
 
 The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
 
+**New in 1.8:** a plain-language glossary ("what is an easement", "what does R-4 mean"), questions about places ("who owns 250 N 5th St", "closest hydrant to my address", "directions to City Hall"), layers by name ("where are the parks"), labels, basemaps, "go back", comparisons of two addresses, kind pointers for things a map cannot answer, a resizable, draggable chat that survives a reload, an outfit for 80 days of the year (hat, hand, feet and a buddy; "why the pumpkin"), the Clippy pack of little performances (gears, paper airplane, bike ride, wizard hat, a knock on the glass for tips, optional sound effects), and a "Your place" setting with local fun facts built from Wikipedia, so nothing in him is tied to one town. See [the changelog](CHANGELOG.md).
+
 **New in 1.6:** forgives typos like a person would ("trun on parcles", "lsit layres", "zoomin"), reads with a language pack that a GitHub Action improves every week (pull it in settings, no rebuild), and can use the tools of an MCP server you connect (ArcGIS Location Platform MCP, a portal MCP server or your own). See [Language](#language-always-improving) and [MCP server](#mcp-server-optional).
 
 **New in 1.3:** automatic initial setup, one refresh button, layer selection/expansion, paged tables and CSV, ranked and filtered summaries, visibility troubleshooting, additional character routines, and desktop floating in browsers supporting Document Picture-in-Picture. See [the local assistant guide](docs/local-assistant.md) for examples and limits.
@@ -118,6 +120,15 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | How many parcels in view? | Counts features |
 | Find 123 Main St / Smith in parcels / 2945-123-00-001 | Searches features, zooms, highlights, opens the popup |
 | Zoom to downtown / Zoom to full extent / Where am I? | Bookmarks, layers, home, map center |
+| Who owns 250 N 5th St? / What zoning is it in? / When is trash pickup? / Is it in a flood zone? | Place questions, through the in-house GIS server or the app's own parcel layer |
+| Closest hydrant to my address / Hydrants within 500 ft / Directions to City Hall | Nearest, within a distance, straight-line distance and a directions link |
+| What is an easement? / What does R-4 mean? / What zoning types are there? | Plain-language meanings, the map's own code lists |
+| Where are the parks? / What parks are there? / Label the parcels | The layer on and zoomed, its first names, labels |
+| Which zoning has the most parcels? / Largest parcel / Parcels bigger than 5 acres | Answers first, then the table |
+| Satellite view / What is the scale? / Go back / Reset the map | Basemaps from the portal, scale in plain words, the previous view |
+| Compare 1718 White Ave and 250 N 5th St | Two parcels side by side |
+| When was parcels updated? / Is this map accurate? | The layer's last edit and source, with a general-reference note |
+| What time does City Hall close? / Do I need a permit? | A kind pointer to the right place, not a wrong answer |
 | Tell me a joke | Regrets nothing |
 
 ## Configuration
@@ -140,6 +151,11 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | Tips appear as | Light bulb | A bulb over his head, or the bubble opens |
 | Type answers out | On | Skipped under reduced motion |
 | Offer "Read answers aloud" | On | Browser speech, off until the user turns it on in his menu |
+| Jokes, games and holiday hats | On | Easter eggs and an outfit for 80 days of the year |
+| Sound effects | Off | Synthesized pop, knock, ta-da, wobble, boing; silent under reduced motion |
+| Your place: Organization | (portal org name) | "the City", "Mesa County", "the Water District": used in his wording |
+| Your place: Place name, Website | none | The town or area; the website is offered as a link when he points people off the map |
+| Your place: Local fun facts | none | One per line; "Build facts from Wikipedia" fills it from the place's page and nearby landmarks (CC BY-SA) for you to prune |
 | Usage telemetry | Off | Optional Beacon counts and errors (below); explicit opt-in required |
 
 The deep scan result is stored in the widget config (capped near 900 KB; the least useful facts are dropped first on very large maps). **Clear brain** removes it.

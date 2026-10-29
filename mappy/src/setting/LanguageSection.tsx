@@ -6,7 +6,8 @@
 */
 import { React } from 'jimu-core'
 import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
-import { Button, TextInput, Label } from 'jimu-ui'
+import { Button, TextInput } from 'jimu-ui'
+import { Hint, Note, Sub, FullButton, ButtonPair, toneOf } from './ui'
 import BUNDLED from '../brain/languagePack'
 import { LANGUAGE_REPO, LANGUAGE_URL, applyLanguagePack, bundledVersion, cleanPack, compareVersions, languagePack } from '../brain/language'
 
@@ -24,7 +25,6 @@ export default function LanguageSection (props: Props): any {
   React.useEffect(() => { if (stored) applyLanguagePack(stored) }, [stored?.version])
   const using = (stored?.version && compareVersions(stored.version, bundledVersion()) > 0) ? stored : null
   const p = languagePack()
-  const hint: any = { fontSize: 12, opacity: 0.8, lineHeight: 1.4 }
 
   const update = async () => {
     setBusy(true); setStatus('Checking for a newer language pack...')
@@ -52,34 +52,28 @@ export default function LanguageSection (props: Props): any {
   const reportUrl = `https://github.com/${LANGUAGE_REPO}/issues/new?template=mappy-missed.yml&labels=language` +
     `&title=${encodeURIComponent('Mappy missed: ' + typed.slice(0, 60))}&typed=${encodeURIComponent(typed)}&meant=${encodeURIComponent(meant)}`
 
+  const full: any = { width: '100%' }
   return (
     <SettingSection title='Language'>
-      <SettingRow>
-        <div style={hint} role='status' aria-live='polite'>
-          {`Reading with language pack ${p.version}${using ? ' (downloaded)' : ' (built in)'}: ${p.known?.n || (p.words ? p.words.split(' ').filter(Boolean).length : 0)} known English words, ${p.synonyms.length} synonym groups, ${p.rewrites.length} phrasings, ${Object.keys(p.fixes).length} known misspellings${p.stats?.typoRobustness ? `; reads through ${p.stats.typoRobustness}% of test typos` : ''}. Mappy forgives typos either way.`}
-        </div>
+      <Hint live>
+        {`Reading with language pack ${p.version}${using ? ' (downloaded)' : ' (built in)'}: ${(p.known?.n || (p.words ? p.words.split(' ').filter(Boolean).length : 0)).toLocaleString()} English words, ${p.synonyms.length} synonym groups, ${p.rewrites.length} phrasings, ${Object.keys(p.fixes).length} known misspellings${p.stats?.typoRobustness ? `. Reads through ${p.stats.typoRobustness}% of test typos` : ''}.`}
+      </Hint>
+      <Hint>A GitHub Action improves the pack every week. Get the newest one here; it is saved with this app, so people using the app download nothing.</Hint>
+      <ButtonPair>
+        <Button type='primary' disabled={busy} onClick={update}>{busy ? 'Checking...' : 'Get language updates'}</Button>
+        {using && <Button type='secondary' disabled={busy} onClick={useBundled}>Use built-in pack</Button>}
+      </ButtonPair>
+      <Note tone={busy ? 'info' : toneOf(status)}>{status}</Note>
+
+      <Sub>Teach Mappy a phrase</Sub>
+      <Hint>Did he miss something? Type what was asked and a request he already understands. This opens a short GitHub report; the next weekly build tests it and learns it.</Hint>
+      <SettingRow label='What was typed' flow='wrap'>
+        <TextInput size='sm' style={full} value={typed} placeholder='make parcels visable' aria-label='What was typed' onChange={(e: any) => setTyped(e.target.value)} />
       </SettingRow>
-      <SettingRow>
-        <div style={hint}>A GitHub Action improves the language pack every week from open word data and from phrases people report. Pull the newest one here; it is stored with this app, so people using the app download nothing.</div>
+      <SettingRow label='What it means' flow='wrap'>
+        <TextInput size='sm' style={full} value={meant} placeholder='turn on parcels' aria-label='What it means' onChange={(e: any) => setMeant(e.target.value)} />
       </SettingRow>
-      <SettingRow>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: '100%' }}>
-          <Button type='primary' disabled={busy} onClick={update}>Get language updates</Button>
-          {using && <Button type='tertiary' disabled={busy} onClick={useBundled}>Use built-in pack</Button>}
-        </div>
-      </SettingRow>
-      {status && <SettingRow><div style={hint} role='status' aria-live='polite'>{status}</div></SettingRow>}
-      <SettingRow><Label style={{ fontWeight: 600, marginTop: 8 }}>Teach Mappy a phrase</Label></SettingRow>
-      <SettingRow><div style={hint}>Did he miss something? Type what was asked and what it should mean (a request he already understands). This opens a short report on GitHub; the next weekly build tests it and learns it.</div></SettingRow>
-      <SettingRow label='What was typed'>
-        <TextInput size='sm' style={{ width: '100%' }} value={typed} placeholder='make parcels visable' onChange={(e: any) => setTyped(e.target.value)} />
-      </SettingRow>
-      <SettingRow label='What it means'>
-        <TextInput size='sm' style={{ width: '100%' }} value={meant} placeholder='turn on parcels' onChange={(e: any) => setMeant(e.target.value)} />
-      </SettingRow>
-      <SettingRow>
-        <Button size='sm' disabled={!typed.trim() || !meant.trim()} onClick={() => window.open(reportUrl, '_blank', 'noopener')}>Report on GitHub</Button>
-      </SettingRow>
+      <FullButton type='secondary' disabled={!typed.trim() || !meant.trim()} onClick={() => window.open(reportUrl, '_blank', 'noopener')}>Report on GitHub</FullButton>
     </SettingSection>
   )
 }

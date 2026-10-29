@@ -12,6 +12,7 @@ export const V = {
     `Oh, hello! It looks like you're exploring ${app}. Want a hand?`
   ]),
   hello: () => pick(['Hello again!', 'Hey! What can I find for you?', 'Hi! Point me at something.']),
+  bff: () => pick(['Aww, you\'re my favorite person to map with!', 'Best friends, folded forever.', 'Right back at you! *happy crinkle*', 'You just made my whole legend light up.']),
   thanks: () => pick(["Anytime! That's what I'm folded for.", 'Happy to help!', 'You got it.', 'Glad that worked!']),
   whoami: (name: string) => `I'm ${name}, a tiny map who lives in this app. I've read every page, tool, layer and link in it, so I can find things, open tools and switch layers for you. I run entirely in your browser.`,
   thinking: () => pick(['Unfolding...', 'Checking the legend...', 'Reading the fine print...', 'Consulting my compass...']),

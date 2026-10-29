@@ -22,6 +22,7 @@ import type { FieldInfo, LayerInfo } from '../brain/layers'
 import { layerKey, flat, tokenize } from '../brain/text'
 import { findBridge, onBridgeChange } from './layerList'
 import type { LayerListBridge } from './layerList'
+import { fieldLabel } from '../brain/fields'
 
 export interface LayerEntry {
   key: string
@@ -99,6 +100,10 @@ export class LiveMap {
   }
   jmv: JimuMapView | null = null
   private home: any = null
+  /** Where the map has been, newest last, for "go back". */
+  private extents: any[] = []
+  private goingBack = false
+  private basemaps: any[] | null = null
   private highlightHandles: any[] = []
   private listeners: Array<() => void> = []
   private dragCount = 0
@@ -118,11 +123,28 @@ export class LiveMap {
     this.jmv = jmv
     const view = this.view
     if (!view) return
-    try { view.when?.(() => { try { this.home = view.viewpoint?.clone?.() || null } catch (e) { } }) } catch (e) { }
+    try { view.when?.(() => { try { this.home = view.viewpoint?.clone?.() || null; const vp = view.viewpoint?.clone?.(); if (vp && !this.extents.length) this.extents.push(vp) } catch (e) { } }) } catch (e) { }
     try {
       const h1 = view.on('drag', (evt: any) => { if (evt?.action === 'end') this.bump() })
       const h2 = view.on('mouse-wheel', () => this.bump())
       this.listeners.push(() => h1?.remove?.(), () => h2?.remove?.())
+    } catch (e) { }
+    // Remember each place the map settles, so "go back" can return there.
+    try {
+      const h3 = view.watch?.('stationary', (still: boolean) => {
+        if (!still) return
+        // Arriving from "go back" is not a new place to remember.
+        if (this.goingBack) { this.goingBack = false; return }
+        try {
+          const vp = view.viewpoint?.clone?.()
+          if (!vp) return
+          const last = this.extents[this.extents.length - 1]
+          if (last && Math.abs(last.scale - vp.scale) < 1 && last.targetGeometry?.x === vp.targetGeometry?.x && last.targetGeometry?.y === vp.targetGeometry?.y) return
+          this.extents.push(vp)
+          if (this.extents.length > 30) this.extents.shift()
+        } catch (e) { }
+      })
+      this.listeners.push(() => h3?.remove?.())
     } catch (e) { }
     this.listeners.push(onBridgeChange(() => this.changed(true)))
     // Visibility, scale and tree changes from anywhere (the layer list, presets, other
@@ -142,6 +164,8 @@ export class LiveMap {
     this.lastSig = ''
     this.history = []
     this.home = null
+    this.extents = []
+    this.basemaps = null
     clearTimeout(this.dragTimer)
     this.dragTimer = null
     this.dragCount = 0
@@ -217,17 +241,20 @@ export class LiveMap {
     const topFirst = (c: any): any[] => toArr(c).slice().reverse()
     const pathOf = (anc: any[], title: string) => [...anc.map(a => a.title).filter(Boolean), title].join(' > ')
 
+    const seen = new Set<any>()
     const walkSub = (s: any, owner: any, anc: any[]) => {
-      if (!s || s.listMode === 'hide') return
-      const title = s.title || `Layer ${s.id}`
-      const url = s.url || (owner.url ? `${owner.url}/${s.id}` : undefined)
-      const kids = topFirst(s.sublayers)
+      if (!s || s.listMode === 'hide' || seen.has(s) || anc.length > 30) return
+      seen.add(s)
+      const title = s.title || s.name || `Layer ${s.id}`
+      const url = s.url || (owner.url && s.id != null ? `${owner.url}/${s.id}` : undefined)
+      const kids = topFirst(s.sublayers || s.layers)
       const isGroup = kids.length > 0
       out.push({ key: isGroup ? 'group:' + flat(pathOf(anc, title)) : layerKey(url, title), title, layer: owner, sublayer: s, isGroup, parentTitle: anc[anc.length - 1]?.title, ancestors: anc, path: pathOf(anc, title), depth: anc.length })
       if (isGroup && s.listMode !== 'hide-children') kids.forEach(k => walkSub(k, owner, [...anc, s]))
     }
     const walk = (layer: any, anc: any[]) => {
-      if (!layer || basemapLayers.has(layer) || layer.listMode === 'hide') return
+      if (!layer || basemapLayers.has(layer) || layer.listMode === 'hide' || seen.has(layer) || anc.length > 30) return
+      seen.add(layer)
       if (layer.type === 'graphics' || String(layer.id || '').startsWith(TAG)) return
       const title = layer.title || layer.id
       const parentTitle = anc[anc.length - 1]?.title
@@ -236,10 +263,16 @@ export class LiveMap {
         if (layer.listMode !== 'hide-children') topFirst(layer.layers).forEach(l => walk(l, [...anc, layer]))
         return
       }
+      // Any layer that holds sublayers, at any depth: map image, tile, WMS, KML, subtype group.
       const subs = topFirst(layer.sublayers)
-      if ((layer.type === 'map-image' || layer.type === 'tile') && subs.length) {
-        out.push({ key: layerKey(layer.url, title), title, layer, isGroup: true, parentTitle, ancestors: anc, path: pathOf(anc, title), depth: anc.length })
+      if (subs.length && layer.type !== 'group') {
+        out.push({ key: layerKey(this.urlOf(layer) || layer.url, title), title, layer, isGroup: true, parentTitle, ancestors: anc, path: pathOf(anc, title), depth: anc.length })
         if (layer.listMode !== 'hide-children') subs.forEach(s => walkSub(s, layer, [...anc, layer]))
+        // Tables inside a map image service ("subtables").
+        toArr(layer.subtables).forEach((t: any) => {
+          const tTitle = t.title || `Table ${t.id}`
+          out.push({ key: layerKey(t.url || (layer.url ? `${layer.url}/${t.id}` : undefined), tTitle), title: tTitle, layer, sublayer: t, isTable: true, parentTitle: title, ancestors: [...anc, layer], path: pathOf([...anc, layer], tTitle), depth: anc.length + 1 })
+        })
         return
       }
       out.push({ key: layerKey(this.urlOf(layer), title), title, layer, parentTitle, ancestors: anc, path: pathOf(anc, title), depth: anc.length })
@@ -577,7 +610,7 @@ export class LiveMap {
           const a = g.attributes || {}
           const label = String(a[display] ?? searchFields.map(f => a[f]).find(v => v != null && v !== '') ?? 'Feature')
           const hit = searchFields.find(f => a[f] != null && String(a[f]).toUpperCase().includes(needle))
-          const detail = hit && hit !== display ? `${(fields.find(f => f.name === hit)?.alias) || hit}: ${a[hit]}` : ''
+          const detail = hit && hit !== display ? `${fieldLabel(fields.find(f => f.name === hit) || { name: hit })}: ${a[hit]}` : ''
           return { entry: e, graphic: g, label, detail }
         })
       } catch (err) { return [] }
@@ -627,6 +660,150 @@ export class LiveMap {
     } catch (e) { return false }
   }
 
+  /**
+   * The app's layer for a name a server used ("Sanitary Sewer Mains", "Water - Fire Hydrants"):
+   * the same title, else the closest title by words. Feature layers before groups and tables.
+   */
+  matchTitle (name: string, serverPath?: string): LayerEntry | null {
+    const stem = (w: string) => w.toLowerCase().replace(/ies$/, 'y').replace(/(ch|sh|ss|x)es$/, '$1').replace(/([^s])s$/, '$1')
+    const words = (t: string) => flat(t).split(' ').filter(w => w.length > 1).map(stem)
+    const all = this.entries().filter(e => !e.isTable)
+    const leaves = all.filter(e => !e.isGroup)
+    // Groups and service above the layer on the server ("Utility > Storm > Manholes").
+    const context = words([serverPath || '', name].join(' '))
+    const near = (e: LayerEntry) => { const p = words(e.path); return context.filter(w => p.includes(w)).length }
+    const best = (list: LayerEntry[]) => list.slice().sort((a, b) => near(b) - near(a) || a.depth - b.depth)[0] || null
+    // The same title: the full name, then the name without the group the server added ("Storm - Manholes").
+    const base = String(name).split(' - ').pop() || name
+    for (const t of [name, base]) {
+      const same = leaves.filter(e => flat(e.title) === flat(t))
+      if (same.length) return best(same)
+    }
+    const byPath = this.find(name)
+    if (byPath && !byPath.isTable) return byPath
+    const want = words(base)
+    if (!want.length) return null
+    let pick: LayerEntry | null = null; let score = 0
+    for (const e of all) {
+      const have = words(e.title)
+      // Other forms of one word: "zone" is the Zoning layer, "limit" the City Limits boundary.
+      // Count the title's words that were matched, once each ("sanitary sewer" is one sewer).
+      const hit = new Set(want.map(w => have.includes(w) ? w : (FORMS[w] || []).find(f => have.includes(f))).filter(Boolean)).size
+      if (!hit) continue
+      const s = hit / want.length + hit / Math.max(have.length, 1) * 0.5 - (e.isGroup ? 0.3 : 0) + near(e) * 0.05
+      if (s > score) { pick = e; score = s }
+    }
+    return score >= 0.75 ? pick : null
+  }
+
+  /**
+   * The feature of a layer at a spot: the parcel under an address point, the city limits or
+   * flood zone around it. The spot is a map point, or [latitude, longitude].
+   */
+  async featureAt (e: LayerEntry, at: any, strict = false): Promise<any | null> {
+    const view = this.view
+    const t = this.target(e)
+    if (!view || !t || typeof t.queryFeatures !== 'function') { if (strict) throw new Error('This layer cannot be queried.'); return null }
+    try {
+      if (t.load && !t.loaded) await withTimeout(t.load(), 8000)
+      // Plain JSON autocasts to a Point in the query; WGS84 is projected by the server.
+      const geometry = Array.isArray(at) ? { type: 'point', x: at[1], y: at[0], spatialReference: { wkid: 4326 } } : at
+      const polygon = /polygon/i.test(String(t.geometryType || ''))
+      const fs = await withTimeout(t.queryFeatures({
+        geometry,
+        spatialRelationship: 'intersects',
+        ...(polygon ? {} : { distance: 15, units: 'feet' }),
+        where: t.definitionExpression || '1=1',
+        outFields: ['*'],
+        returnGeometry: true,
+        outSpatialReference: view.spatialReference,
+        num: 1
+      }), 10000)
+      return toArr(fs?.features)[0] || null
+    } catch (err) { if (strict) throw err; return null }
+  }
+
+  /** The parcel layers in this map, best first: one named Parcels, polygons, ones already on. */
+  parcelLayers (): LayerEntry[] {
+    const rank = (e: LayerEntry) => {
+      const t = this.target(e)
+      return (/^(tax )?parcels?$/i.test(e.title.trim()) ? 0 : 4) + (/polygon/i.test(String(t?.geometryType || 'polygon')) ? 0 : 2) + (this.isVisible(e) ? 0 : 1)
+    }
+    return this.entries().filter(e => !e.isGroup && !e.isTable && /parcel|tax lots?|property/i.test(e.title) && !/annotation|label|line|dimension|point/i.test(e.title))
+      .sort((a, b) => rank(a) - rank(b))
+  }
+
+  /** A pin at an address, kept with other highlights (not clearing them). */
+  async pin (location: any): Promise<void> {
+    const view = this.view
+    if (!view || !location) return
+    try {
+      const [Graphic] = await loadArcGISJSAPIModules(['esri/Graphic'])
+      const marker = new Graphic({ geometry: location, attributes: { [TAG]: true }, symbol: { type: 'simple-marker', size: 14, color: [0, 92, 230], outline: { color: 'white', width: 2 } } })
+      view.graphics.add(marker)
+      this.highlightHandles.push({ remove: () => { try { view.graphics.remove(marker) } catch (e) { } } })
+    } catch (e) { }
+  }
+
+  /**
+   * Shows a server's answer on the map: a pin at the place asked about, rings on the features
+   * found, a dashed line to the closest one, and a zoom that fits them. Points are
+   * [latitude, longitude]. Cleared like other Mappy highlights.
+   */
+  async showPlaces (origin: [number, number] | null, spots: Array<[number, number]>, opts: { line?: boolean, rings?: number[][][] } = {}): Promise<boolean> {
+    const view = this.view
+    if (!view || (!origin && !spots.length)) return false
+    try {
+      const [Graphic, Point, Polyline, Polygon] = await loadArcGISJSAPIModules(['esri/Graphic', 'esri/geometry/Point', 'esri/geometry/Polyline', 'esri/geometry/Polygon'])
+      if (view !== this.view) return false
+      const sr = view.spatialReference
+      const flatEarth = !sr || sr.isWGS84 || sr.isWebMercator || [4326, 102100, 3857, 102113].includes(sr.wkid)
+      let project = (g: any) => g
+      if (!flatEarth) {
+        // A local coordinate system (state plane): project from WGS84 first.
+        try {
+          const [op] = await loadArcGISJSAPIModules(['esri/geometry/operators/projectOperator'])
+          if (!op.isLoaded()) await op.load()
+          project = (g: any) => op.execute(g, sr)
+        } catch (e) {
+          try {
+            const [projection] = await loadArcGISJSAPIModules(['esri/geometry/projection'])
+            await projection.load()
+            project = (g: any) => projection.project(g, sr)
+          } catch (e2) { return false }
+        }
+      }
+      const pt = (ll: [number, number]) => project(new Point({ latitude: ll[0], longitude: ll[1] }))
+      this.clear()
+      const add = (geometry: any, symbol: any) => {
+        const g = new Graphic({ geometry, symbol, attributes: { [TAG]: true } })
+        view.graphics.add(g)
+        this.highlightHandles.push({ remove: () => { try { view.graphics.remove(g) } catch (e) { } } })
+        return g
+      }
+      const marks: any[] = []
+      // An area answered about (the parcel for "who owns it"): outline it and fit it.
+      if (opts.rings?.length) {
+        marks.push(add(project(new Polygon({ rings: opts.rings, spatialReference: { wkid: 4326 } })),
+          { type: 'simple-fill', color: [...HIGHLIGHT_RGB, 0.12], outline: { color: HIGHLIGHT_RGB, width: 3 } }))
+      }
+      if (origin && opts.line && spots[0]) {
+        add(project(new Polyline({ paths: [[[origin[1], origin[0]], [spots[0][1], spots[0][0]]]], spatialReference: { wkid: 4326 } })),
+          { type: 'simple-line', style: 'short-dash', color: HIGHLIGHT_RGB, width: 2 })
+      }
+      spots.slice(0, 25).forEach((s, i) => {
+        marks.push(add(pt(s), { type: 'simple-marker', style: 'circle', size: i === 0 ? 22 : 16, color: [0, 0, 0, 0], outline: { color: HIGHLIGHT_RGB, width: i === 0 ? 3 : 2 } }))
+      })
+      if (origin) marks.push(add(pt(origin), { type: 'simple-marker', style: 'circle', size: 12, color: [0, 92, 230], outline: { color: 'white', width: 2 } }))
+      const targets = marks.map(m => m.geometry)
+      const single = targets.length === 1
+      await withTimeout(view.goTo(single ? { target: targets[0], scale: 1200 } : targets, { duration: 900 }), 10000)
+      if (!single && view.scale && view.scale < 600) await withTimeout(view.goTo({ scale: 600 }, { duration: 300 }), 5000)
+      if (!single && view.zoom > 0) await withTimeout(view.goTo({ zoom: view.zoom - 0.5 }, { duration: 300 }), 5000)
+      return true
+    } catch (e) { return false }
+  }
+
   private async highlight (r: FeatureResult): Promise<void> {
     const view = this.view
     try {
@@ -661,6 +838,45 @@ export class LiveMap {
       const vp = this.home || view.map?.initialViewProperties?.viewpoint
       if (vp) await view.goTo(vp, { duration: 900 })
     } catch (e) { }
+  }
+
+  /** Back to where the map was before the last move. False when there is nowhere to go. */
+  async goBack (): Promise<boolean> {
+    const view = this.view
+    if (!view || this.extents.length < 2) return false
+    this.extents.pop()
+    const prev = this.extents[this.extents.length - 1]
+    this.goingBack = true
+    try { await view.goTo(prev, { duration: 600 }); return true } catch (e) { this.goingBack = false; return false } finally { setTimeout(() => { this.goingBack = false }, 2500) }
+  }
+
+  /** The basemaps the app's portal offers, by title. */
+  async listBasemaps (): Promise<Array<{ title: string, id: string }>> {
+    if (this.basemaps) return this.basemaps.map(b => ({ title: b.title, id: b.id }))
+    try {
+      const [Portal] = await loadArcGISJSAPIModules(['esri/portal/Portal'])
+      const portal = this.view?.map?.portalItem?.portal || Portal.getDefault()
+      await withTimeout(portal.load(), 8000)
+      const list = await withTimeout(portal.fetchBasemaps(), 10000)
+      const found = toArr(list).filter((b: any) => b?.title)
+      if (found.length) this.basemaps = found
+      return found.map((b: any) => ({ title: b.title, id: b.id }))
+    } catch (e) { return [] }
+  }
+
+  /** Switch the background to the basemap whose name has these words ("imagery", "topo"). */
+  async setBasemap (words: string): Promise<{ title: string } | null> {
+    const view = this.view
+    if (!view?.map) return null
+    const want = flat(words).replace(/\b(?:view|map|basemap|background|the|to|a)\b/g, ' ').trim().split(/\s+/).filter(Boolean)
+    const SYN: { [k: string]: string[] } = { satellite: ['imagery', 'aerial', 'satellite', 'hybrid'], aerial: ['imagery', 'aerial', 'satellite', 'hybrid'], imagery: ['imagery', 'aerial', 'satellite', 'hybrid'], street: ['streets', 'street', 'navigation', 'road'], streets: ['streets', 'street', 'navigation', 'road'], topo: ['topographic', 'topo', 'terrain'], terrain: ['topographic', 'topo', 'terrain', 'hillshade'], gray: ['gray', 'grey', 'light'], grey: ['gray', 'grey', 'light'], dark: ['dark', 'night'], plain: ['gray', 'grey', 'light', 'canvas'] }
+    const wants = want.flatMap(w => SYN[w] || [w])
+    const all = await this.listBasemaps()
+    const score = (title: string) => { const t = flat(title); return wants.filter(w => t.includes(w)).length + (/label|hybrid/.test(t) && wants.includes('imagery') ? 0.5 : 0) }
+    const best = all.map(b => ({ b, s: score(b.title) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s)[0]
+    if (!best) return null
+    const bm = (this.basemaps || []).find(b => b.id === best.b.id)
+    try { view.map.basemap = bm; return { title: best.b.title } } catch (e) { return null }
   }
 
   async zoom (dir: 'in' | 'out'): Promise<void> {
@@ -700,4 +916,13 @@ export function withTimeout (p: any, ms: number): Promise<any> {
     const t = setTimeout(() => reject(new Error('timeout')), ms)
     Promise.resolve(p).then(v => { clearTimeout(t); resolve(v) }, e => { clearTimeout(t); reject(e) })
   })
+}
+
+/** Word forms a layer title may use instead of the word asked ("what zone" -> Zoning). */
+const FORMS: { [k: string]: string[] } = {
+  zone: ['zoning'], zoning: ['zone'], zoned: ['zoning', 'zone'],
+  limit: ['boundary', 'limits'], boundary: ['limit', 'limits'], city: ['municipal', 'municipality'],
+  owner: ['parcel', 'ownership'], lot: ['parcel'], property: ['parcel'],
+  floodplain: ['flood'], fema: ['flood'], sewer: ['sanitary'], sanitary: ['sewer'], storm: ['stormwater', 'drainage'],
+  school: ['attendance'], trash: ['refuse', 'garbage', 'solid'], garbage: ['trash', 'refuse'], recycle: ['recycling'], recycling: ['recycle']
 }

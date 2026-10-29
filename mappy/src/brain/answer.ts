@@ -11,19 +11,23 @@ import { V } from './voice'
 export interface Reply {
   text: string
   sources?: Array<{ title: string, detail: string }>
-  table?: { columns: string[], rows: string[][] }
+  table?: { columns: string[], rows: string[][], rowActions?: Array<MappyAction | undefined> }
   /** A picture from an MCP tool (a static map), as a data: or https: address. */
   image?: { src: string, alt: string }
   page?: { offset: number, size: number, hasNext: boolean }
   actions?: MappyAction[]
   /** Follow-up suggestions shown as chips. */
   suggest?: string[]
-  mood?: 'happy' | 'think' | 'confused' | 'wave' | 'search' | 'celebrate' | 'sleep' | 'talk' | 'point' | 'pleased' | 'acknowledge' | 'attention'
+  mood?: 'happy' | 'think' | 'confused' | 'wave' | 'search' | 'celebrate' | 'sleep' | 'talk' | 'point' | 'pleased' | 'acknowledge' | 'attention' | 'love' | 'excited' | 'dance' | 'roll' | 'dizzy' | 'party'
+    // the Clippy pack (runtime/components/Acts.tsx)
+    | 'processing' | 'writing' | 'checking' | 'alert' | 'explain' | 'knock' | 'print' | 'trash' | 'mail' | 'save' | 'artsy' | 'techy' | 'wizardy' | 'airplane' | 'bike' | 'congratulate' | 'goodbye'
   /** Feature search results, filled by the runtime. */
   results?: any[]
   list?: ListRow[]
   /** Element Mappy should point at while saying this (a widget, the layer list, the map). */
   pointAt?: HTMLElement | null
+  /** Something the widget itself should do: pause or resume motion, speak, resize or move Mappy. */
+  effect?: 'pause' | 'resume' | 'speak' | 'smaller' | 'bigger' | 'left' | 'right' | 'otherCorner'
 }
 
 /** One clickable row in a reply. `glyph` is decorative; `sr` is what a screen reader hears instead. */
@@ -70,10 +74,20 @@ export function answerQuestion (ix: MappyIndex, q: string): Reply {
       list: hits.slice(1, 4).filter(h => h.score > top.score * 0.45).map(h => toListItem(h))
     }
   }
+  // One or two words that only brush against a few help topics: say so, with a way forward, instead of a list of guesses.
+  const words = q.trim().split(/\s+/).filter(Boolean)
+  if (words.length <= 2 && top.score < 5) {
+    return {
+      text: `I'm not sure what you mean by **${q.trim()}**. Ask it as a question or a request and I'll do my best: "where is ...", "turn on ...", "what is ...", "closest ... to ...".`,
+      mood: 'confused',
+      list: hits.slice(0, 2).filter(h => h.score >= top.score * 0.7).map(h => toListItem(h)),
+      suggest: ['What can you do?', `What is ${words.join(' ')}?`, 'Tell me a fun fact']
+    }
+  }
   return {
     text: V.unsure(),
     mood: 'think',
-    list: hits.slice(0, 5).map(h => toListItem(h))
+    list: hits.slice(0, 5).filter(h => h.score >= top.score * 0.5).map(h => toListItem(h))
   }
 }
 

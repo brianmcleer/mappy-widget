@@ -22,6 +22,9 @@ See [language/README.md](language/README.md).
 
 ## MCP server (optional)
 
+The `mcp-server` folder has a free, read-only MCP server for your own ArcGIS Enterprise. It covers address search with your locator, what's at a point, searching layers, counts and Portal search. It sends each user's own sign-in, so there's no service account. See [mcp-server/README.md](mcp-server/README.md).
+
+
 Mappy can also use the tools of an MCP (Model Context Protocol) server you connect in his settings, such as ArcGIS Location Platform's MCP or a portal MCP server. He asks first before any tool that could change data. See [mappy/docs/mcp.md](mappy/docs/mcp.md).
 
 ## Repository layout
@@ -34,6 +37,7 @@ mappy-widget/                    <- this repo
 ├── publish.ps1                  <- one-command publish/update automation
 ├── .github/workflows/           <- Test (every push) and Language pack (weekly)
 ├── language/                    <- language pack: seed words, test phrases, build and sync scripts
+├── mcp-server/                  <- free in-house MCP server for ArcGIS Enterprise (gis_mcp.py)
 └── mappy/                       <- the widget (drops into your-extensions/widgets)
     ├── package.json
     ├── manifest.json

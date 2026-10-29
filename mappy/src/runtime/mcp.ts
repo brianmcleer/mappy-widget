@@ -27,7 +27,7 @@ export interface McpSettings {
 
 const PROTOCOL = '2025-06-18'
 /** Versions this client can speak; the server picks one in its initialize answer. */
-const SUPPORTED = ['2025-06-18', '2025-03-26']
+const SUPPORTED = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 const TIMEOUT = 30000
 
 export function safeServerUrl (url: string): boolean {
@@ -103,9 +103,11 @@ export class McpClient {
       for (;;) {
         const { value, done } = await reader.read()
         if (value) buffer += decoder.decode(value, { stream: true })
-        const cut = buffer.lastIndexOf('\n\n')
+        const separators = Array.from(buffer.matchAll(/\r?\n\r?\n/g))
+        const last = separators[separators.length - 1]
+        const cut = last ? last.index! + last[0].length : -1
         if (cut >= 0) {
-          const hit = fromStream(buffer.slice(0, cut + 2), id)
+          const hit = fromStream(buffer.slice(0, cut), id)
           if (hit) return hit
         }
         if (done) return fromStream(buffer + '\n\n', id)
@@ -129,7 +131,15 @@ export class McpClient {
       this.session = ''; this.ready = null; await this.connect()
       return this.post(method, params, notify, true)
     }
-    if (res.status === 401 || res.status === 403) throw new Error(`${this.label} needs a sign-in or key that this app does not have (${res.status}).`)
+    if (res.status === 401 || res.status === 403) {
+      // Say what to change: a server that wants the ArcGIS sign-in, or a key.
+      const challenge = res.headers.get('www-authenticate') || ''
+      const hint = this.cfg.auth === 'arcgis'
+        ? (res.status === 403 ? ' Your account cannot use it.' : ' Sign in to ArcGIS with an account it accepts.')
+        : /bearer/i.test(challenge) ? ' In Mappy\'s settings, set "Sign in with" to the signed-in ArcGIS user, or a key in a header.' : ''
+      throw new Error(`${this.label} needs a sign-in or key that this app does not have (${res.status}).${hint}`)
+    }
+    if (res.status === 429) throw new Error(`${this.label} is busy right now. Try again in a minute.`)
     if (!res.ok && res.status !== 202) throw new Error(`${this.label} answered ${res.status}.`)
     if (notify) return null
     const type = res.headers.get('content-type') || ''
@@ -144,7 +154,7 @@ export class McpClient {
   /** Opens the session once; later calls wait on the same handshake. */
   connect (): Promise<any> {
     if (!this.ready) {
-      const p = this.post('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'mappy', title: 'Mappy (ArcGIS Experience Builder)', version: '1.6.0' } })
+      const p = this.post('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'mappy', title: 'Mappy (ArcGIS Experience Builder)', version: '1.8.0' } })
         .then(async r => {
           const v = String(r?.protocolVersion || PROTOCOL)
           if (!SUPPORTED.includes(v)) throw new Error(`${this.label} speaks MCP ${v}; Mappy speaks ${SUPPORTED.join(' or ')}.`)

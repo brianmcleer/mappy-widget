@@ -1,0 +1,58 @@
+{
+  "name": "City GIS",
+  "instructions": "Read-only tools over the city GIS: addresses, what is at a place, the closest feature, features within a distance, searching and summarizing layers, and finding maps.",
+  "allowed_origins": [
+    "https://gis.example.org",
+    "https://maps.example.org",
+    "http://localhost:3001",
+    "https://localhost:3001"
+  ],
+  "portal_url": "https://portal.example.org/portal",
+  "locator_url": "https://gis.example.org/arcgis/rest/services/Locators/AddressLocator/GeocodeServer",
+  "locator_single_line_field": "SingleLine",
+  "service_folders": [
+    "https://gis.example.org/arcgis/rest/services/REPLACE_WITH_FOLDER"
+  ],
+  "layers": [
+    {
+      "name": "Parcels",
+      "url": "https://gis.example.org/arcgis/rest/services/REPLACE/MapServer/0",
+      "search_fields": [
+        "SITUS",
+        "OWNER",
+        "PARCEL_NUM"
+      ]
+    }
+  ],
+  "require_token": false,
+  "max_results": 25,
+  "timeout_seconds": 20,
+  "identify_max_layers": 15,
+  "identify_point_tolerance_feet": 25,
+  "nearest_max_feet": 26400,
+  "refresh_minutes": 60,
+  "verify_tls": true,
+  "log_dir": "logs",
+  "log_days": 30,
+  "upstream_servers": [
+    {
+      "name": "esri",
+      "label": "ArcGIS Location Services",
+      "url": "https://location-services-mcp.arcgis.com/beta/mcp",
+      "auth": "api_key",
+      "api_key_env": "ESRI_LOCATION_API_KEY",
+      "prefix": "esri_",
+      "enabled": false
+    },
+    {
+      "name": "enterprise",
+      "label": "ArcGIS Enterprise",
+      "url": "https://portal.example.org/portal/REPLACE_WHEN_ESRI_SHIPS_IT/mcp",
+      "auth": "user_token",
+      "prefix": "portal_",
+      "enabled": false
+    }
+  ],
+  "public_url": "https://gis.example.org/gis-mcp",
+  "oauth_authorization_servers": []
+}

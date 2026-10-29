@@ -1,7 +1,7 @@
 export default {
   _widgetLabel: 'Mappy',
   askLabel: 'Ask {name} a question',
-  placeholder: 'Ask me anything about this app...',
+  askPlaceholder: 'Ask {name} anything: who owns 250 N 5th St?',
   ask: 'Ask',
   help: 'What can you do?',
   helpQuestion: 'What can you do?',

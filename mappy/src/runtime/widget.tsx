@@ -25,13 +25,15 @@ import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
 import { parseIntent } from '../brain/intents'
-import { V } from '../brain/voice'
+import { V, pick } from '../brain/voice'
+import { season, dayFeel } from '../brain/fun'
 import { cleanLabel } from '../brain/text'
 import { widgetName } from '../brain/builtin'
 import { loadMissingManifests } from '../brain/manifests'
 import type { ManifestMap } from '../brain/manifests'
 import { LiveMap } from './live'
 import { Mind } from './mind'
+import { openInTable, tableWidgetIds } from './tableWidget'
 import { McpClient } from './mcp'
 import type { McpPort } from '../brain/mcpTools'
 import { configuredGeocoders } from '../brain/addresses'
@@ -43,6 +45,7 @@ import type { ChatMsg } from './components/ChatBubble'
 import MappyMenu from './components/MappyMenu'
 import type { MenuItem } from './components/MappyMenu'
 import { injectStyles, CLASSIC, themeColors } from './styles'
+import { play, soundFor } from './sounds'
 import { placeBubble, clampCharacter, viewport } from './placement'
 import type { Placement } from './placement'
 import { useTokens } from './theme'
@@ -53,7 +56,11 @@ import type { BeaconHandle } from '../shared/beacon'
 type Props = AllWidgetProps<IMConfig> & { id: string, useMapWidgetIds?: any, intl?: any }
 
 const SIZES = { small: 72, medium: 96, large: 128 }
-const MOOD_MS: { [m: string]: number } = { talk: 1600, wave: 2600, happy: 1500, pleased: 1500, acknowledge: 1200, celebrate: 1400, confused: 1400, attention: 2300, point: 2800 }
+const MOOD_MS: { [m: string]: number } = {
+  talk: 1600, wave: 2600, happy: 1500, pleased: 1500, acknowledge: 1200, celebrate: 1400, confused: 1400, attention: 2300, point: 2800, love: 2800, excited: 2300, dance: 3600, roll: 1300, dizzy: 2600, party: 5200,
+  // the Clippy pack: long enough for the act to finish (processing stays until the answer comes)
+  writing: 3600, checking: 3000, alert: 2200, explain: 3600, knock: 2600, print: 2800, trash: 3400, mail: 2600, save: 2800, artsy: 3600, techy: 3400, wizardy: 3800, airplane: 4400, bike: 3800, congratulate: 3200, goodbye: 1800
+}
 const LAYER_LIST = /(^|[-_])(map-?layers|layer-?list|layerlist|layers-?custom|toc)([-_]|$)/i
 
 function plain<T> (v: any): T {
@@ -83,7 +90,10 @@ export default function Widget (props: Props): any {
   __setIntl(props.intl)
   const cfg: any = props.config || {}
   const name: string = cfg.assistantName || 'Mappy'
-  const size: number = SIZES[cfg.size as keyof typeof SIZES] || SIZES.medium
+  // His size: the app author's choice, or what the person asked for ("make yourself smaller"), remembered.
+  const [sizeStep, setSizeStep] = React.useState<number>(() => { const v = Number(store('mappy-size-step')); return Number.isFinite(v) && v >= -2 && v <= 2 ? v : 0 })
+  const baseSize: number = SIZES[cfg.size as keyof typeof SIZES] || SIZES.medium
+  const size: number = Math.round(baseSize * Math.pow(1.3, sizeStep))
   const tokens = useTokens()
   const uid = 'mappy-' + props.id
 
@@ -173,12 +183,27 @@ export default function Widget (props: Props): any {
     layerListLabel: layerList.label,
     beacon: beaconRef.current,
     mcp,
-    typoFix: cfg.typoFix !== false
+    typoFix: cfg.typoFix !== false,
+    fun: cfg.fun !== false,
+    place: {
+      org: (cfg.orgName || '').trim() || (portalSelf?.name ? String(portalSelf.name) : '') || 'the City',
+      name: (cfg.placeName || '').trim(),
+      website: (cfg.website || '').trim(),
+      facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean)
+    },
+    widgetId: props.id,
+    myLocation: () => new Promise<[number, number] | null>(resolve => {
+      try {
+        if (!navigator.geolocation) { resolve(null); return }
+        navigator.geolocation.getCurrentPosition(p => resolve([p.coords.latitude, p.coords.longitude]), () => resolve(null), { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 })
+      } catch (e) { resolve(null) }
+    }),
+    openInTable: tableWidgetIds(extracted.model?.cfg).length ? (entry: any, req: any) => openInTable(live, extracted.model, entry, req, props.id) : undefined
     }
     if (!mindRef.current) mindRef.current = new Mind(context)
     else mindRef.current.ctx = context
     return mindRef.current
-  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix])
+  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, portalSelf?.name, props.id])
 
   // ------------------------------------------------------------------ map
   const mapWidgetId: string | undefined = React.useMemo(() => {
@@ -204,12 +229,38 @@ export default function Widget (props: Props): any {
   const [mood, setMoodState] = React.useState<Mood>('idle')
   const [busy, setBusy] = React.useState(false)
   const busyRef = React.useRef(false)
-  const [messages, setMessages] = React.useState<ChatMsg[]>([])
+  // The conversation survives a reload of the page (this tab only): the last 40 messages, words and
+  // buttons only; map results and tables are not kept.
+  const chatKey = 'mappy-chat:' + appId
+  const [messages, setMessages] = React.useState<ChatMsg[]>(() => {
+    try {
+      const saved = JSON.parse(store(chatKey, undefined, true) || '[]')
+      if (!Array.isArray(saved) || !saved.length) return []
+      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^https:\/\//.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
+      return list.length ? [...list, { id: msgSeq++, from: 'mappy', text: 'Welcome back! That was our chat before the page reloaded. What next?', ephemeral: true }] : []
+    } catch (e) { return [] }
+  })
+  React.useEffect(() => {
+    try {
+      const keep = messages.filter(m => !m.ephemeral).slice(-40).map(m => ({ from: m.from, text: m.text, reply: m.reply ? { text: m.reply.text, suggest: m.reply.suggest, actions: (m.reply.actions || []).filter(a => a.type === 'ask' || a.type === 'url').map(a => ({ type: a.type, q: a.q, url: a.url, label: a.label })) } : undefined }))
+      store(chatKey, keep.length ? JSON.stringify(keep) : null, true)
+    } catch (e) { }
+  }, [messages])
   const [phase, setPhase] = React.useState<'enter' | 'shown' | 'exit'>('enter')
   const [hidden, setHidden] = React.useState<boolean>(() => store('mappy-hidden:' + appId, undefined, true) === '1')
   const [paused, setPaused] = React.useState<boolean>(() => store('mappy-paused') === '1')
   const [readAloud, setReadAloud] = React.useState<boolean>(() => store('mappy-read-aloud') === '1')
   const [tipsOff, setTipsOff] = React.useState<boolean>(() => store('mappy-tips-off:' + appId) === '1')
+  // The chat's size when the user resized it (drag the corner grip, or arrow keys on it); null is automatic.
+  const [chatSize, setChatSize] = React.useState<{ w: number, h: number } | null>(() => {
+    try { const v = JSON.parse(store('mappy-chat-size:' + appId) || 'null'); return v && v.w > 0 && v.h > 0 ? v : null } catch (e) { return null }
+  })
+  const resizeChat = React.useCallback((next: { w: number, h: number } | null, done: boolean) => {
+    const v = viewport()
+    const fit = next ? { w: Math.round(Math.max(280, Math.min(next.w, v.w - 16))), h: Math.round(Math.max(240, Math.min(next.h, v.h - 16))) } : null
+    setChatSize(fit)
+    if (done) store('mappy-chat-size:' + appId, fit ? JSON.stringify(fit) : null)
+  }, [appId])
   const [bulb, setBulb] = React.useState<Reply | null>(null)
   const [menu, setMenu] = React.useState<{ x: number, y: number, returnTo: HTMLElement | null } | null>(null)
   const [lookAt, setLookAt] = React.useState<{ x: number, y: number } | null>(null)
@@ -221,14 +272,18 @@ export default function Widget (props: Props): any {
   const moodTimer = React.useRef<any>(null)
   const pointTimer = React.useRef<any>(null)
   const lastInteraction = React.useRef<number>(Date.now())
+  const lastSeen = React.useRef<number>(Date.now())
   const still = paused || reducedMotion()
+  const stillRef = React.useRef(still); stillRef.current = still
 
   const setMood = React.useCallback((m: Mood) => {
     setMoodState(m)
+    // His little noises (settings: Sound effects), never while paused or under reduced motion.
+    if (cfg.sounds && !stillRef.current) { const snd = soundFor(m); if (snd) play(snd) }
     clearTimeout(moodTimer.current)
     const ms = MOOD_MS[m]
     if (ms) moodTimer.current = setTimeout(() => setMoodState('idle'), ms)
-  }, [])
+  }, [cfg.sounds])
 
   /** Looks and points at an element (a widget he opened, the layer list, the map). */
   const pointAt = React.useCallback((el: HTMLElement | null | undefined) => {
@@ -278,13 +333,29 @@ export default function Widget (props: Props): any {
     if (returnFocus) setTimeout(() => { try { charRef.current?.focus() } catch (e) { } }, 30)
   }, [])
 
-  const greet = React.useCallback(() => say(cfg.greeting || V.greet(name, appTitle)), [cfg.greeting, name, appTitle, say])
+  // The greeting, plus a line for the time of year (Halloween, GIS Day, Thanksgiving...).
+  // Once per update, a line about what is new (returning people only; a first visit gets the plain greeting).
+  const NEWS_KEY = '2026-10-29b'
+  const NEWS = 'New since last time: a different outfit for 80 days of the year (ask "what are you wearing"), ask what things mean ("what is an easement", "what does R-4 mean"), directions ("directions to City Hall"), "where are the parks", labels on and off, "satellite view", "go back", and "which is bigger, A or B".'
+  const greet = React.useCallback(() => {
+    const extra = cfg.fun === false ? '' : [season().greeting, dayFeel().line].filter(Boolean).join(' ')
+    let news = ''
+    try {
+      const greetedKey = 'mappy-greeted:' + appId
+      if (!store(greetedKey)) { store(greetedKey, '1'); store('mappy-news', NEWS_KEY) } else if (store('mappy-news') !== NEWS_KEY) { news = NEWS; store('mappy-news', NEWS_KEY) }
+    } catch (e) { }
+    say((cfg.greeting || V.greet(name, appTitle)) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : ''))
+  }, [cfg.greeting, name, appTitle, say, appId])
 
   const toggleChat = React.useCallback(() => {
     lastInteraction.current = Date.now()
     if (open) { closeChat(); return }
     if (bulb) { say(bulb.text, bulb); setBulb(null) } else if (!messages.length) greet()
-    setMood(messages.length ? 'talk' : 'wave')
+    // Back after a while: he is thrilled to see you.
+    // The day's mood on the first hello (party on New Year, a dance on Dance Day), else a wave.
+    const today = cfg.fun === false ? undefined : season().mood
+    setMood(Date.now() - lastSeen.current > 600000 && messages.length ? 'excited' : messages.length ? 'talk' : today || 'wave')
+    lastSeen.current = Date.now()
     openChat()
   }, [open, messages.length, bulb, greet])
 
@@ -298,17 +369,27 @@ export default function Widget (props: Props): any {
     setBusy(true)
     const intent = parseIntent(text)
     setMood(intent.name === 'find' ? 'search' : 'think')
+    // Taking a while (a server call, a big query): gears turn.
+    const gears = setTimeout(() => setMood('processing'), 1400)
     try {
       const reply = await mind.respond(text)
+      clearTimeout(gears)
       say(reply.text, reply)
       setMood((reply.mood as Mood) || 'talk')
       handlePoint(reply.pointAt)
       if (reply.mood === 'sleep') setTimeout(() => closeChat(true), 1400)
+      if (reply.mood === 'goodbye') setTimeout(() => closeChat(true), 1500)
+      // Things he does to himself: hold still, speak, grow or shrink, change corner.
+      if (reply.effect === 'pause' || reply.effect === 'resume') { const v = reply.effect === 'pause'; setPaused(v); store('mappy-paused', v ? '1' : null) }
+      if (reply.effect === 'speak' && cfg.allowReadAloud !== false) { try { const synth = (window as any).speechSynthesis; if (synth) { synth.cancel(); const u = new (window as any).SpeechSynthesisUtterance(reply.text.replace(/^Reading that aloud: /, '').replace(/\*\*/g, '')); synth.speak(u) } } catch (e) { } }
+      if (reply.effect === 'smaller' || reply.effect === 'bigger') setSizeStep(s => { const next = Math.max(-2, Math.min(2, s + (reply.effect === 'smaller' ? -1 : 1))); store('mappy-size-step', next ? String(next) : null); return next })
+      if (reply.effect === 'left' || reply.effect === 'right' || reply.effect === 'otherCorner') { const cur = sideRef.current; const want = reply.effect === 'otherCorner' ? (cur === 'right' ? 'left' : 'right') : reply.effect; if (want !== cur) swapRef.current(false) }
     } catch (e) {
       beaconRef.current?.error(e, 'respond')
       say('Oops, I tripped over a fold. Try that again?')
-      setMood('confused')
+      setMood('alert')
     } finally {
+      clearTimeout(gears)
       busyRef.current = false
       setBusy(false)
     }
@@ -360,7 +441,7 @@ export default function Widget (props: Props): any {
   const tipsEnabled = cfg.tipsEnabled !== false && !tipsOff && !isDesign && !hidden
 
   /** A tip waiting: a light bulb over his head (default), or the bubble opens (tip style "pop"). */
-  const offerTip = React.useCallback((reply: Reply, m: Mood = 'attention') => {
+  const offerTip = React.useCallback((reply: Reply, m: Mood = 'knock') => {
     setMood(m)
     if (cfg.tipStyle === 'pop') { say(reply.text, reply); openChat(false) } else setBulb(reply)
   }, [cfg.tipStyle, say])
@@ -374,6 +455,8 @@ export default function Widget (props: Props): any {
   const side0: 'left' | 'right' = cfg.corner === 'bottom-left' ? 'left' : 'right'
   const posKey = 'mappy-pos:' + appId + ':' + props.id
   const [side, setSide] = React.useState<'left' | 'right'>(() => (store(posKey + ':side') as any) || side0)
+  const sideRef = React.useRef(side); sideRef.current = side
+  const swapRef = React.useRef<(tell?: boolean) => void>(() => {})
   const [pos, setPos] = React.useState<{ x: number, y: number }>(() => {
     try { const p = JSON.parse(store(posKey) || ''); if (p && isFinite(p.x) && isFinite(p.y)) return p } catch (e) { }
     return { x: 20, y: 20 }
@@ -409,6 +492,7 @@ export default function Widget (props: Props): any {
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
       charRef.current?.classList.remove('mappy-dragging')
       if (drag.current?.moved) {
         justDragged.current = true
@@ -419,17 +503,19 @@ export default function Widget (props: Props): any {
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   const moveBy = (dx: number, dy: number) => {
     const p = clampCharacter({ x: shown.x + (side === 'right' ? -dx : dx), y: shown.y - dy }, size, vp.w, vp.h)
     setPos(p); savePos(p)
   }
-  const swapCorner = () => {
+  const swapCorner = (tell = true) => {
     const s = side === 'right' ? 'left' : 'right'
     setSide(s); setPos({ x: 20, y: 20 }); savePos({ x: 20, y: 20 }, s)
-    say(__t('movedTo', { corner: s === 'left' ? __t('cornerLeft') : __t('cornerRight') }))
+    if (tell) say(__t('movedTo', { corner: s === 'left' ? __t('cornerLeft') : __t('cornerRight') }))
   }
+  swapRef.current = swapCorner
   const resetPos = () => { setSide(side0); setPos({ x: 20, y: 20 }); savePos({ x: 20, y: 20 }, side0) }
 
   const openMenuAt = (x: number, y: number, returnTo: HTMLElement | null) => setMenu({ x, y, returnTo })
@@ -446,15 +532,49 @@ export default function Widget (props: Props): any {
     if (e.key === 'ArrowLeft') { e.preventDefault(); moveBy(-step, 0) } else if (e.key === 'ArrowRight') { e.preventDefault(); moveBy(step, 0) } else if (e.key === 'ArrowUp') { e.preventDefault(); moveBy(0, -step) } else if (e.key === 'ArrowDown') { e.preventDefault(); moveBy(0, step) } else if (e.key === 'Home') { e.preventDefault(); resetPos() }
   }
 
-  const activate = () => { if (justDragged.current) return; toggleChat() }
+  // Click him lots in a row and he gets dizzy.
+  const clicks = React.useRef<number[]>([])
+  const activate = () => {
+    if (justDragged.current) return
+    const now = Date.now()
+    clicks.current = [...clicks.current.filter(t => now - t < 2500), now]
+    if (cfg.sounds && !stillRef.current && clicks.current.length >= 2 && clicks.current.length < 6) play('boing')
+    if (clicks.current.length >= 6) { clicks.current = []; setMood('dizzy'); if (!open) openChat(false); say(pick(['Whoa, whoa... the room is spinning. Which way is north? 😵‍💫', 'Okay okay, I am dizzy! Everything looks like Web Mercator.', 'Too... many... clicks... I see three compasses. 😵'])); return }
+    toggleChat()
+  }
+
+  // The Konami code (up up down down left right left right B A) anywhere in the app: party mode.
+  React.useEffect(() => {
+    const code = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a']
+    if (isDesign) return
+    let at = 0
+    const onKey = (e: any) => {
+      // Not while typing somewhere (the chat box uses the arrow keys for its history).
+      const el: any = e.target
+      if (el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName || ''))) { at = 0; return }
+      const k = e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key
+      if (k === code[at]) at++
+      else if (k === 'ArrowUp' && at === 2) at = 2 // a third up arrow still counts as the start
+      else at = k === code[0] ? 1 : 0
+      if (at === code.length) {
+        at = 0
+        setMood('party')
+        if (!open) openChat(false)
+        say('🎮 You found the secret code! PARTY MODE! 🎉 +30 lives, +1 best friend.')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, openChat, say, setMood, isDesign])
   const animate = () => {
     lastInteraction.current = Date.now()
-    const moods: Mood[] = ['celebrate', 'wave', 'confused', 'pleased', 'search', 'think', 'attention', 'listen']
+    const moods: Mood[] = ['celebrate', 'wave', 'love', 'excited', 'confused', 'pleased', 'search', 'think', 'attention', 'listen', 'airplane', 'wizardy', 'artsy', 'techy', 'bike', 'trash', 'congratulate', 'processing', 'knock']
     setMood(moods[Math.floor(Math.random() * moods.length)])
   }
 
   const hide = () => {
     closeChat(false)
+    if (cfg.sounds && !stillRef.current) play('whoosh')
     setPhase('exit')
     setTimeout(() => { setHidden(true); store('mappy-hidden:' + appId, '1', true) }, 450)
   }
@@ -469,7 +589,7 @@ export default function Widget (props: Props): any {
   const menuItems: MenuItem[] = [
     { id: 'desktop', label: desktop ? 'Return to app' : 'Float on desktop', onSelect: () => {
       if (desktop) { desktopWindow.close(); return }
-      void desktopWindow.open().then(() => { setHidden(false); openChat(false) }).catch(() => {
+      void desktopWindow.open(`${name} · ${appTitle}`).then(() => { setHidden(false); openChat(false) }).catch(() => {
         say('Desktop floating is unavailable here. Open the app directly in a browser with Document Picture-in-Picture support, then choose Float on desktop again.')
         openChat(false)
       })
@@ -477,7 +597,7 @@ export default function Widget (props: Props): any {
     { id: 'chat', label: __t('menuChat'), onSelect: () => { if (!open) toggleChat(); else focusInput() } },
     { id: 'animate', label: __t('menuAnimate'), onSelect: animate },
     { id: 'tip', label: __t('menuTip'), onSelect: () => { const t = mind.tip(); if (t) { say(t.text, t); openChat(false) } } },
-    ...(floating ? [{ id: 'move', label: __t('menuMove'), separatorBefore: true, onSelect: swapCorner }, { id: 'reset', label: __t('menuReset'), onSelect: resetPos }] : []),
+    ...(floating ? [{ id: 'move', label: __t('menuMove'), separatorBefore: true, onSelect: () => swapCorner() }, { id: 'reset', label: __t('menuReset'), onSelect: resetPos }] : []),
     { id: 'pause', label: __t('menuPause'), checked: paused, separatorBefore: true, onSelect: () => { const v = !paused; setPaused(v); store('mappy-paused', v ? '1' : null) } },
     ...(cfg.allowReadAloud !== false && typeof window !== 'undefined' && (window as any).speechSynthesis ? [{ id: 'read', label: __t('menuReadAloud'), checked: readAloud, onSelect: () => { const v = !readAloud; setReadAloud(v); store('mappy-read-aloud', v ? '1' : null); if (!v) { try { (window as any).speechSynthesis.cancel() } catch (e) { } } } }] : []),
     ...(cfg.tipsEnabled !== false ? [{ id: 'tips', label: __t('menuTips'), checked: !tipsOff, onSelect: () => setTips(!tipsOff) }] : []),
@@ -522,7 +642,6 @@ export default function Widget (props: Props): any {
     const key = 'mappy-greeted:' + appId
     const t = setTimeout(() => {
       if (cfg.greetOnFirstVisit !== false && !store(key)) {
-        store(key, '1')
         greet()
         setMood('wave')
         openChat(false)
@@ -553,7 +672,7 @@ export default function Widget (props: Props): any {
   }, [open, mood])
 
   // Typing in the box: he leans in to listen.
-  React.useEffect(() => { if (typing && !busy) setMoodState('listen'); else if (!typing && mood === 'listen') setMoodState('idle') }, [typing])
+  React.useEffect(() => { if (typing && !busy) { clearTimeout(moodTimer.current); setMoodState('listen') } else if (!typing && mood === 'listen') setMoodState('idle') }, [typing])
 
   // ------------------------------------------------------------------ bubble placement
   const [placement, setPlacement] = React.useState<Placement | null>(null)
@@ -565,11 +684,11 @@ export default function Widget (props: Props): any {
     const natural = b.offsetHeight - (log ? log.clientHeight - log.scrollHeight : 0)
     const r = c.getBoundingClientRect()
     const v = viewport()
-    const next = placeBubble({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }, Math.min(natural, 560), v.w, v.h, { preferLeftAligned: r.left + r.width / 2 < v.w / 2 })
+    const next = placeBubble({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }, chatSize ? chatSize.h : Math.min(natural, 560), v.w, v.h, { preferLeftAligned: r.left + r.width / 2 < v.w / 2, ...(chatSize ? { maxWidth: chatSize.w, maxHeight: chatSize.h } : {}) })
     setPlacement(prev => (prev && Math.abs(prev.left - next.left) < 1 && Math.abs(prev.top - next.top) < 1 && prev.maxHeight === next.maxHeight && prev.tail === next.tail && Math.abs(prev.tailOffset - next.tailOffset) < 1 && prev.width === next.width) ? prev : next)
-  }, [])
+  }, [chatSize])
 
-  React.useLayoutEffect(() => { if (open) place(); else setPlacement(null) }, [open, messages.length, busy, shown.x, shown.y, side, vp.w, vp.h, size, phase, desktop])
+  React.useLayoutEffect(() => { if (open) place(); else setPlacement(null) }, [open, messages.length, busy, shown.x, shown.y, side, vp.w, vp.h, size, phase, desktop, chatSize])
 
   React.useEffect(() => {
     if (!open) return
@@ -591,25 +710,50 @@ export default function Widget (props: Props): any {
     ? custom
     : mind.suggestions()
 
-  const bubble = open && (
+  // In its own window Mappy rides in the header, small and still: the window is the chat.
+  const miniChar = desktop && !hidden && (
+    <MappyCharacter
+      id={uid + '-mini'}
+      mood={busy ? (mood === 'search' ? 'search' : 'think') : mood}
+      px={34}
+      label={__t('characterLabel', { name })}
+      expanded
+      controls={uid + '-chat'}
+      still={still}
+      phase={phase}
+      lookAt={null}
+      pointDir={null}
+      hat={cfg.fun === false ? null : undefined}
+      onActivate={() => inputRef.current?.focus()}
+      onDoubleClick={animate}
+      onContextMenu={(e: any) => { e.preventDefault(); openMenuAt(e.clientX, e.clientY, null) }}
+    />
+  )
+
+  const bubble = (open || desktop) && (
     <ChatBubble
       id={uid + '-chat'}
       name={name}
+      task={mind.task()}
       messages={messages}
       busy={busy}
       chips={chips}
       vars={vars}
       placement={placement}
+      size={chatSize}
+      onHeadDrag={floating && !desktop && cfg.draggable !== false ? onPointerDown : undefined}
+      onResize={resizeChat}
       bubbleRef={bubbleRef}
       typewriter={cfg.typewriter !== false && !still}
       onSend={(t) => ask(t)}
       onAction={onAction}
       onResult={onResult}
       onClose={() => closeChat(true)}
-      onReset={() => { if (!busyRef.current) { setMessages([]); void mind.respond('forget context'); greet() } }}
+      onReset={() => { if (!busyRef.current) { setMessages([]); store(chatKey, null, true); void mind.respond('forget context'); greet() } }}
       onMenu={(el) => { const r = el.getBoundingClientRect(); openMenuAt(r.left, r.bottom + 4, el) }}
       onTyping={setTyping}
       inputRef={inputRef}
+      docked={desktop ? { avatar: miniChar, subtitle: appTitle, onReturn: desktopWindow.close } : undefined}
     />
   )
 
@@ -628,6 +772,7 @@ export default function Widget (props: Props): any {
         phase={phase}
         lookAt={desktop ? null : lookAt}
         pointDir={desktop ? null : pointDir}
+        hat={cfg.fun === false ? null : undefined}
         onActivate={activate}
         onPointerDown={desktop ? undefined : onPointerDown}
         onDoubleClick={animate}
@@ -665,12 +810,11 @@ export default function Widget (props: Props): any {
 
   const overlay = (
     <div className='mappy-layer' style={{ ['--mappy-focus' as any]: (vars as any)['--mappy-focus'] }}>
-      {(floating || desktop) && character && (
+      {floating && !desktop && character && (
         <div className='mappy-char-wrap' style={{ bottom: shown.y, [side]: shown.x } as any}>{character}</div>
       )}
       {bubble}
       {menuEl}
-      {desktop && <div className='mappy-desktop-bar'><span>Move this window using its title bar.</span><button type='button' onClick={desktopWindow.close}>Return to app</button></div>}
     </div>
   )
 

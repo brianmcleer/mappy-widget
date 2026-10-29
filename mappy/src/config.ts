@@ -54,6 +54,23 @@ export interface Config {
    * tools [{ name, enabled, confirm }] chosen in settings. See docs/mcp.md.
    */
   mcp?: any
+  /** Jokes, riddles, games and the hat for the time of year. Undefined means on. */
+  fun?: boolean
+  /** Little synthesized sounds (a pop when he arrives, a knock for a tip, a ta-da). Off unless turned on. */
+  sounds?: boolean
+  /**
+   * Who runs this app and where it is, so his wording fits any city, county, district or utility:
+   * "the City's website" becomes "<orgName>'s website". Empty uses the portal's organization
+   * name, then "the City". placeName is the town or area for his lines ("Summer in Grand Junction").
+   */
+  orgName?: string
+  placeName?: string
+  /** State, province or country, for finding the place's Wikipedia page ("Colorado", "France"). */
+  placeRegion?: string
+  /** The organization's website, offered as a link when he points people off the map. */
+  website?: string
+  /** Local fun facts, one per line, mixed in with the built-in map facts ("fun fact"). */
+  localFacts?: string
   /** Usage telemetry through the shared Beacon module. Explicit opt-in only. */
   telemetry?: boolean
 }

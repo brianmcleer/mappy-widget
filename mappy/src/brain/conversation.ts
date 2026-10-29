@@ -2,7 +2,7 @@
 export function normalizeCommand (input: string): string {
   let text = input.trim().replace(/[’‘]/g, "'")
   for (let i = 0; i < 3; i++) text = text
-    .replace(/^(?:hey\s+mappy[,!]?\s+|mappy[,!]?\s+)/i, '')
+    .replace(/^(?:hey\s+mappy[,!]?\s+|mappy[,!]?\s+|(?:ok|okay|alright|so|now|then|also|and|next|um|uh|hmm)[,]?\s+(?=\S+\s+\S))/i, '')
     .replace(/^(?:(?:can|could|would|will) you(?: please)?\s+|please\s+)/i, '')
     .replace(/^(?:i (?:want|need|would like) to|let's|let us)\s+(?=find|show|open|turn|count|select|zoom|browse|locate|geocode|go|navigate|summari[sz]e)/i, '')
     .replace(/^help me\s+(?=find|show|open|turn|count|select|zoom|browse)/i, '')
@@ -33,6 +33,13 @@ export function splitCommands (input: string): string[] {
 
 export function contextualCommand (input: string, layer?: string): string {
   if (!layer) return input
+  // Whole follow-up phrases only: never replace text embedded in a value or condition.
+  const q = input.trim().replace(/[.!?]+$/, '')
+  if (/^(?:hide|disable|turn off) (?:it|that layer|this layer)$|^turn (?:it|that layer|this layer) off$/i.test(q)) return `turn off ${layer}`
+  if (/^(?:show|enable|turn on) (?:it|that layer|this layer)$|^turn (?:it|that layer|this layer) (?:on|back on)$|^show (?:it|that layer|this layer) again$/i.test(q)) return `turn on ${layer}`
+  if (/^(?:show|open|browse) (?:its|that layer's|this layer's) (?:table|rows|records)$|^(?:show|open|browse) (?:the )?table (?:for|of) (?:it|that layer|this layer)$/i.test(q)) return `show table ${layer}`
+  if (/^(?:show|list) (?:its|that layer's|this layer's) (?:fields|columns|attributes)$|^what (?:fields|columns|attributes) does it have$/i.test(q)) return `fields in ${layer}`
+  if (/^(?:explore|describe) (?:it|that layer|this layer)$|^what can i ask about (?:it|that layer|this layer)$/i.test(q)) return `explore ${layer}`
   // Restrict substitutions to command targets, never values in a search/filter.
   if (/^(?:find|search|filter|select)\b/i.test(input)) return input
   if (/^(?:how many|count)(?: of)? (?:them|those|these)(?: in view| here)?[?!]*$/i.test(input)) {

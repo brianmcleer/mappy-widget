@@ -3,6 +3,7 @@ import { compileCondition, numericField, resolveField } from '../brain/analysis'
 import type { Reply } from '../brain/answer'
 import type { LayerEntry, LiveMap } from './live'
 import { withTimeout } from './live'
+import { fieldLabel } from '../brain/fields'
 
 /** Query the existing layer; never overwrite its definition expression or source data. */
 export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: AnalysisRequest, max: number): Promise<Reply> {
@@ -26,7 +27,8 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
     if (request.limit != null && (!Number.isFinite(request.limit) || request.limit < 1)) throw new Error('Ask for at least one ranked row.')
     const sort = request.field ? resolveField(fields, request.field) : null
     if (sort && target.capabilities?.query?.supportsOrderBy === false) throw new Error('This layer does not support sorted queries.')
-    const readable = fields.filter(f => !/geometry|blob|raster|xml/i.test(f.type || '') && !/globalid|shape[._]/i.test(f.name))
+    // People-facing columns: no object ids, global ids or shape fields.
+    const readable = fields.filter(f => !/geometry|blob|raster|xml|oid|global-?id/i.test(f.type || '') && !/^(?:objectid|fid|oid|globalid)$|globalid|shape[._]/i.test(f.name) && f.name !== target.objectIdField)
     const columns = (sort ? [sort, ...readable.filter(f => f.name !== sort.name)] : readable).slice(0, 8)
     if (!columns.length) throw new Error('No readable fields are available for this table.')
     const offset = Math.max(0, request.offset || 0)
@@ -46,9 +48,9 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
     const actions: any[] = []
     if (canPage && offset > 0) actions.push({ type: 'ask', q: 'previous page', label: 'Previous rows' })
     if (canPage && more && shown.length && !request.limit) actions.push({ type: 'ask', q: 'next page', label: 'Next rows' })
-    return { text: shown.length ? `**${entry.title}**: rows ${offset + 1}–${offset + shown.length}, ${scope}.${sort ? ` Sorted by ${sort.alias || sort.name}, ${request.order === 'asc' ? 'lowest first' : 'highest first'}.` : ''}${request.limit && request.limit > max ? ` The app limits each result to ${max} rows.` : ''}${more ? ' More rows are available.' : ''} Showing ${columns.length} fields.` : `No rows returned from **${entry.title}** ${scope}.`, mood: 'talk', sources: [source], actions,
+    return { text: shown.length ? `**${entry.title}**: rows ${offset + 1}–${offset + shown.length}, ${scope}.${sort ? ` Sorted by ${fieldLabel(sort)}, ${request.order === 'asc' ? 'lowest first' : 'highest first'}.` : ''}${request.limit && request.limit > max ? ` The app limits each result to ${max} rows.` : ''}${more ? ' More rows are available.' : ''} Showing ${columns.length} columns.` : `No rows returned from **${entry.title}** ${scope}.`, mood: 'talk', sources: [source], actions,
       page: { offset, size: offset === 0 && more && shown.length > 0 ? Math.min(pageSize, shown.length) : pageSize, hasNext: !request.limit && canPage && more && shown.length > 0 },
-      table: { columns: columns.map(f => f.alias || f.name), rows: shown.map(feature => columns.map(f => {
+      table: { columns: columns.map(f => fieldLabel(f)), rows: shown.map(feature => columns.map(f => {
         const value = feature.attributes?.[f.name]
         if (value == null) return '—'
         const code = f.domain?.codedValues?.find((c: any) => c.code === value)
@@ -73,14 +75,17 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
     const features = Array.from(result?.features || []) as any[]
     const results = features.slice(0, max).map(g => ({ entry, graphic: g, label: String(g.attributes?.[target.displayField] ?? g.attributes?.[target.objectIdField] ?? 'Feature'), detail: request.condition }))
     if (entry.isTable) {
-      const columns = fields.filter(f => !/geometry|blob|raster|xml/i.test(f.type || '')).slice(0, 8)
-      return { text: `${results.length} matching rows from **${entry.title}**.${result.exceededTransferLimit || features.length >= max ? ' Result limit reached; use a count query for the full matching count.' : ''}`, mood: 'talk', sources: [source], table: { columns: columns.map(f => f.alias || f.name), rows: features.slice(0, max).map(g => columns.map(f => {
+      const columns = fields.filter(f => !/geometry|blob|raster|xml|oid|global-?id/i.test(f.type || '') && !/^(?:objectid|fid|oid|globalid)$|globalid|shape[._]/i.test(f.name) && f.name !== target.objectIdField).slice(0, 8)
+      return { text: `${results.length} matching rows from **${entry.title}**.${result.exceededTransferLimit || features.length >= max ? ' Result limit reached; use a count query for the full matching count.' : ''}`, mood: 'talk', sources: [source], table: { columns: columns.map(f => fieldLabel(f)), rows: features.slice(0, max).map(g => columns.map(f => {
         const value = g.attributes?.[f.name]
         const code = f.domain?.codedValues?.find((c: any) => c.code === value)
         return code ? String(code.name) : format(value).slice(0, 300)
       })) } }
     }
-    return { text: results.length ? `Showing ${results.length}${result.exceededTransferLimit || features.length >= max ? ' (result limit reached)' : ''} matching features from **${entry.title}** ${scope}. The map layer itself is unchanged.` : `No features in **${entry.title}** match ${request.condition} ${scope}.`, results, mood: 'talk', sources: [source] }
+    // Nothing matched an exact text match: offer the looser "contains".
+    const looser = !results.length && request.condition && /^(.+?)\s+(?:is|equals|=)\s+(.+)$/i.test(request.condition) && !/\b(?:contains|starts with|null|empty|missing|between)\b/i.test(request.condition)
+      ? request.condition.replace(/^(.+?)\s+(?:is|equals|=)\s+(.+)$/i, '$1 contains $2') : ''
+    return { text: results.length ? `Showing ${results.length}${result.exceededTransferLimit || features.length >= max ? ' (result limit reached)' : ''} matching features from **${entry.title}** ${scope}. The map layer itself is unchanged.` : `No features in **${entry.title}** match ${request.condition} ${scope}.${looser ? ' Names are often longer than one word; try "contains".' : ''}`, results, mood: results.length ? 'talk' : 'think', sources: [source], ...(looser ? { actions: [{ type: 'ask', q: `filter ${entry.key} where ${looser}${request.inView ? ' in view' : ''}`, label: `Try ${looser}` }] } : {}) }
   }
   if (target.capabilities?.query?.supportsStatistics === false) throw new Error('This layer does not support statistics. Try its table or analysis tool.')
   // Avoid inherited projections and pagination in aggregate queries.
@@ -107,7 +112,7 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
     const rows = checked.map((f, i) => {
       const present = values[`mappy_f${i}`]
       if (!Number.isSafeInteger(present) || present < 0 || present > total) throw new Error('The service returned incomplete or inconsistent field counts.')
-      return { name: f.name, label: f.alias || f.name, present, missing: total - present }
+      return { name: f.name, label: fieldLabel(f), present, missing: total - present }
     }).sort((a, b) => b.missing - a.missing)
     return { text: `**${entry.title}**: checked ${checked.length}${usable.length > checked.length ? ` of ${usable.length} supported` : ''} fields across ${total.toLocaleString()} matching records, ${scope}. Missing means null; empty strings, placeholder values and incorrect values are not detected.${total === 0 ? ' No records matched, so completeness is not applicable.' : ''}`, mood: 'talk', sources: [source],
       table: { columns: ['Field', 'Populated', 'Null', 'Completeness'], rows: rows.map(row => [row.label, row.present.toLocaleString(), row.missing.toLocaleString(), total ? `${(row.present / total * 100).toFixed(1)}%` : 'N/A']) },
@@ -116,14 +121,14 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
   }
   const field = resolveField(fields, request.field || '')
   if (request.kind === 'stats') {
-    if (!numericField(field)) throw new Error(`${field.alias || field.name} is not numeric. Try "count ${entry.title} by ${field.alias || field.name}".`)
+    if (!numericField(field)) throw new Error(`${fieldLabel(field)} is not numeric. Try "count ${entry.title} by ${fieldLabel(field)}".`)
     const stats = ['count', 'sum', 'min', 'max', 'avg']
     q.outStatistics = stats.map(stat => ({ statisticType: stat, onStatisticField: field.name, outStatisticFieldName: 'mappy_' + stat }))
     const result = await withTimeout(target.queryFeatures(q), 12000)
     const values = result?.features?.[0]?.attributes
     if (!values) throw new Error('The layer returned no statistics.')
     return {
-      text: `**${field.alias || field.name}** in **${entry.title}**, ${scope}. Count includes non-null values; units are those of the source field.`,
+      text: `**${fieldLabel(field)}** in **${entry.title}**, ${scope}. Count includes non-null values; units are those of the source field.`,
       mood: 'talk', sources: [source],
       table: { columns: ['Statistic', 'Value'], rows: stats.map(stat => [({ count: 'Count', sum: 'Total', min: 'Minimum', max: 'Maximum', avg: 'Average' } as any)[stat], format(values['mappy_' + stat])]) }
     }
@@ -135,9 +140,11 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
     const value = g.attributes?.[field.name]
     const code = field.domain?.codedValues?.find((c: any) => c.code === value)
     return [String(code?.name ?? value ?? '(missing)'), Number(g.attributes?.mappy_count || 0)] as [string, number]
-  }).sort((a, b) => b[1] - a[1])
-  const limit = 25
-  return { text: `**${entry.title}** grouped by **${field.alias || field.name}**, ${scope}.${result.exceededTransferLimit ? ' The service truncated the groups; these are partial results.' : ''}${rows.length > limit ? ` Showing ${limit} of ${rows.length} returned groups.` : ''}`, mood: 'talk', sources: [source], table: { columns: [field.alias || field.name, 'Count'], rows: rows.slice(0, limit).map(([label, count]) => [label, count.toLocaleString()]) } }
+  }).sort((a, b) => request.order === 'asc' ? a[1] - b[1] : b[1] - a[1])
+  const limit = request.limit || 25
+  // "Which zoning has the most parcels": lead with the answer.
+  const lead = request.limit && rows.length ? `**${rows[0][0]}** has the ${request.order === 'asc' ? 'fewest' : 'most'} ${entry.title.toLowerCase()} (${rows[0][1].toLocaleString()})${rows.length > 1 ? `, then ${rows.slice(1, Math.min(3, limit)).map(([l, c]) => `${l} (${c.toLocaleString()})`).join(' and ')}` : ''}.` : ''
+  return { text: lead || `**${entry.title}** grouped by **${fieldLabel(field)}**, ${scope}.${result.exceededTransferLimit ? ' The service truncated the groups; these are partial results.' : ''}${rows.length > limit ? ` Showing ${limit} of ${rows.length} returned groups.` : ''}`, mood: lead ? 'pleased' : 'talk', sources: [source], table: { columns: [fieldLabel(field), 'Count'], rows: rows.slice(0, limit).map(([label, count]) => [label, count.toLocaleString()]) } }
 }
 
 function format (value: unknown): string {

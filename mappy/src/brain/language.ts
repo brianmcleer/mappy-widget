@@ -220,7 +220,32 @@ export function didYouMean (input: string, lex: Lexicon, max = 2): string[] {
   return out.sort((a, b) => b.score - a.score).slice(0, max).map(o => o.text)
 }
 
+/** Literal tails are excluded from every rewrite pass, including real-word guessing. */
 export function readRequest (input: string, lex: Lexicon): Correction {
+  let src = normalizeCommand(input)
+  const headSwaps: Array<[string, string]> = []
+  // Correct a misspelled search verb before identifying its untouched argument.
+  const head = src.match(/^(\S+)(\s+)/)
+  if (head) {
+    const fixed = correctTypos(head[1], lex).text
+    if (/^(find|search|locate|lookup|geocode)$/i.test(fixed)) {
+      if (fixed !== head[1]) headSwaps.push([head[1], fixed])
+      src = fixed + src.slice(head[1].length)
+    }
+  }
+  const literal = src.search(/"|(?:^|\s)'|\s(?:where|with|equals?|contains|like|between|starts with|ends with)\s|[=<>]/i)
+  const search = src.match(/^(?:(?:find|search|locate|lookup|geocode)\s+|where(?: is|'s| are)\s+|(?:zoom|go|navigate) to\s+(?=\d))/i)
+  const cut = Math.min(literal < 0 ? src.length : literal, search ? search[0].length : src.length)
+  if (cut < src.length) {
+    const prefix = src.slice(0, cut)
+    const read = readCommandRequest(prefix, lex)
+    const gap = prefix.match(/\s+$/)?.[0] || ''
+    return { ...read, text: read.text.trimEnd() + gap + src.slice(cut), changed: read.changed || headSwaps.length > 0, swaps: [...headSwaps, ...read.swaps] }
+  }
+  return readCommandRequest(src, lex)
+}
+
+function readCommandRequest (input: string, lex: Lexicon): Correction {
   const first = read(input, lex)
   const base = sense(first.text, lex)
   if (base >= 4.5) return first

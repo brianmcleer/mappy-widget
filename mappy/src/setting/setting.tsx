@@ -22,7 +22,9 @@ import { esriDocsForApp } from '../brain/docsPack'
 import { ESRI_DOCS_READ } from '../brain/esriDocs'
 import { __setIntl, __t } from './i18n-t'
 import LanguageSection from './LanguageSection'
+import PlaceSection from './PlaceSection'
 import McpSection from './McpSection'
+import { SETTING_CSS, Hint, Note, Sub, FullButton, ButtonPair, Group, toneOf } from './ui'
 import { lexiconFor, readRequest } from '../brain/language'
 
 /** Local structural type: the shim declares jimu-for-builder shorthand (WIDGETHANDOFF 12.3). */
@@ -180,67 +182,63 @@ export default function Setting (props: SettingProps): any {
   const stats = brain?.stats || {}
   const kb = Math.round((stats._chars || 0) / 1024)
   const row: any = { width: '100%' }
-  const hint: any = { fontSize: 12, opacity: 0.8, marginTop: 4, lineHeight: 1.4 }
 
   return (
-    <div className='widget-setting-mappy' style={{ paddingBottom: 24 }}>
+    <div className='widget-setting-mappy'>
+      <style>{SETTING_CSS}</style>
       <SettingSection title={__t('map')}>
         <SettingRow>
           <MapWidgetSelector onSelect={(ids: string[]) => props.onSettingChange({ id: props.id, useMapWidgetIds: ids })} useMapWidgetIds={props.useMapWidgetIds} />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('mapHint')}</div></SettingRow>
+        <Hint>{__t('mapHint')}</Hint>
       </SettingSection>
 
       <SettingSection title={__t('brain')}>
+        <Note tone={brain ? 'ok' : 'warn'}>
+          {brain ? __t('brainBuilt', { when, layers: (stats.layer || 0) + (stats.table || 0), docs: brain.docs.length + (stats._app || 0), kb }) : __t('brainEmpty')}
+        </Note>
+        <Hint>Setup runs automatically the first time. After changing your app, refresh everything with one button.</Hint>
+        <ButtonPair>
+          <Button type='primary' disabled={scanning || !appConfig} onClick={runScan}>{scanning ? 'Learning your app...' : 'Refresh app knowledge'}</Button>
+          {scanning && <Button type='secondary' onClick={() => { cancelRef.current = true }}>Stop</Button>}
+        </ButtonPair>
+        <Note tone={scanning ? 'info' : toneOf(progress)}>{progress}</Note>
+      </SettingSection>
+
+      <Group title='Advanced knowledge options'>
+      <SettingSection>
+        <Sub>Sources to read</Sub>
         <SettingRow>
-          <div style={hint} role='status' aria-live='polite'>
-            {brain ? __t('brainBuilt', { when, layers: (stats.layer || 0) + (stats.table || 0), docs: brain.docs.length + (stats._app || 0), kb }) : __t('brainEmpty')}
+          <div className='ms-checks'>
+            {(['webMaps', 'services', 'items', 'manifests', 'esriDocs', 'guides'] as const).map(k => (
+              <Label key={k} className='ms-check'>
+                <Checkbox checked={opts[k]} onChange={(e: any) => setOpts({ ...opts, [k]: e.target.checked })} />
+                {__t('scan' + k.charAt(0).toUpperCase() + k.slice(1))}
+              </Label>
+            ))}
           </div>
         </SettingRow>
-        <SettingRow><div style={hint}>Setup runs automatically the first time. After changing your app, refresh everything with one button.</div></SettingRow>
-        <SettingRow><div style={{ ...row, display: 'flex', gap: 8 }}>
-          <Button type='primary' disabled={scanning || !appConfig} onClick={runScan}>{scanning ? 'Learning your app…' : 'Refresh app knowledge'}</Button>
-          {scanning && <Button onClick={() => { cancelRef.current = true }}>Stop</Button>}
-        </div></SettingRow>
-        {progress && <SettingRow><div style={hint} role='status' aria-live='polite'>{progress}</div></SettingRow>}
-        <details style={{ padding: '8px 16px' }}><summary style={{ cursor: 'pointer' }}>Advanced knowledge options</summary>
-        {(['webMaps', 'services', 'items', 'manifests', 'esriDocs', 'guides'] as const).map(k => (
-          <SettingRow key={k}>
-            <Label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <Checkbox checked={opts[k]} onChange={(e: any) => setOpts({ ...opts, [k]: e.target.checked })} />
-              {__t('scan' + k.charAt(0).toUpperCase() + k.slice(1))}
-            </Label>
-          </SettingRow>
-        ))}
         <SettingRow label={__t('maxLayers')}>
           <NumericInput size='sm' style={{ width: 90 }} min={10} max={2000} value={opts.maxLayers} onChange={(v: number) => setOpts({ ...opts, maxLayers: Number(v) || 400 })} />
         </SettingRow>
 
-        <SettingRow><Label style={{ fontWeight: 600, marginTop: 8 }}>{__t('folderTitle')}</Label></SettingRow>
-        <SettingRow><div style={hint}>{__t('folderHint')}</div></SettingRow>
+        <Sub>{__t('folderTitle')}</Sub>
+        <Hint>{__t('folderHint')}</Hint>
         <SettingRow tag='label' label={__t('folderOnlyUsed')}>
           <Switch checked={onlyUsed} onChange={(e: any) => setOnlyUsed(e.target.checked)} />
         </SettingRow>
-        <SettingRow>
-          <div style={{ ...row, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button disabled={scanning} onClick={runFolder}>{__t('scanFolder')}</Button>
-          </div>
-        </SettingRow>
+        <FullButton type='secondary' disabled={scanning} onClick={runFolder}>{__t('scanFolder')}</FullButton>
 
-        <SettingRow><Label style={{ fontWeight: 600, marginTop: 8 }}>{__t('helpFilesTitle')}</Label></SettingRow>
-        <SettingRow><div style={hint}>{__t('helpFilesHint')}</div></SettingRow>
-        <SettingRow>
-          <Button disabled={scanning || !folderPickerSupported()} onClick={runHelpFolder}>{__t('scanHelpFiles')}</Button>
-        </SettingRow>
+        <Sub>{__t('helpFilesTitle')}</Sub>
+        <Hint>{__t('helpFilesHint')}</Hint>
+        <FullButton type='secondary' disabled={scanning || !folderPickerSupported()} onClick={runHelpFolder}>{__t('scanHelpFiles')}</FullButton>
 
-        <SettingRow><Label style={{ fontWeight: 600, marginTop: 8 }}>{__t('docsTitle')}</Label></SettingRow>
-        <SettingRow><div style={hint}>{__t('docsHint', { read: ESRI_DOCS_READ })}</div></SettingRow>
-        <SettingRow>
-          <div style={{ ...row, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button disabled={scanning || !appConfig} onClick={runDocs}>{__t('pullDocs')}</Button>
-            {brain && <Button type='tertiary' disabled={scanning} onClick={() => { set('brain', null); setLog([]); setProgress('') }}>{__t('clearBrain')}</Button>}
-          </div>
-        </SettingRow>
+        <Sub>{__t('docsTitle')}</Sub>
+        <Hint>{__t('docsHint', { read: ESRI_DOCS_READ })}</Hint>
+        <ButtonPair>
+          <Button type='secondary' disabled={scanning || !appConfig} onClick={runDocs}>{__t('pullDocs')}</Button>
+          {brain && <Button type='tertiary' disabled={scanning} onClick={() => { set('brain', null); setLog([]); setProgress('') }}>{__t('clearBrain')}</Button>}
+        </ButtonPair>
         {(log.length > 0 || (brain?.notes?.length || 0) > 0) && (
           <SettingRow>
             <details style={row}>
@@ -251,20 +249,20 @@ export default function Setting (props: SettingProps): any {
             </details>
           </SettingRow>
         )}
-        </details>
       </SettingSection>
+      </Group>
 
       <SettingSection title={__t('tryIt')}>
-        <SettingRow><div style={hint}>{__t('tryHint')}</div></SettingRow>
+        <Hint>{__t('tryHint')}</Hint>
         <SettingRow>
-          <div style={{ ...row, display: 'flex', gap: 6 }}>
-            <TextInput size='sm' style={{ flex: 1 }} value={q} placeholder={__t('tryPlaceholder')} onChange={(e: any) => setQ(e.target.value)} onKeyDown={(e: any) => { if (e.key === 'Enter') runTry() }} aria-label={__t('tryIt')} />
+          <div className='ms-inline'>
+            <TextInput size='sm' value={q} placeholder={__t('tryPlaceholder')} onChange={(e: any) => setQ(e.target.value)} onKeyDown={(e: any) => { if (e.key === 'Enter') runTry() }} aria-label={__t('tryIt')} />
             <Button size='sm' onClick={runTry}>{__t('tryIt')}</Button>
           </div>
         </SettingRow>
         {preview && (
           <SettingRow>
-            <div style={{ ...row, fontSize: 12, lineHeight: 1.45, background: 'var(--sys-color-surface-background, #f7f7f7)', padding: 8, borderRadius: 6 }} role='status' aria-live='polite'>
+            <div className='ms-preview' role='status' aria-live='polite'>
               {preview.readAs && <div style={{ opacity: 0.8, marginBottom: 4 }}>{`Read as “${preview.readAs}”`}</div>}
               <div>{String(preview.text).replace(/\*\*/g, '')}</div>
               {preview.actions?.length > 0 && <div style={{ marginTop: 4, opacity: 0.8 }}>{'→ '}{preview.actions.map((a: any) => a.label).join(' · ')}</div>}
@@ -274,16 +272,18 @@ export default function Setting (props: SettingProps): any {
         )}
       </SettingSection>
 
+      <PlaceSection orgName={config.orgName || ''} placeName={config.placeName || ''} placeRegion={config.placeRegion || ''} website={config.website || ''} localFacts={config.localFacts || ''} set={set} />
+
       <LanguageSection stored={config.languagePack} onChange={(pack: any) => set('languagePack', pack)} />
 
       <McpSection value={config.mcp} onChange={(v: any) => set('mcp', v)} />
 
-      <details><summary style={{ padding: 16, cursor: 'pointer' }}>Custom answers and notes</summary>
-      <SettingSection title={__t('knowledge')}>
-        <SettingRow><div style={hint}>{__t('knowledgeHint')}</div></SettingRow>
+      <Group title='Custom answers and notes'>
+      <SettingSection>
+        <Hint>{__t('knowledgeHint')}</Hint>
         {faq.map((f, i) => (
           <SettingRow key={i}>
-            <div style={{ ...row, border: '1px solid var(--sys-color-divider-secondary, #ddd)', borderRadius: 6, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className='ms-card'>
               <TextInput size='sm' value={f.q} placeholder={__t('question')} aria-label={__t('question')} onChange={(e: any) => updateFaq(i, { q: e.target.value })} />
               <TextArea height={60} value={f.a} placeholder={__t('answer')} aria-label={__t('answer')} onChange={(e: any) => updateFaq(i, { a: e.target.value })} />
               <TextInput size='sm' value={f.url || ''} placeholder={__t('link')} aria-label={__t('link')} onChange={(e: any) => updateFaq(i, { url: e.target.value })} />
@@ -291,46 +291,44 @@ export default function Setting (props: SettingProps): any {
             </div>
           </SettingRow>
         ))}
-        <SettingRow>
-          <Button size='sm' onClick={() => setFaq([...faq, { q: '', a: '' }])}>{__t('addFaq')}</Button>
-        </SettingRow>
+        <FullButton type='secondary' size='sm' onClick={() => setFaq([...faq, { q: '', a: '' }])}>{__t('addFaq')}</FullButton>
         <SettingRow flow='wrap' label={__t('notes')}>
-          <TextArea height={110} value={config.notes || ''} aria-label={__t('notes')} onChange={(e: any) => set('notes', e.target.value)} />
+          <TextArea height={110} style={row} value={config.notes || ''} aria-label={__t('notes')} onChange={(e: any) => set('notes', e.target.value)} />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('notesHint')}</div></SettingRow>
+        <Hint>{__t('notesHint')}</Hint>
       </SettingSection>
+      </Group>
 
-      </details>
-      <details><summary style={{ padding: 16, cursor: 'pointer' }}>Appearance and behavior</summary>
+      <Group title='Appearance and behavior'>
       <SettingSection title={__t('character')}>
         <SettingRow flow='wrap' label={__t('name')}>
-          <TextInput size='sm' value={config.assistantName || ''} placeholder='Mappy' onChange={(e: any) => set('assistantName', e.target.value)} aria-label={__t('name')} />
+          <TextInput size='sm' style={row} value={config.assistantName || ''} placeholder='Mappy' onChange={(e: any) => set('assistantName', e.target.value)} aria-label={__t('name')} />
         </SettingRow>
         <SettingRow flow='wrap' label={__t('greeting')}>
-          <TextArea height={60} value={config.greeting || ''} onChange={(e: any) => set('greeting', e.target.value)} aria-label={__t('greeting')} />
+          <TextArea height={60} style={row} value={config.greeting || ''} onChange={(e: any) => set('greeting', e.target.value)} aria-label={__t('greeting')} />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('greetingHint')}</div></SettingRow>
+        <Hint>{__t('greetingHint')}</Hint>
         <SettingRow flow='wrap' label={__t('display')}>
-          <Select size='sm' value={config.displayMode || 'floating'} onChange={(e: any) => set('displayMode', e.target.value)} aria-label={__t('display')}>
+          <Select size='sm' style={row} value={config.displayMode || 'floating'} onChange={(e: any) => set('displayMode', e.target.value)} aria-label={__t('display')}>
             <Option value='floating'>{__t('floating')}</Option>
             <Option value='inline'>{__t('inline')}</Option>
           </Select>
         </SettingRow>
         <SettingRow flow='wrap' label={__t('corner')}>
-          <Select size='sm' value={config.corner || 'bottom-right'} onChange={(e: any) => set('corner', e.target.value)} aria-label={__t('corner')}>
+          <Select size='sm' style={row} value={config.corner || 'bottom-right'} onChange={(e: any) => set('corner', e.target.value)} aria-label={__t('corner')}>
             <Option value='bottom-right'>{__t('bottomRight')}</Option>
             <Option value='bottom-left'>{__t('bottomLeft')}</Option>
           </Select>
         </SettingRow>
         <SettingRow flow='wrap' label={__t('size')}>
-          <Select size='sm' value={config.size || 'medium'} onChange={(e: any) => set('size', e.target.value)} aria-label={__t('size')}>
+          <Select size='sm' style={row} value={config.size || 'medium'} onChange={(e: any) => set('size', e.target.value)} aria-label={__t('size')}>
             <Option value='small'>{__t('small')}</Option>
             <Option value='medium'>{__t('medium')}</Option>
             <Option value='large'>{__t('large')}</Option>
           </Select>
         </SettingRow>
         <SettingRow flow='wrap' label={__t('bubble')}>
-          <Select size='sm' value={config.bubbleStyle || 'classic'} onChange={(e: any) => set('bubbleStyle', e.target.value)} aria-label={__t('bubble')}>
+          <Select size='sm' style={row} value={config.bubbleStyle || 'classic'} onChange={(e: any) => set('bubbleStyle', e.target.value)} aria-label={__t('bubble')}>
             <Option value='classic'>{__t('classic')}</Option>
             <Option value='theme'>{__t('theme')}</Option>
           </Select>
@@ -355,9 +353,9 @@ export default function Setting (props: SettingProps): any {
         <SettingRow tag='label' label={__t('showInLayerList')}>
           <Switch checked={config.showInLayerList !== false} onChange={(e: any) => set('showInLayerList', e.target.checked)} />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('showInLayerListHint')}</div></SettingRow>
+        <Hint>{__t('showInLayerListHint')}</Hint>
         <SettingRow flow='wrap' label={__t('tipStyle')}>
-          <Select size='sm' value={config.tipStyle || 'bulb'} onChange={(e: any) => set('tipStyle', e.target.value)} aria-label={__t('tipStyle')}>
+          <Select size='sm' style={row} value={config.tipStyle || 'bulb'} onChange={(e: any) => set('tipStyle', e.target.value)} aria-label={__t('tipStyle')}>
             <Option value='bulb'>{__t('tipBulb')}</Option>
             <Option value='pop'>{__t('tipPop')}</Option>
           </Select>
@@ -371,7 +369,15 @@ export default function Setting (props: SettingProps): any {
         <SettingRow tag='label' label='Fix typos ("trun on parcles")'>
           <Switch checked={config.typoFix !== false} onChange={(e: any) => set('typoFix', e.target.checked)} />
         </SettingRow>
-        <SettingRow><div style={hint}>Turn off when most people use the app in a language other than English.</div></SettingRow>
+        <Hint>Turn off when most people use the app in a language other than English.</Hint>
+        <SettingRow tag='label' label='Jokes, games and holiday hats'>
+          <Switch checked={config.fun !== false} onChange={(e: any) => set('fun', e.target.checked)} />
+        </SettingRow>
+        <Hint>Map jokes, riddles, little games and an outfit for the time of year (nothing religious or political). Turn off for a strictly formal app; he still waves and blinks.</Hint>
+        <SettingRow tag='label' label='Sound effects'>
+          <Switch checked={config.sounds === true} onChange={(e: any) => set('sounds', e.target.checked)} />
+        </SettingRow>
+        <Hint>Tiny synthesized sounds, the way the old Office Assistant had them: a pop when he arrives, a knock for a tip, a ta-da for good news, a wobble for an alert. Quiet, no files, and silent under reduced motion or "Pause animation".</Hint>
         <SettingRow tag='label' label={__t('featureSearch')}>
           <Switch checked={config.featureSearch !== false} onChange={(e: any) => set('featureSearch', e.target.checked)} />
         </SettingRow>
@@ -381,18 +387,19 @@ export default function Setting (props: SettingProps): any {
         <SettingRow flow='wrap' label={__t('chips')}>
           <TextInput
             size='sm'
+            style={row}
             defaultValue={(plain<string[]>(config.suggestions) || []).join(', ')}
             onAcceptValue={(v: string) => set('suggestions', Immutable(String(v || '').split(',').map(s => s.trim()).filter(Boolean)))}
             aria-label={__t('chips')}
           />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('chipsHint')}</div></SettingRow>
+        <Hint>{__t('chipsHint')}</Hint>
         <SettingRow tag='label' label={__t('telemetry')}>
           <Switch checked={config.telemetry === true} onChange={(e: any) => set('telemetry', e.target.checked)} />
         </SettingRow>
-        <SettingRow><div style={hint}>{__t('telemetryHint')}</div></SettingRow>
+        <Hint>{__t('telemetryHint')}</Hint>
       </SettingSection>
-      </details>
+      </Group>
     </div>
   )
 }

@@ -10,7 +10,10 @@ export function __setIntl (i: any): void { if (i && typeof i.formatMessage === '
 /** App-language text for a key in translations/default.ts; English (with {values} filled) when there is none. */
 export function __t (id: string, values?: { [key: string]: any }): string {
   const msg: string = (__messages as any)[id] ?? id
-  if (intl) { try { return intl.formatMessage({ id, defaultMessage: msg }, values) } catch (e) { } }
+  // English apps use the widget's own words: the framework's shared messages reuse common keys
+  // ("placeholder" is "Placeholder" there) and would otherwise win.
+  const english = !intl || /^en(\b|-|_|$)/i.test(String(intl.locale || 'en'))
+  if (intl && !english) { try { return intl.formatMessage({ id, defaultMessage: msg }, values) } catch (e) { } }
   return String(msg).replace(/\{(\w+)\}/g, (m: string, k: string) => (values && values[k] != null ? String(values[k]) : m))
 }
 

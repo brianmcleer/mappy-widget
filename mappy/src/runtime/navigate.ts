@@ -60,7 +60,9 @@ export function pulse (el: HTMLElement | null): void {
     void el.offsetWidth
     el.classList.add(PULSE_CLASS)
     setTimeout(() => el.classList.remove(PULSE_CLASS), 2600)
-    el.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+    let still = false
+    try { still = window.matchMedia('(prefers-reduced-motion: reduce)').matches } catch (e) { }
+    el.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: still ? 'auto' : 'smooth' })
   } catch (e) { }
 }
 
@@ -79,8 +81,28 @@ async function walk (path: Hop[]): Promise<void> {
     } else if (h.type === 'widget' && h.name !== 'controller') {
       // Sidebars, panels and accordions: ask them to open; harmless if they ignore it.
       dispatch(appActions.openWidget(h.id))
+      if (/sidebar/i.test(h.name || '')) await expandSidebar(h)
     }
   }
+}
+
+/**
+ * A Sidebar (Esri's or Sidebar Custom) has one collapsible panel, named by its collapseSide
+ * setting (FIRST or SECOND), shown when its "collapse" state is true (what its own Open
+ * sidebar action sets). Open it only when what we want is in that panel; the other panel is
+ * always showing. Sidebars inside sidebars are opened one by one on the way in.
+ */
+async function expandSidebar (h: Hop): Promise<void> {
+  const st = state()
+  const w = st?.appConfig?.widgets?.[h.id]
+  const sideName = String(w?.config?.collapseSide || 'FIRST').toUpperCase() === 'SECOND' ? 'SECOND' : 'FIRST'
+  const side = w?.layouts?.[sideName]
+  const sideIds: string[] = side ? (typeof side === 'string' ? [side] : Object.values(side).map(String)) : []
+  if (sideIds.length && h.layoutId && !sideIds.includes(h.layoutId)) return
+  const open = st?.widgetsState?.[h.id]?.collapse ?? (w?.config?.defaultState !== 0)
+  if (open) return
+  dispatch(appActions.widgetStatePropChange(h.id, 'collapse', true))
+  await wait(350)
 }
 
 /** Click the toolbar button that opens a widget held in a widget controller. */
@@ -122,16 +144,43 @@ export async function openWidget (ids: string[], label: string, model: AppModel,
   return { ok: false, where, el: null }
 }
 
-/** Opens a widget, then its own help guide (the question-mark button most widgets carry). */
+/** A help button inside this element: a "Help", "Help guide", "How to use" or "?" button that is showing. */
+function helpButtonIn (scope: Element): HTMLElement | null {
+  const all = Array.from(scope.querySelectorAll('button, [role="button"], a')) as HTMLElement[]
+  const said = (b: HTMLElement) => [b.getAttribute('aria-label'), b.getAttribute('title'), b.textContent].filter(Boolean).map(t => String(t).trim()).join(' ')
+  const hits = all.filter(b => !b.closest('.mappy-bubble, .mappy-layer') && isShown(b) && (/\b(help|guide|how to use|instructions|tutorial)\b/i.test(said(b)) || said(b) === '?'))
+  // Prefer a plain "Help" button over links inside help text.
+  return hits.find(b => b.tagName === 'BUTTON') || hits[0] || null
+}
+
+/**
+ * Opens a widget, then its own help guide (the question-mark button most widgets carry).
+ * Widgets load on first open and may sit in a controller panel, so it keeps looking for the
+ * button for a few seconds, in every copy of the widget on screen and its panel.
+ */
 export async function openWidgetHelp (ids: string[], label: string, model: AppModel): Promise<HTMLElement | null> {
-  const r = await openWidget(ids, label, model)
-  const host = r.el && widgetEl(bestWidgetId(ids, model))
-  const scope = host || r.el
-  if (!scope) return null
-  await wait(250)
-  const btn = scope.querySelector('button[aria-label*="help" i], button[title*="help" i], [role="button"][aria-label*="help" i], button[aria-label*="guide" i]') as HTMLElement | null
-  if (btn) { btn.click(); return btn }
-  return r.el
+  const r = await openWidget(ids, label, model, { pulse: false })
+  const id = bestWidgetId(ids, model)
+  const sel = [`[data-widgetid="${id}"]`, `[data-widget-id="${id}"]`, `.widget-${id}`].join(',')
+  for (let i = 0; i < 20; i++) {
+    const hosts = Array.from(document.querySelectorAll(sel)) as Element[]
+    // The widget, and the panel or popper around it (a controller draws its header there).
+    const scopes = [...hosts, ...hosts.map(h => h.closest('[role="dialog"], .popper, .widget-controller-panel, .panel, .jimu-widget-panel')).filter(Boolean) as Element[]]
+    for (const scope of scopes) {
+      const btn = helpButtonIn(scope)
+      if (btn) {
+        // Already open (a toggle that says so): leave it open.
+        if (btn.getAttribute('aria-expanded') !== 'true' && btn.getAttribute('aria-pressed') !== 'true') btn.click()
+        await wait(300)
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"], .modal.show, [role="dialog"]:not(.mappy-bubble)') as HTMLElement | null
+        pulse(dialog && isShown(dialog) ? dialog : btn)
+        return dialog && isShown(dialog) ? dialog : btn
+      }
+    }
+    await wait(200)
+  }
+  if (r.el) pulse(r.el)
+  return null
 }
 
 export function closeWidget (ids: string[]): void {

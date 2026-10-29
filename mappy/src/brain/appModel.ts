@@ -17,6 +17,8 @@ export interface Hop {
   sectionId?: string
   /** For a widget hop: the manifest folder name (controller, sidebar...). */
   name?: string
+  /** For a container hop: the layout of it that holds the next step (a sidebar's FIRST or SECOND panel). */
+  layoutId?: string
 }
 
 interface Owner { type: HopType, id: string }
@@ -113,7 +115,7 @@ export class AppModel {
           parent = this.pathFrom(gl, seen)
         }
       }
-      return [...parent, this.hop(owner)]
+      return [...parent, { ...this.hop(owner), layoutId: lid }]
     }
     return []
   }

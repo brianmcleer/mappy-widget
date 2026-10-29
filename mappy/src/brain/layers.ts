@@ -5,6 +5,7 @@
 */
 import type { Doc, LayerHint } from './types'
 import { stripHtml, clip, layerKey } from './text'
+import { fieldLabel } from './fields'
 
 export interface FieldInfo {
   name: string
@@ -61,7 +62,7 @@ export function layerHint (info: LayerInfo): LayerHint {
     title: info.title,
     url: info.url,
     displayField: info.displayField,
-    fields: info.fields.filter(f => !SKIP_FIELD.test(f.name)).slice(0, 80).map(f => [f.name, f.alias || f.name, shortType(f.type)] as [string, string, string]),
+    fields: info.fields.filter(f => !SKIP_FIELD.test(f.name)).slice(0, 80).map(f => [f.name, fieldLabel(f), shortType(f.type)] as [string, string, string]),
     searchFields: pickSearchFields(info.fields, info.displayField),
     geometryType: GEOM[info.geometryType || ''] || info.geometryType
   }
@@ -73,7 +74,7 @@ export function docsFromLayer (info: LayerInfo, src: Doc['src']): Doc[] {
   const geom = GEOM[info.geometryType || ''] || ''
   const kind = info.isTable ? 'table' : 'layer'
   const desc = clip(stripHtml(info.description || info.itemSnippet || info.itemDescription || ''), 600)
-  const aliases = fields.slice(0, 30).map(f => f.alias || f.name)
+  const aliases = fields.slice(0, 30).map(f => fieldLabel(f))
   const docs: Doc[] = [{
     id: kind + ':' + key,
     kind,
@@ -99,8 +100,8 @@ export function docsFromLayer (info: LayerInfo, src: Doc['src']): Doc[] {
     docs.push({
       id: 'domain:' + key + ':' + f.name.toLowerCase(),
       kind: 'domain',
-      title: `${f.alias || f.name} in ${info.title}`,
-      text: `Possible ${f.alias || f.name} values in ${info.title}: ${clip(list.join(', '), 900)}.`,
+      title: `${fieldLabel(f)} in ${info.title}`,
+      text: `Possible ${fieldLabel(f)} values in ${info.title}: ${clip(list.join(', '), 900)}.`,
       keys: `${f.name} values types categories codes list`,
       layer: key,
       src

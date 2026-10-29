@@ -31,7 +31,7 @@ const COMMAND_WORDS = (
   'find search locate lookup look where what which who why how many much count number zoom pan fly go take ' +
   'navigate jump in out full home extent layer layers group groups table tables tool tools widget widgets page pages ' +
   'view views window windows tab tabs link links bookmark bookmarks preset presets favorite favorites starred only ' +
-  'just solo isolate everything every all none clear reset undo repeat again select expand reveal highlight point ' +
+  'just solo isolate everything else except besides rest others other every all none clear reset undo repeat again select expand reveal highlight point ' +
   'opacity transparency percent scale set make filter sort summarize summary statistics stats average total ' +
   'minimum maximum fields field attributes attribute columns column values value rows row records record next ' +
   'previous more less results result first second third last top bottom help commands examples tip joke thanks ' +

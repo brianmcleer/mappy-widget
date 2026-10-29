@@ -13,6 +13,8 @@ Mappy still has no language model. He picks the tool whose name and description 
 
 | Say | What happens |
 | --- | --- |
+| `what is the closest sewer line to my address` | Plain questions about places go straight to a server tool made for them, with no "ask the server" needed: closest (`nearest ...`, `... near 250 N 5th St`), within a distance (`hydrants within 500 ft of here`, `parks within a quarter mile of my house`), what is at a place (`who owns 123 Main St`, `what zone is 250 N 5th St in`, `what's at ...`, `is ... in a flood zone`) and group counts (`count sewer mains by material`). |
+| `my address is 250 N 5th St` | Remembers "my address", "my house" and "where I live" in this browser. If you ask about "my address" first, he asks for it. With no place at all ("nearest hydrant") he asks "Closest to where?" with buttons for your address and the middle of the map. |
 | `list server tools` | Lists the tools you turned on, as buttons. |
 | `ask the server where is 250 N 5th St` | Picks the best tool (geocoding) and runs it. |
 | `use route from City Hall to the library walking` | Runs that tool by name. Inputs come from the words: `from ... to ...`, `name=value` pairs, coordinates such as `39.06, -108.55`, listed choices such as `walking`, and the rest of the sentence for the one free-text input. |
@@ -21,6 +23,12 @@ Mappy still has no language model. He picks the tool whose name and description 
 | anything Mappy cannot answer himself | When **Offer the server when Mappy is stuck** is on, he adds an **Ask (server name)** button. Nothing is sent until it is pressed. |
 
 When a tool needs an input he could not find, he names it and shows how to type it (`use route with from=..., to=...`).
+
+## Your own server (gis-mcp, free)
+
+The repository's `mcp-server` folder has a small read-only MCP server for your own ArcGIS Enterprise. It provides `geocode` and `reverse_geocode` with your locator, `nearest_feature`, `features_near` and `summarize_layer` for plain place questions, plus `identify` (by address or point), `find_features`, `count_features`, `list_layers` and Portal `search_content`. It runs under IIS on a web server you already have, so there's no extra cost.
+
+It has no service account. Choose **Sign in with: The signed-in ArcGIS user**, and each person only sees what Portal already lets them see. Setup is in `mcp-server/README.md`. After that, the address for Mappy is `https://<your server>/gis-mcp/mcp`.
 
 ## ArcGIS Location Services (beta)
 

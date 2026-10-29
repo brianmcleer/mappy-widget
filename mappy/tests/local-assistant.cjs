@@ -194,6 +194,27 @@ test('layer rows select and show even when the layer is already visible', () => 
   assert.equal(reply.list[0].action.type, 'layerOn')
   assert.match(reply.list[0].action.label, /Select and show/)
 })
+test('show only one layer, said every which way', () => {
+  for (const q of ['turn on only towers and everything else off', 'turn on just towers', 'turn on towers and everything else off', 'turn on towers and turn the rest off', 'turn everything off except towers', 'hide all layers but towers', 'show towers only', 'only show towers']) {
+    const it = parseIntent(q)
+    assert.equal(it.name, 'solo', q)
+    assert.equal(it.target, 'towers', q)
+  }
+})
+test('"turn on only X and everything else off" reaches the layer whole, typos and all', async () => {
+  const { mind, layer } = fixture()
+  const r = await mind.respond('turn on only parcels and everything else off')
+  assert.match(r.text, /^Showing only \*\*/, r.text)
+  assert.equal(layer.visible, true)
+  assert.doesNotMatch(r.text, /I read that as/)
+})
+test('show-only and table phrases leave ordinary requests alone', () => {
+  const { tablePhrase } = require('../src/brain/analysis.ts')
+  assert.equal(parseIntent('only show me parcels').target, 'parcels')
+  assert.equal(parseIntent('show only the parcels layer').name, 'solo')
+  for (const q of ['just show me how to print', 'only the owner can edit this?', 'only show parcels where acres > 5']) assert.notEqual(parseIntent(q).name, 'solo', q)
+  for (const q of ['open the table of contents', 'table of contents', 'show the results in a table']) assert.equal(tablePhrase(q), null, q)
+})
 test('plain show and select layer commands enable the layer', () => {
   assert.equal(parseIntent('show me parcels layer').name, 'layerOn')
   assert.equal(parseIntent('select layer parcels').name, 'layerOn')
@@ -204,7 +225,7 @@ test('table browsing uses stable order, typed values and bounded pages', async (
   layer.queryFeatures = async q => { queries.push(q); return { features: Array.from({ length: 9 }, (_, i) => ({ attributes: { OBJECTID: (q.start || 0) + i + 1, OWNER: 'Owner ' + i, ACRES: 2, STATUS: 1 } })) } }
   const first = await mind.respond('show table parcels')
   assert.equal(first.table.rows.length, 8)
-  assert.equal(first.table.rows[0][3], 'Active')
+  assert.equal(first.table.rows[0][2], 'Active', 'object ids are not shown')
   assert.equal(queries[0].returnGeometry, false)
   assert.deepEqual(queries[0].orderByFields, ['OBJECTID ASC'])
   const next = await mind.respond('next page')
@@ -271,7 +292,7 @@ test('ranked rows resolve aliases, sort stably and respect the app cap', async (
   assert.equal(queries[0].num, 9)
   assert.equal(reply.page.hasNext, false)
   assert.match(reply.text, /limits each result to 8/)
-  await assert.rejects(() => analyzeLayer(live, entry, parseAnalysis('top 3 parcels by unknown'), 8), /exact field/)
+  await assert.rejects(() => analyzeLayer(live, entry, parseAnalysis('top 3 parcels by unknown'), 8), /Which one do you mean/)
 })
 test('filtered table pagination retains the same condition', async () => {
   const { mind, layer, queries } = fixture()
@@ -644,7 +665,7 @@ test('sorting keeps current-view scope and refuses unsupported or unknown fields
   await mind.respond('show table parcels in view')
   await mind.respond('sort by acres descending')
   assert.equal(queries[1].geometry.id, 'extent')
-  assert.match((await mind.respond('sort by missing_field descending')).text, /exact field/)
+  assert.match((await mind.respond('sort by missing_field descending')).text, /Which one do you mean/)
   assert.equal(queries.length, 2)
   layer.capabilities = { query: { supportsOrderBy: false } }
   assert.match((await mind.respond('show table parcels sorted by acres desc')).text, /does not support sorted/)
@@ -667,7 +688,7 @@ test('quality uses complete aggregate counts rather than sampling visible rows',
   assert.equal(queries[0].where, '(ACTIVE = 1) AND (STATUS = 1)')
   assert.equal(queries[0].geometry.id, 'extent'); assert.equal(queries[0].returnGeometry, false)
   assert.equal(queries[0].num, undefined); assert.equal(queries[0].outStatistics.length, 4)
-  assert.deepEqual(reply.table.rows[0], ['STATUS', '500', '500', '50.0%'])
+  assert.deepEqual(reply.table.rows[0], ['Status', '500', '500', '50.0%'], 'field names shown readable')
   assert.match(reply.text, /empty strings/)
 })
 test('empty and inconsistent quality results never become false completeness claims', async () => {
@@ -702,6 +723,197 @@ test('quality drill-downs do not discard an existing filter or imply a combined 
   const whole = await mind.respond('check data quality for parcels in view')
   assert.ok(whole.actions.some(a => /OWNER is null in view/.test(a.q || '')))
 })
+test('incomplete layer commands collect a target before acting', async () => {
+  const { mind, layer, queries } = fixture()
+  const prompt = await mind.respond('please turn on a layer')
+  assert.equal(prompt.mood, 'think')
+  assert.equal(prompt.list.length, 1)
+  assert.equal(layer.visible, false)
+  await mind.respond('Parcels')
+  assert.equal(layer.visible, true)
+  await mind.respond('turn off a layer')
+  await mind.respond('the first one')
+  assert.equal(layer.visible, false)
+  await mind.respond('select a layer')
+  await mind.respond('1')
+  assert.equal(layer.visible, true)
+  await mind.respond('show table')
+  assert.equal(queries.length, 0)
+  const table = await mind.respond('Parcels')
+  assert.ok(table.table)
+  assert.equal(queries.length, 1)
+})
+
+test('incomplete layer choices expire on cancel, map changes, and new requests', async () => {
+  const { mind, live, layer } = fixture()
+  const choice = await mind.respond('turn on a layer')
+  await mind.respond('cancel')
+  await mind.respond(choice.list[0].action.q)
+  assert.equal(layer.visible, false)
+  const next = await mind.respond('turn on a layer')
+  live.jmv = { view: { ...live.view } }
+  await mind.respond(next.list[0].action.q)
+  assert.equal(layer.visible, false)
+  const other = await mind.respond('turn on a layer')
+  await mind.respond('list layers')
+  await mind.respond(other.list[0].action.q)
+  assert.equal(layer.visible, false)
+})
+
+test('layer choices search beyond the first eight and preserve the intended action', async () => {
+  const { mind, live, layer } = fixture()
+  const layers = Array.from({ length: 12 }, (_, i) => ({ ...layer, id: 'layer' + i, title: i === 0 ? 'Storm Drains' : 'District ' + i, visible: false }))
+  live.jmv.view.map.layers = layers
+  const prompt = await mind.respond('turn on a layer')
+  assert.equal(prompt.list.length, 8)
+  assert.ok(!prompt.list.some(row => row.label.includes('Storm Drains')))
+  await mind.respond('choose storm')
+  assert.equal(layers[0].visible, true)
+  assert.equal(layers.filter(l => l.visible).length, 1)
+})
+
+test('layer names narrow in stages, and an unknown answer keeps the pending action', async () => {
+  const { mind, live, layer } = fixture()
+  const north = { ...layer, id: 'north', title: 'North Storm Drains', visible: false }
+  const south = { ...layer, id: 'south', title: 'South Storm Drains', visible: false }
+  live.jmv.view.map.layers = [north, south, { ...layer, id: 'roads', title: 'Roads', visible: false }]
+  const original = await mind.respond('turn on a layer')
+  const narrowed = await mind.respond('choose storm')
+  assert.equal(narrowed.list.length, 2)
+  await mind.respond(original.list[0].action.q)
+  assert.equal(north.visible, false)
+  assert.equal(south.visible, false)
+  const retry = await mind.respond('choose nonexistent')
+  assert.match(retry.text, /could not match/)
+  assert.equal(retry.list.length, 2)
+  await mind.respond('the north one')
+  assert.equal(north.visible, true)
+  assert.equal(south.visible, false)
+})
+
+test('layer follow-ups preserve names, values and filters', () => {
+  for (const q of ['hide it', 'turn it off']) assert.equal(contextualCommand(q, 'Parcels'), 'turn off Parcels')
+  for (const q of ['show it', 'turn it back on']) assert.equal(contextualCommand(q, 'Parcels'), 'turn on Parcels')
+  assert.equal(contextualCommand('show its table', 'Parcels'), 'show table Parcels')
+  assert.equal(contextualCommand('list its fields', 'Parcels'), 'fields in Parcels')
+  assert.equal(contextualCommand('explore it', 'Parcels'), 'explore Parcels')
+  for (const q of ['find hide it in parcels', 'show parcels where OWNER equals show it', 'hide it']) assert.equal(contextualCommand(q), q)
+  assert.equal(contextualCommand('show parcels where OWNER equals hide it', 'Roads'), 'show parcels where OWNER equals hide it')
+})
+
+test('clicking a layer before any chat establishes memory for subsequent requests', async () => {
+  const { mind, layer, entry, queries } = fixture()
+  await mind.act({ type: 'layerOn', id: entry.key })
+  assert.equal(layer.visible, true)
+  await mind.respond('hide it')
+  assert.equal(layer.visible, false)
+  await mind.respond('turn it back on')
+  assert.equal(layer.visible, true)
+  assert.ok((await mind.respond('show its table')).table)
+  assert.equal(queries.length, 1)
+})
+
+test('layer button memory follows the selected layer and expires across maps', async () => {
+  const { mind, live, layer, entry } = fixture()
+  await mind.act({ type: 'solo', id: entry.key })
+  await mind.respond('hide it')
+  assert.equal(layer.visible, false)
+  await mind.respond('turn it back on')
+  live.jmv = { view: { ...live.view } }
+  await mind.respond('hide it')
+  assert.equal(layer.visible, true)
+})
+
+test('natural table and count follow-ups retain the filter and view extent', async () => {
+  const { mind, layer, queries } = fixture()
+  layer.visible = true
+  await mind.respond('show parcels with acres over 5 in view')
+  await mind.respond('show its table')
+  await mind.respond('how many matched?')
+  await mind.respond('show matching rows')
+  assert.equal(queries.length, 4)
+  for (const query of queries) {
+    assert.equal(query.where, '(ACTIVE = 1) AND (ACRES > 5)')
+    assert.equal(query.geometry.id, 'extent')
+  }
+})
+
+test('table follow-ups keep ordering and do not expand ranked or quality results', async () => {
+  const { mind, layer, queries } = fixture()
+  layer.visible = true
+  await mind.respond('show table parcels sorted by ACRES desc where ACRES over 5')
+  await mind.respond('show its table')
+  assert.deepEqual(queries[1].orderByFields, queries[0].orderByFields)
+  assert.equal(queries[1].where, queries[0].where)
+  await mind.respond('top 5 parcels by ACRES')
+  const before = queries.length
+  assert.match((await mind.respond('show its table')).text, /ranked or summarized/)
+  await mind.respond('how many matched?')
+  assert.equal(queries.length, before)
+})
+
+test('data tasks expose editable scope, filters, and sorting without losing authored filters', async () => {
+  const { mind, layer, queries } = fixture()
+  layer.visible = true
+  await mind.respond('show table parcels sorted by ACRES desc where ACRES over 5')
+  assert.equal(mind.task().layer, 'Parcels')
+  assert.equal(mind.task().filter, 'ACRES over 5')
+  const click = label => mind.respond(mind.task().actions.find(a => a.label === label).command)
+  await click('Use current view')
+  assert.equal(queries.at(-1).geometry.id, 'extent')
+  assert.equal(queries.at(-1).where, '(ACTIVE = 1) AND (ACRES > 5)')
+  await click('Count matches')
+  await click('Show matching rows')
+  assert.deepEqual(queries.at(-1).orderByFields, ['ACRES DESC', 'OBJECTID ASC'])
+  assert.equal(queries.at(-1).geometry.id, 'extent')
+  await click('Remove my filter')
+  assert.equal(queries.at(-1).where, 'ACTIVE = 1')
+  assert.equal(queries.at(-1).geometry.id, 'extent')
+  assert.equal(mind.task().filter, 'No additional filter')
+  await mind.respond('use whole layer')
+  assert.equal(queries.at(-1).geometry, undefined)
+  assert.deepEqual(queries.at(-1).orderByFields, ['ACRES DESC', 'OBJECTID ASC'])
+})
+
+test('task revisions reject stale controls and retain last successful state on failure', async () => {
+  const { mind, layer, queries, live } = fixture()
+  layer.visible = true
+  await mind.respond('show table parcels where ACRES over 5')
+  const first = mind.task()
+  await mind.respond(first.actions[0].command)
+  const n = queries.length
+  assert.match((await mind.respond(first.actions[0].command)).text, /changed or is no longer/)
+  assert.equal(queries.length, n)
+  const successful = mind.task()
+  layer.queryFeatures = async () => { throw new Error('Service unavailable') }
+  assert.match((await mind.respond('use current view')).text, /Service unavailable/)
+  assert.deepEqual(mind.task(), successful)
+  live.jmv = { view: { ...live.view } }
+  assert.equal(mind.task(), null)
+  await mind.respond(successful.actions[0].command)
+  assert.equal(queries.length, n)
+})
+
+test('task controls respect disabled queries, removed layers, reset, and ranked subsets', async () => {
+  const { mind, layer, queries, live } = fixture()
+  layer.visible = true
+  await mind.respond('top 5 parcels by ACRES where ACRES over 5')
+  assert.ok(!mind.task().actions.some(a => /Count matches|Show matching rows/.test(a.label)))
+  const current = mind.task()
+  const n = queries.length
+  mind.ctx.featureSearch = false
+  await mind.respond(current.actions[0].command)
+  assert.equal(queries.length, n)
+  mind.ctx.featureSearch = true
+  live.jmv.view.map.layers = []
+  assert.equal(mind.task(), null)
+  await mind.respond(current.actions[0].command)
+  assert.equal(queries.length, n)
+  live.jmv.view.map.layers = [layer]
+  await mind.respond('forget context')
+  assert.equal(mind.task(), null)
+})
+
 ;(async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('PASS', name) } catch (e) { console.error('FAIL', name, e); process.exitCode = 1 }

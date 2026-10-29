@@ -9,8 +9,22 @@
   motion stops under prefers-reduced-motion or the "Pause animation" menu item (2.2.2, 2.3.3).
 */
 
+import { ACT_CSS } from './components/Acts'
+
 const CSS = `
-.mappy-local{font-size:.65rem;border:1px solid var(--mappy-border);border-radius:999px;padding:1px 6px;letter-spacing:.04em}
+.mappy-head-drag{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.mappy-head-drag:active{cursor:grabbing}
+.mappy-head-drag button{cursor:pointer}
+.mappy-task{flex:0 0 auto;border-bottom:1px solid var(--mappy-line);font-size:.75rem;max-height:38%;overflow:auto}
+.mappy-task summary{cursor:pointer;padding:8px 12px;overflow-wrap:anywhere;min-height:32px}
+.mappy-task summary:focus-visible{outline:2px solid currentColor;outline-offset:-3px}
+.mappy-task-heading{font-weight:600;margin-right:5px}
+.mappy-task-meta{display:block;font-size:.7rem;margin-top:3px}
+.mappy-task-body{padding:0 12px 10px;overflow-wrap:anywhere}
+.mappy-task-body dl{margin:4px 0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px}
+.mappy-task-body dt{font-weight:600}.mappy-task-body dd{margin:0}
+.mappy-task-body p{font-size:.68rem;margin:8px 0}
+.mappy-task-actions{display:flex;flex-wrap:wrap;gap:5px}
 .mappy-toolbar{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;border-bottom:1px solid var(--mappy-line)}
 .mappy-toolbar .mappy-chip{font-size:.7rem;padding:2px 8px}
 .mappy-msg p{white-space:pre-wrap}
@@ -76,6 +90,75 @@ const CSS = `
 @keyframes mappy-consult{0%,100%{transform:none}25%,70%{transform:rotate(7deg) translateY(2px)}82%{transform:rotate(-3deg)}}
 @keyframes mappy-prop{0%,100%{opacity:0;transform:scale(.5)}15%,85%{opacity:1;transform:scale(1)}}
 @keyframes mappy-compass-turn{0%{transform:rotate(-140deg)}30%{transform:rotate(95deg)}50%{transform:rotate(-30deg)}70%,100%{transform:rotate(0)}}
+.mappy-leaner{transform-origin:50px 100px;transform-box:view-box;transition:transform .45s cubic-bezier(.3,1.5,.5,1)}
+.mappy-cheek{transform-box:fill-box;transform-origin:center;transition:opacity .3s,transform .3s}
+.mappy-hover .mappy-cheek,.mappy-mood-love .mappy-cheek,.mappy-mood-happy .mappy-cheek,.mappy-mood-pleased .mappy-cheek,.mappy-mood-excited .mappy-cheek{opacity:.95;transform:scale(1.35)}
+.mappy-mood-love .mappy-cheek{animation:mappy-blush 1.1s ease-in-out infinite}
+.mappy-pupils circle{transition:r .25s ease}
+.mappy-hover.mappy-mood-idle .mappy-body{animation:mappy-wiggle .9s ease-in-out 1}
+.mappy-hover.mappy-mood-idle .mappy-hand{animation:mappy-wave .4s ease-in-out 3}
+.mappy-boop .mappy-body{animation:mappy-squish .45s cubic-bezier(.3,1.6,.5,1) 1!important}
+.mappy-boop-heart{animation:mappy-boopheart .9s ease-out 1 both;transform-box:fill-box;transform-origin:center}
+.mappy-dragging .mappy-body{animation:mappy-dangle .7s ease-in-out infinite!important}
+.mappy-mood-love .mappy-body{animation:mappy-sway 1.4s ease-in-out infinite}
+.mappy-mood-excited .mappy-body{animation:mappy-jitterhop .42s ease-in-out 5}
+.mappy-mood-excited .mappy-hand{animation:mappy-wave .21s ease-in-out 10}
+.mappy-heart{animation:mappy-heartup 2.2s ease-out infinite both;transform-box:fill-box;transform-origin:center;opacity:0}
+.mappy-skit-heart .mappy-heart{animation-iteration-count:1}
+.mappy-skit-heart .mappy-body{animation:mappy-sway 1.2s ease-in-out 3}
+.mappy-confetti rect{animation:mappy-confetti 1.1s cubic-bezier(.2,.8,.4,1) 1 both;transform-box:fill-box;transform-origin:center}
+.mappy-skit-dance .mappy-body{animation:mappy-dance 3.6s ease-in-out both}
+.mappy-skit-dance .mappy-hand{animation:mappy-wave .3s ease-in-out 12}
+.mappy-notes text{animation:mappy-float 1.2s ease-in-out 3}
+.mappy-notes text:nth-child(2){animation-delay:.4s}
+.mappy-skit-wink .mappy-body{animation:mappy-nod .6s ease-in-out 2}
+.mappy-wink{animation:mappy-dot .5s ease-in-out 1}
+@keyframes mappy-blush{0%,100%{transform:scale(1.25)}50%{transform:scale(1.6)}}
+@keyframes mappy-wiggle{0%,100%{transform:none}25%{transform:rotate(-4deg) scale(1.03,.98)}60%{transform:rotate(3deg) translateY(-3px)}}
+@keyframes mappy-squish{0%{transform:none}30%{transform:scale(1.18,.78)}60%{transform:scale(.92,1.1) translateY(-5px)}100%{transform:none}}
+@keyframes mappy-boopheart{0%{opacity:0;transform:translateY(8px) scale(.4)}25%{opacity:1;transform:translateY(0) scale(1.5)}100%{opacity:0;transform:translateY(-14px) scale(1.1)}}
+@keyframes mappy-dangle{0%,100%{transform:rotate(-9deg)}50%{transform:rotate(9deg)}}
+@keyframes mappy-sway{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg) translateY(-2px)}}
+@keyframes mappy-jitterhop{0%,100%{transform:translateY(0) scale(1)}35%{transform:translateY(-10px) scale(.95,1.06) rotate(-3deg)}65%{transform:translateY(0) scale(1.08,.93) rotate(3deg)}}
+@keyframes mappy-heartup{0%{opacity:0;transform:translateY(6px) scale(.5)}20%{opacity:1;transform:translateY(0) scale(1.2)}100%{opacity:0;transform:translateY(-18px) scale(.9)}}
+@keyframes mappy-confetti{0%{opacity:1;transform:translate(0,0) rotate(0)}70%{opacity:1}100%{opacity:0;transform:translate(var(--cx),calc(var(--cy) + 30px)) rotate(540deg)}}
+@keyframes mappy-dance{0%,100%{transform:none}10%,30%,50%,70%{transform:rotate(-8deg) translateY(-4px)}20%,40%,60%,80%{transform:rotate(8deg) translateY(0)}90%{transform:translateY(-8px) scale(1.05,.95)}}
+.mappy-mood-dance .mappy-body{animation:mappy-dance 3.6s ease-in-out both}
+.mappy-mood-dance .mappy-hand{animation:mappy-wave .3s ease-in-out 12}
+.mappy-mood-roll .mappy-body{animation:mappy-roll 1.1s cubic-bezier(.4,1.4,.5,1) 1 both}
+.mappy-mood-dizzy .mappy-body{animation:mappy-wobble .5s ease-in-out 5}
+.mappy-spiral path{transform-box:fill-box;transform-origin:center;animation:mappy-twirl .8s linear infinite}
+.mappy-mood-party .mappy-body{animation:mappy-jitterhop .42s ease-in-out 12}
+.mappy-mood-party .mappy-hand{animation:mappy-wave .21s ease-in-out 24}
+.mappy-mood-party .mappy-confetti rect{animation-iteration-count:4}
+.mappy-hat{transform-box:view-box;transform-origin:50px 14px}
+.mappy-mood-party .mappy-hat{animation:mappy-wave .42s ease-in-out 12}
+.mappy-held{transform-origin:88px 20px;transform-box:view-box}
+.mappy-drift>*{transform-box:fill-box;transform-origin:center;animation:mappy-drift 3.6s ease-in-out infinite}
+.mappy-drift>*:nth-child(2n){animation-duration:4.4s;animation-delay:-1.3s}
+.mappy-drift>*:nth-child(3n){animation-duration:5.1s;animation-delay:-2.6s}
+.mappy-drift>*:nth-child(4n+1){animation-delay:-.7s}
+@keyframes mappy-drift{0%,100%{transform:translate(0,0) rotate(0)}33%{transform:translate(1.2px,-2.4px) rotate(6deg)}66%{transform:translate(-1px,-1px) rotate(-5deg)}}
+.mappy-buddy{transform-box:fill-box;transform-origin:50% 100%;animation:mappy-buddy 2.8s ease-in-out infinite}
+@keyframes mappy-buddy{0%,100%{transform:none}40%{transform:translateY(-1.5px) scale(1.03,.97)}60%{transform:translateY(0) scale(.98,1.02)}}
+.mappy-hover .mappy-buddy{animation:mappy-hop .6s ease-in-out 2}
+.mappy-mood-party .mappy-buddy,.mappy-mood-dance .mappy-buddy,.mappy-skit-dance .mappy-buddy{animation:mappy-jitterhop .42s ease-in-out 12}
+.mappy-skit-shiver .mappy-body{animation:mappy-shiver .14s linear 14}
+@keyframes mappy-shiver{0%,100%{transform:translateX(0)}25%{transform:translateX(-1.2px) rotate(-1deg)}75%{transform:translateX(1.2px) rotate(1deg)}}
+.mappy-skit-fan .mappy-hand{animation:mappy-wave .22s ease-in-out 14;transform-origin:88px 20px}
+.mappy-sweat{animation:mappy-sweat 1.2s ease-in 3}
+@keyframes mappy-sweat{0%{opacity:0;transform:translateY(0)}20%{opacity:1}100%{opacity:0;transform:translateY(10px)}}
+.mappy-skit-sneeze .mappy-body{animation:mappy-sneeze 1.6s ease-in-out 1}
+@keyframes mappy-sneeze{0%,100%{transform:none}30%{transform:scale(1.04,1.08) translateY(-3px) rotate(-3deg)}45%{transform:scale(1.04,1.08) translateY(-4px) rotate(-4deg)}55%{transform:scale(1.06,.9) translateY(4px) rotate(6deg)}70%{transform:scale(.98,1.02)}}
+.mappy-achoo{animation:mappy-achoo 1.6s ease-out 1}
+@keyframes mappy-achoo{0%,50%{opacity:0;transform:scale(.4)}60%{opacity:1;transform:scale(1.15)}100%{opacity:0;transform:scale(1) translateX(10px)}}
+.mappy-skit-hum .mappy-body{animation:mappy-sway 1.2s ease-in-out 3}
+.mappy-skit-yawn .mappy-body{animation:mappy-stretch 2.4s ease-in-out 1}
+.mappy-skit-lookaround .mappy-pupils{animation:mappy-lookaround 3.2s ease-in-out 1}
+@keyframes mappy-lookaround{0%,100%{transform:translate(0,0)}20%,35%{transform:translate(-3px,-1px)}55%,70%{transform:translate(3px,-1px)}85%{transform:translate(0,2px)}}
+@keyframes mappy-roll{0%{transform:translateY(0) rotate(0)}40%{transform:translateY(-16px) rotate(200deg)}80%{transform:translateY(-4px) rotate(360deg)}100%{transform:translateY(0) rotate(360deg)}}
+@keyframes mappy-wobble{0%,100%{transform:rotate(0)}25%{transform:rotate(-7deg) translateX(-2px)}75%{transform:rotate(7deg) translateX(2px)}}
+@keyframes mappy-twirl{to{transform:rotate(360deg)}}
 .mappy-still *,.mappy-still{animation:none!important;transition:none!important}
 @keyframes mappy-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
 @keyframes mappy-shadow{0%,100%{transform:scaleX(1)}50%{transform:scaleX(.9)}}
@@ -108,11 +191,42 @@ const CSS = `
 .mappy-bubble{position:fixed;display:flex;flex-direction:column;box-sizing:border-box;
   background:var(--mappy-bg);color:var(--mappy-fg);border:1px solid var(--mappy-border);border-radius:var(--mappy-radius,10px);
   box-shadow:0 8px 28px rgba(0,0,0,.25);font-size:.875rem;line-height:1.5;animation:mappy-pop .18s ease-out;font-family:inherit;letter-spacing:normal;word-spacing:normal;text-align:left}
+.mappy-bot{position:relative}
+.mappy-copy{position:absolute;top:-4px;right:-4px;width:26px;height:26px;min-width:26px;padding:0;border:1px solid var(--mappy-border);border-radius:6px;background:var(--mappy-bg);color:var(--mappy-fg);font-size:.8rem;line-height:1;cursor:pointer;opacity:0;transition:opacity .15s}
+.mappy-bot:hover .mappy-copy,.mappy-copy:focus-visible{opacity:1}
+.mappy-copy:focus-visible{outline:2px solid var(--mappy-focus,#0b57d0);outline-offset:1px}
+@media (hover:none){.mappy-copy{opacity:1}}
+.mappy-mic{font-size:1rem}
+.mappy-mic.on{background:#d83020;color:#fff;border-radius:50%;animation:mappy-pulse 1.2s ease-out infinite}
+.mappy-addr{display:inline;padding:0 2px;border:0;border-bottom:1px dotted currentColor;background:transparent;color:inherit;font:inherit;cursor:pointer;border-radius:2px}
+.mappy-addr:hover{background:var(--mappy-user-bg,rgba(0,0,0,.06))}
+.mappy-addr:focus-visible{outline:2px solid var(--mappy-focus,#0b57d0);outline-offset:1px}
+.mappy-grip{position:absolute;width:24px;height:24px;padding:0;border:0;background:transparent;z-index:3;touch-action:none;opacity:.9;transition:opacity .15s}
+.mappy-grip:hover,.mappy-grip:focus-visible{opacity:1}
+.mappy-grip:focus-visible{outline:2px solid var(--mappy-focus,#0b57d0);outline-offset:1px;border-radius:3px}
+.mappy-grip::before{content:'';position:absolute;inset:4px;background:linear-gradient(135deg,transparent 0 45%,var(--mappy-fg,#333) 45% 52%,transparent 52% 64%,var(--mappy-fg,#333) 64% 71%,transparent 71%)}
+.mappy-grip-br{right:-12px;bottom:-12px;cursor:nwse-resize}
+.mappy-grip-tl{left:-14px;top:-18px;cursor:nwse-resize}.mappy-grip-tl::before{transform:rotate(180deg)}
+.mappy-grip-tr{right:-14px;top:-18px;cursor:nesw-resize}.mappy-grip-tr::before{transform:rotate(-90deg)}
+.mappy-grip-bl{left:-12px;bottom:-12px;cursor:nesw-resize}.mappy-grip-bl::before{transform:rotate(90deg)}
 .mappy-tail{position:absolute;width:16px;height:16px;background:var(--mappy-bg);transform:rotate(45deg);pointer-events:none}
 .mappy-tail.mappy-tail-down{bottom:-9px;border-right:1px solid var(--mappy-border);border-bottom:1px solid var(--mappy-border)}
 .mappy-tail.mappy-tail-up{top:-9px;border-left:1px solid var(--mappy-border);border-top:1px solid var(--mappy-border)}
 .mappy-tail.mappy-tail-left{left:-9px;border-left:1px solid var(--mappy-border);border-bottom:1px solid var(--mappy-border)}
 .mappy-tail.mappy-tail-right{right:-9px;border-right:1px solid var(--mappy-border);border-top:1px solid var(--mappy-border)}
+.mappy-bubble.mappy-docked{position:fixed;inset:0;width:auto;max-height:none;height:100%;border:0;border-radius:0;box-shadow:none;animation:none}
+.mappy-docked .mappy-head{padding:8px 8px 8px 10px;gap:6px}
+.mappy-docked .mappy-head h2{font-size:1rem}
+.mappy-docked .mappy-avatar{flex:0 0 auto;width:34px;height:37px;display:flex;align-items:flex-end;justify-content:center;overflow:visible}
+.mappy-docked .mappy-sub{display:block;font-size:.75rem;font-weight:400;color:var(--mappy-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mappy-docked .mappy-titles{flex:1;min-width:0}
+.mappy-docked .mappy-titles h2{margin:0}
+.mappy-docked .mappy-toolbar{padding:6px 10px}
+.mappy-docked .mappy-log{padding:12px 14px;font-size:.9375rem}
+.mappy-docked .mappy-chips{padding:0 14px 8px}
+.mappy-docked .mappy-form{padding:10px 12px 12px}
+.mappy-docked .mappy-input{min-height:38px;font-size:.9375rem}
+.mappy-docked .mappy-form .mappy-btn{min-height:38px;padding:3px 14px}
 .mappy-head{display:flex;align-items:center;gap:4px;padding:6px 6px 6px 12px;border-bottom:1px solid var(--mappy-line);flex:0 0 auto}
 .mappy-head h2{flex:1;font-size:.875rem;font-weight:700;margin:0;color:inherit;line-height:1.3}
 .mappy-iconbtn{border:0;background:transparent;color:inherit;min-width:28px;min-height:28px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:1rem;line-height:1;padding:0 4px}
@@ -148,7 +262,7 @@ const CSS = `
 .mappy-menu button{display:flex;width:100%;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:inherit;min-height:32px;padding:4px 10px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:inherit}
 .mappy-menu button:hover,.mappy-menu button:focus-visible{background:#e8f0fe;outline:2px solid #0b57d0;outline-offset:-2px}
 .mappy-menu [role="separator"]{height:1px;background:#767676;margin:4px 6px}
-@media (prefers-reduced-motion: reduce){.mappy-char *,.mappy-bubble,.mappy-bulb{animation:none!important;transition:none!important}}
+@media (prefers-reduced-motion: reduce){.mappy-char *,.mappy-bubble,.mappy-bubble *,.mappy-bulb,.mappy-pulse{animation:none!important;transition:none!important}}
 @media (forced-colors: active){.mappy-bubble,.mappy-menu,.mappy-btn,.mappy-chip,.mappy-input{border:1px solid CanvasText}.mappy-tail{display:none}}
 `
 
@@ -157,7 +271,7 @@ export function injectStyles (target: Document = document): void {
     if (target.getElementById('mappy-styles')) return
     const el = target.createElement('style')
     el.id = 'mappy-styles'
-    el.textContent = CSS
+    el.textContent = CSS + ACT_CSS
     target.head.appendChild(el)
   } catch (e) { }
 }

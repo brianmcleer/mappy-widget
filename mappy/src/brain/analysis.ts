@@ -1,4 +1,5 @@
 /** A deliberately small query language: field names are resolved from metadata. */
+import { fieldLabel } from './fields'
 export interface AnalysisRequest {
   kind: 'stats' | 'group' | 'filter' | 'countWhere' | 'browse' | 'quality'
   layer: string
@@ -26,6 +27,14 @@ function filterParts (text: string): [string, string] | null {
   return null
 }
 
+export function resultCountFollowup (input: string): boolean {
+  return /^(?:(?:how many|count)(?: of)? (?:those|them|matches|matching (?:rows|features|records))|how many (?:are there|matched)|count (?:the )?(?:results|matches))[.!?]*$/i.test(input.trim())
+}
+
+export function resultTableFollowup (input: string): boolean {
+  return /^(?:(?:show|put) (?:those|them|the results|the matches) in (?:a |the )?table|(?:show|open|browse) (?:its|their|the results?) (?:table|rows|records)|(?:show|open|browse) (?:the )?(?:matching rows|matching records|matches|results))[.!?]*$/i.test(input.trim())
+}
+
 export function analysisFollowup (input: string, previous?: AnalysisRequest | null): string | null {
   if (!previous || previous.limit) return null
   const q = input.trim().replace(/[?!]+$/, '')
@@ -37,18 +46,28 @@ export function analysisFollowup (input: string, previous?: AnalysisRequest | nu
     if (sort) return `show table ${layer} sorted by ${JSON.stringify(unquote(sort[1]))} ${/^(?:desc|descending|z to a|highest first)$/i.test(sort[2] || '') ? 'desc' : 'asc'}${condition}${scope}`
     if (previous.kind === 'browse' && previous.field && /^(?:reverse (?:the )?(?:sort )?order|sort (?:it |them )?the other way)$/i.test(q)) return `show table ${layer} sorted by ${JSON.stringify(previous.field)} ${previous.order === 'desc' ? 'asc' : 'desc'}${condition}${scope}`
   }
-  if (/^(?:how many|count)(?: of)? (?:those|them|matches|matching (?:rows|features|records))$/i.test(q)) return `count ${layer}${condition}${scope}`
-  if (/^(?:show|put) (?:those|them|the results|the matches) in (?:a |the )?table$/i.test(q)) {
+  if (resultCountFollowup(q)) return `count ${layer}${condition}${scope}`
+  if (resultTableFollowup(q)) {
     if (previous.limit) return null // A ranked subset is not the entire filtered dataset.
-    return `show table ${layer}${condition}${scope}`
+    const sort = previous.kind === 'browse' && previous.field ? ` sorted by ${JSON.stringify(previous.field)} ${previous.order || 'asc'}` : ''
+    return `show table ${layer}${sort}${condition}${scope}`
   }
   return null
 }
+/** The field that means size for a layer: acres, area, length, in that order. */
+export function sizeField (fields: QueryField[]): QueryField | null {
+  const num = fields.filter(numericField)
+  const by = (re: RegExp) => num.find(f => re.test(f.name) || re.test(f.alias || ''))
+  return by(/acre/i) || by(/\barea\b|sq_?f(?:ee)?t|sqft|square/i) || by(/shape.?(?:st)?area/i) || by(/length|\blen\b|miles|feet/i) || by(/shape.?(?:st)?len/i) || null
+}
+
 export function resolveField (fields: QueryField[], name: string): QueryField {
+  if (name === '*size*') { const f = sizeField(fields); if (f) return f; throw new Error('This layer has no size field (acres, area or length) to rank by.') }
+  if (name === '*year*') { const f = fields.filter(numericField).find(x => /year|\byr\b|built|install/i.test(`${x.name} ${x.alias || ''}`)); if (f) return f; throw new Error('This layer has no year field (year built, install year) to compare.') }
   const key = fieldKey(name)
   const exact = fields.filter(f => fieldKey(f.name) === key)
-  const matches = exact.length ? exact : fields.filter(f => fieldKey(f.alias || '') === key)
-  if (matches.length !== 1) throw new Error(`Choose an exact field name: ${fields.slice(0, 18).map(f => f.alias || f.name).join(', ')}.`)
+  const matches = exact.length ? exact : fields.filter(f => fieldKey(f.alias || '') === key || fieldKey(fieldLabel(f)) === key)
+  if (matches.length !== 1) throw new Error(`Which one do you mean? Try one of these: ${fields.filter(f => !/^(?:objectid|fid|globalid|shape.*)$/i.test(f.name)).slice(0, 18).map(f => fieldLabel(f)).join(', ')}.`)
   if (!/^[a-z_][a-z0-9_.]*$/i.test(matches[0].name)) throw new Error('This field name is not supported for queries.')
   return matches[0]
 }
@@ -61,8 +80,29 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
   if (filtered) {
     const base = parseAnalysis(filtered[0])
     if (base) return { ...base, condition: filtered[1], inView }
-    const command = filtered[0].match(/^(filter|select|show(?: me)?|find|count|how many)\s+(?:the\s+)?(.+)$/i)
+    // Only a real condition ("acres > 5", "owner contains Smith"), never "where the hydrants are".
+    const conditionLike = /(?:[<>=]|\b(?:is|equals|contains|starts with|between|greater|less|more|fewer|over|under|at least|at most|not)\b)/i.test(filtered[1]) && !/^(?:i am|i was|the \w+ (?:are|is)|it is|they are)\b/i.test(filtered[1])
+    const command = conditionLike ? filtered[0].match(/^(filter|select|show(?: me)?|find|count|how many|list|which|what)\s+(?:the\s+|all\s+)?(.+)$/i) : null
     if (command) return { kind: /count|how many/i.test(command[1]) ? 'countWhere' : 'filter', layer: unquote(command[2]), condition: filtered[1], inView }
+    // "Parcels where owner is Smith": a layer name alone (with "where" only).
+    if (conditionLike && /\s+where\s+/i.test(q) && /^(?:the\s+)?[a-z][a-z0-9 _'-]{1,40}$/i.test(filtered[0])) return { kind: 'filter', layer: unquote(filtered[0].replace(/^the\s+/i, '')), condition: filtered[1], inView }
+  }
+  // "Which zoning has the most parcels", "what zone type is most common in parcels".
+  const most = q.match(/^(?:which|what)\s+(.+?)\s+(?:has|have)\s+the\s+(most|fewest|least)\s+(.+)$/i) || q.match(/^(?:which|what)\s+(.+?)\s+is\s+(?:the\s+)?(most|least)\s+common\s+(?:in|among|for)\s+(.+)$/i)
+  if (most) return { kind: 'group', layer: unquote(most[3]), field: unquote(most[1]), inView, limit: 5, order: /fewest|least/i.test(most[2]) ? 'asc' : 'desc' }
+  // "Largest parcel", "the 3 smallest parks", "biggest lot in view": ranked by the layer's size field.
+  const sized = q.match(/^(?:(?:what(?:'s| is| are)|which(?: is| are)?|show(?: me)?|find)\s+)?(?:the\s+)?(?:(\d+)\s+)?(largest|biggest|smallest|longest|shortest|tiniest)\s+(?:(\d+)\s+)?(.+)$/i)
+  if (sized && !/\bby\b/i.test(sized[4])) return { kind: 'browse', layer: unquote(sized[4]), field: '*size*', limit: Number(sized[1] || sized[3] || 1), order: /smallest|shortest|tiniest/i.test(sized[2]) ? 'asc' : 'desc', inView }
+  // "Parcels bigger than 5 acres", "hydrants older than 1990", "parcels over 2 acres".
+  const compare = q.match(/^(?:show(?: me)?\s+|find\s+|list\s+|count\s+|how many\s+)?(?:the\s+)?(.+?)\s+(bigger|larger|greater|more|over|above|smaller|less|under|below|fewer|newer|older|longer|shorter|higher|lower)\s+(?:than\s+)?([\d,.]+)\s*([a-z][a-z _]*)?$/i)
+  if (compare) {
+    const op = /bigger|larger|greater|more|over|above|newer|longer|higher/i.test(compare[2]) ? '>' : '<'
+    const unit = (compare[4] || '').trim()
+    const field = unit && !/^(?:feet|ft|foot|meters?|m|miles?)$/i.test(unit) ? unit.replace(/^(?:sq\.? ?ft|square feet)$/i, 'area') : /older|newer/i.test(compare[2]) ? '*year*' : unit ? 'length' : 'acres'
+    const flip = /older/i.test(compare[2]) ? '<' : /newer/i.test(compare[2]) ? '>' : op
+    const counting = /^(?:count|how many)\b/i.test(q)
+    const layer = compare[1].replace(/^(?:which|what)\s+/i, '').replace(/\s+(?:are|is)$/i, '')
+    return { kind: counting ? 'countWhere' : 'filter', layer: unquote(layer), condition: `${field} ${flip} ${compare[3].replace(/,/g, '')}`, inView }
   }
   const quality = q.match(/^(?:check (?:the )?data quality (?:for|in|of)|data quality (?:for|in|of)|what(?:'s| is) missing (?:in|from)|check missing values (?:in|for))\s+(.+)$/i)
   if (quality) return { kind: 'quality', layer: unquote(quality[1]), inView }
@@ -107,7 +147,7 @@ export function compileCondition (text: string, fields: QueryField[]): string {
   const coded = field.domain?.codedValues?.filter((c: any) => String(c.name).toLowerCase() === String(value).toLowerCase()) || []
   if (coded.length === 1) value = coded[0].code
   if (numericField(field)) {
-    try { value = numberValue(String(value)) } catch (e) { throw new Error(`${field.alias || field.name} needs a finite number or a coded value label.`) }
+    try { value = numberValue(String(value)) } catch (e) { throw new Error(`${fieldLabel(field)} needs a finite number or a coded value label.`) }
     if (op === 'contains' || op === 'starts with') throw new Error('Use a comparison such as = or > for a numeric field.')
     return `${field.name} ${op} ${Number(value)}`
   }
@@ -125,4 +165,24 @@ function numberValue (text: string): number {
   const value = Number(text.replace(/,/g, ''))
   if (!Number.isFinite(value)) throw new Error('Use a finite number.')
   return value
+}
+
+/**
+ * Everyday ways to ask for a table, as "show table LAYER ...": "open hydrants in the table",
+ * "show the parcels table", "attribute table for hydrants where status is active". Null when
+ * the text is not one of them.
+ */
+export function tablePhrase (q: string): string | null {
+  const t = q.trim().replace(/[?.!]+$/, '')
+  if (/^show table\b/i.test(t) || /table of contents|\btoc\b/i.test(t)) return null
+  // "Show the results in a table" means what was just found, not a layer called results.
+  const notLayer = (x: string) => /^(?:results?|them|those|these|it|that|this|the results|my results|everything|all)$/i.test(x.trim())
+  const tail = (rest: string) => rest ? ' ' + rest.trim() : ''
+  let m = t.match(/^(?:open|show|view|put|load|display|pull up|bring up)(?: me)?(?: all)? (?:the )?(.+?) (?:in|into|on|as) (?:a |the )?(?:attribute )?table\b(.*)$/i)
+  if (m && !notLayer(m[1])) return `show table ${m[1]}${tail(m[2])}`
+  m = t.match(/^(?:open|show|view|display|pull up|bring up)(?: me)? (?:the |an? )?(?:attribute )?table (?:for|of) (?:the )?(.+?)(\s+(?:where|with|whose|in view|sorted by)\b.*)?$/i)
+  if (m && !notLayer(m[1])) return `show table ${m[1]}${tail(m[2] || '')}`
+  m = t.match(/^(?:open|show|view|display|pull up|bring up)(?: me)? (?:the )?(.+?) (?:attribute )?table(\s+(?:where|with|whose|in view|sorted by)\b.*)?$/i)
+  if (m && !/^(?:a|the|attribute)$/i.test(m[1]) && !/\s(?:in|into|as|on)(?:\s+(?:a|an|the))?$/i.test(m[1]) && !notLayer(m[1])) return `show table ${m[1]}${tail(m[2] || '')}`
+  return null
 }

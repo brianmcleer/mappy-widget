@@ -21,6 +21,8 @@ export interface Placement {
   tail: TailSide
   /** Tail position along the bubble edge (px from the left for up/down, from the top for left/right). */
   tailOffset: number
+  /** The bubble's left edge stays put (it grows to the right when resized); else its right edge does. */
+  alignLeft?: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, hi < lo ? lo : v))
@@ -29,6 +31,7 @@ export function placeBubble (anchor: Rect, naturalHeight: number, vw: number, vh
   const gap = opts.gap ?? 12
   const m = opts.margin ?? 8
   const width = Math.max(200, Math.min(opts.maxWidth ?? 360, vw - 2 * m))
+  const alignLeft = opts.preferLeftAligned ?? (anchor.left + anchor.width / 2 < vw / 2)
   const h = Math.max(120, naturalHeight)
   const cx = anchor.left + anchor.width / 2
   const cy = anchor.top + anchor.height / 2
@@ -36,12 +39,11 @@ export function placeBubble (anchor: Rect, naturalHeight: number, vw: number, vh
   const below = vh - anchor.bottom - gap - m
   const leftSpace = anchor.left - gap - m
   const rightSpace = vw - anchor.right - gap - m
-  const want = Math.min(h, 300)
+  const want = Math.min(h, opts.maxHeight ? Math.min(h, 480) : 300)
   const cap = opts.maxHeight ?? 540
 
   const horizontal = (): { left: number, tailOffset: number } => {
     // Line the bubble's near edge up with Mappy, then keep it inside the tab.
-    const alignLeft = opts.preferLeftAligned ?? (cx < vw / 2)
     let left = alignLeft ? anchor.left - 8 : anchor.right - width + 8
     left = clamp(left, m, vw - width - m)
     return { left, tailOffset: clamp(cx - left - 8, 14, width - 30) }
@@ -51,12 +53,12 @@ export function placeBubble (anchor: Rect, naturalHeight: number, vw: number, vh
     const maxHeight = Math.min(cap, Math.max(120, above))
     const height = Math.min(h, maxHeight)
     const { left, tailOffset } = horizontal()
-    return { left, top: Math.max(m, anchor.top - gap - height), bottom: vh - (anchor.top - gap), width, maxHeight, tail: 'down', tailOffset }
+    return { left, top: Math.max(m, anchor.top - gap - height), bottom: vh - (anchor.top - gap), width, maxHeight, tail: 'down', tailOffset, alignLeft }
   }
   if (below >= want) {
     const maxHeight = Math.min(cap, Math.max(120, below))
     const { left, tailOffset } = horizontal()
-    return { left, top: anchor.bottom + gap, width, maxHeight, tail: 'up', tailOffset }
+    return { left, top: anchor.bottom + gap, width, maxHeight, tail: 'up', tailOffset, alignLeft }
   }
   const side = Math.max(leftSpace, rightSpace)
   if (side >= 220) {
@@ -71,6 +73,7 @@ export function placeBubble (anchor: Rect, naturalHeight: number, vw: number, vh
       width: w,
       maxHeight,
       tail: onLeft ? 'right' : 'left',
+      alignLeft: !onLeft,
       tailOffset: clamp(cy - top - 8, 14, height - 30)
     }
   }
@@ -79,7 +82,7 @@ export function placeBubble (anchor: Rect, naturalHeight: number, vw: number, vh
   const room = Math.min(cap, Math.max(120, useAbove ? anchor.top - m : vh - anchor.top - m))
   const height = Math.min(h, room)
   const { left, tailOffset } = horizontal()
-  return { left, top: useAbove ? Math.max(m, anchor.top - height) : clamp(anchor.bottom, m, vh - height - m), width, maxHeight: room, tail: useAbove ? 'down' : 'up', tailOffset }
+  return { left, top: useAbove ? Math.max(m, anchor.top - height) : clamp(anchor.bottom, m, vh - height - m), width, maxHeight: room, tail: useAbove ? 'down' : 'up', tailOffset, alignLeft }
 }
 
 /** Keeps the character fully in the tab. Position is measured from the chosen corner's edges. */
