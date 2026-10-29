@@ -2717,8 +2717,6 @@ function placeInto (question: string, place: string): string {
 function saveMyAddress (address: string): string {
   return clip(address.trim().replace(/[.!]+$/, ''), 200)
 }
-  return a
-}
 
 /** What people usually ask next. */
 function followUps (pq: ReturnType<typeof parsePlaceQuestion>, q: string, has: ((re: RegExp) => boolean) | null = null): string[] {
