@@ -105,9 +105,19 @@ export function resolveField (fields: QueryField[], name: string): QueryField {
     if (f) return f
     throw new Error('This layer has no year field (year built, install year) to compare.')
   }
-  const key = fieldKey(name)
+  const key = fieldKey(unquote(name).replace(/^(?:the|its|their)\s+/i, ''))
   const exact = fields.filter(f => fieldKey(f.name) === key)
   let matches = exact.length ? exact : fields.filter(f => fieldKey(f.alias || '') === key || fieldKey(fieldLabel(f)) === key)
+  // "zone" for Zoning, "owner" for Owner name, "area" for Lot Area: one field whose words start the same way.
+  if (!matches.length && key.length >= 3) {
+    const stem = (x: string) => x.replace(/(?:ing|es|s|e)$/, '')
+    const loose = fields.filter(f => {
+      const names = [f.name, f.alias || '', fieldLabel(f)].map(fieldKey)
+      return names.some(n => n === key || stem(n) === stem(key) || (key.length >= 4 && (n.startsWith(key) || n.endsWith(key))) || n.split(/[^a-z0-9]+/).includes(key))
+        || [f.name, f.alias || '', fieldLabel(f)].some(n => n.toLowerCase().split(/[\s_]+/).map(stem).includes(stem(key)))
+    })
+    if (loose.length === 1) matches = loose
+  }
   // "edited date", "installed date": the date field the verb points at.
   const verb = !matches.length && unquote(name).trim().match(/^([a-z]+)\s+date$/i)
   if (verb) {
@@ -132,7 +142,7 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
     const base = parseAnalysis(filtered[0])
     if (base) return { ...base, condition: filtered[1], inView }
     // Only a real condition ("acres > 5", "owner contains Smith"), never "where the hydrants are".
-    const conditionLike = /(?:[<>=]|\b(?:is|equals|contains|starts with|between|greater|less|more|fewer|over|under|at least|at most|not|before|after|since|during|last|this|today|yesterday)\b)/i.test(filtered[1]) && !/^(?:i am|i was|the \w+ (?:are|is)|it is|they are)\b/i.test(filtered[1])
+    const conditionLike = /(?:[<>=]|\b(?:is|equals|contains|starts with|between|greater|less|more|fewer|over|under|at least|at most|not|before|after|since|during|last|this|today|yesterday)\b)/i.test(filtered[1]) && !/^(?:i am|i was|it is|they are)\b/i.test(filtered[1]) && !/^the \w+ (?:are|is)(?:\s+(?:located|at|in|on|near|here|there|shown|showing|drawn))?$/i.test(filtered[1])
     const share = conditionLike ? filtered[0].match(/^(?:what|which)\s+(?:percent(?:age)?|share|fraction|portion|proportion)\s+of\s+(?:the\s+|all\s+)?(.+)$/i) : null
     if (share) return { kind: 'percent', layer: unquote(share[1]), condition: filtered[1], inView }
     const command = conditionLike ? filtered[0].match(/^(filter|select|show(?: me)?|find|count|how many|list|which|what)\s+(?:the\s+|all\s+)?(.+)$/i) : null
@@ -140,6 +150,16 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
     // "Parcels where owner is Smith": a layer name alone (with "where" only).
     if (conditionLike && /\s+where\s+/i.test(q) && /^(?:the\s+)?[a-z][a-z0-9 _'-]{1,40}$/i.test(filtered[0])) return { kind: 'filter', layer: unquote(filtered[0].replace(/^the\s+/i, '')), condition: filtered[1], inView }
   }
+  // "Parcels owned by Smith", "list parcels owned by smith", "how many parcels does Smith own", "Smith's parcels".
+  const owned = q.match(/^(?:show(?: me)?\s+|find\s+|list\s+|count\s+|how many\s+|which\s+|what\s+)?(?:the\s+|all\s+)?(.+?)\s+(?:owned|held) by\s+(.+)$/i) || q.match(/^how many\s+(.+?)\s+(?:does|do)\s+(.+?)\s+own$/i)
+  if (owned) {
+    const counting = /^(?:count|how many)\b/i.test(q)
+    return { kind: counting ? 'countWhere' : 'filter', layer: unquote(owned[1]), condition: `owner contains ${unquote(owned[2]).replace(/^(?:the\s+)?/i, '')}`, inView }
+  }
+  // "What zoning is most common": the layer is whichever has that field (resolved by the caller when missing).
+  const common = q.match(/^(?:what|which)\s+(.+?)\s+is\s+(?:the\s+)?(most|least)\s+common(?:\s+(?:in|among|for)\s+(.+))?$/i)
+  if (common && common[3]) return { kind: 'group', layer: unquote(common[3]), field: unquote(common[1]), inView, limit: 5, order: common[2].toLowerCase() === 'least' ? 'asc' : 'desc' }
+  if (common) return { kind: 'group', layer: '*field*', field: unquote(common[1]), inView, limit: 5, order: common[2].toLowerCase() === 'least' ? 'asc' : 'desc' }
   // "What percent of parcels are over 5 acres", "what share of hydrants were inspected this year".
   const pct = q.match(/^(?:what|which)\s+(?:percent(?:age)?|share|fraction|portion|proportion)\s+of\s+(?:the\s+|all\s+)?(.+?)\s+(?:are|is|were|was|have|has|got)\s+(.+)$/i)
   if (pct) {
@@ -159,7 +179,7 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
   if (per) return { kind: 'group', layer: unquote(per[1]), field: unquote(per[2]), inView }
   // "Parcels edited in the last 7 days", "how many hydrants were inspected this year",
   // "manholes installed before 1990", "permits issued since March 2024".
-  const dated = q.match(new RegExp(`^(?:show(?: me)?\\s+|find\\s+|list\\s+|count\\s+|how many\\s+|which\\s+|what\\s+)?(?:the\\s+|all\\s+)?(.+?)\\s+(?:(?:were|was|are|is|have been|has been|got|been)\\s+)?(${DATE_VERBS})\\s+(.+)$`, 'i'))
+  const dated = q.match(new RegExp(`^(?:show(?: me)?\\s+|find\\s+|list\\s+|count\\s+|how many\\s+|which\\s+|what\\s+)?(?:the\\s+|all\\s+|all the\\s+)?(.+?)\\s+(?:(?:that|which|who)\\s+)?(?:(?:were|was|are|is|have been|has been|got|been|have|has)\\s+)?(${DATE_VERBS})\\s+(.+)$`, 'i'))
   if (dated && parseWhen(dated[3])) {
     const counting = /^(?:count|how many)\b/i.test(q)
     return { kind: counting ? 'countWhere' : 'filter', layer: unquote(dated[1]), condition: `${dated[2].toLowerCase()} date ${dated[3].trim()}`, inView }
@@ -203,7 +223,7 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
 }
 
 const DATE_VERBS = 'edited|updated|changed|modified|created|added|entered|recorded|installed|placed|inspected|checked|surveyed|tested|flushed|cleaned|maintained|serviced|built|constructed|replaced|repaired|rehabbed|lined|paved|painted|sold|transferred|issued|opened|submitted|reported|requested|closed|completed|finished|resolved|flown|captured|collected|acquired'
-const WHEN_START = /\s+((?:is\s+|was\s+|were\s+)?(?:in the (?:last|past)|within the (?:last|past)|over the (?:last|past)|during the (?:last|past)|the (?:last|past)|last|past|this|previous|today|yesterday|since|after|before|on|in|during|between|from|until|by)\b.*)$/i
+const WHEN_START = /\s+((?:is\s+|was\s+|were\s+)?(?:in the (?:last|past)|within the (?:last|past)|over the (?:last|past)|during the (?:last|past)|the (?:last|past)|last|past|this|previous|today|yesterday|recently|lately|ever|since|after|before|on|in|during|between|from|until|by)\b.*)$/i
 
 /**
  * Up to three conditions joined with "and" ("acres > 5 and zoning is R-4"), each compiled on
@@ -325,7 +345,7 @@ export function tablePhrase (q: string): string | null {
   // "Show the results in a table" means what was just found, not a layer called results.
   const notLayer = (x: string) => /^(?:results?|them|those|these|it|that|this|the results|my results|everything|all)$/i.test(x.trim())
   const tail = (rest: string) => rest ? ' ' + rest.trim() : ''
-  let m = t.match(/^(?:open|show|view|put|load|display|pull up|bring up)(?: me)?(?: all)? (?:the )?(.+?) (?:in|into|on|as) (?:a |the )?(?:attribute )?table\b(.*)$/i)
+  let m = t.match(/^(?:open|show|view|put|load|display|pull up|bring up|add|send)(?: me)?(?: all)? (?:the )?(.+?) (?:in|into|on|as|to) (?:a |the )?(?:attribute )?table\b(.*)$/i)
   if (m && !notLayer(m[1])) return `show table ${m[1]}${tail(m[2])}`
   m = t.match(/^(?:open|show|view|display|pull up|bring up)(?: me)? (?:the |an? )?(?:attribute )?table (?:for|of) (?:the )?(.+?)(\s+(?:where|with|whose|in view|sorted by)\b.*)?$/i)
   if (m && !notLayer(m[1])) return `show table ${m[1]}${tail(m[2] || '')}`

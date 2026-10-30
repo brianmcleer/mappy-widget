@@ -61,6 +61,8 @@ export interface MapSnapshot {
 }
 
 const TAG = '__mappy'
+/** Scales for each kind of move (1:n). A city block is about 1:2,400; a few houses 1:600; a whole layer never closer than 1:1,200. */
+export const SCALE = { address: 2400, feature: 2400, place: 1500, closest: 600, layerMin: 1200, coordinates: 2400, world: 10000000 }
 const HIGHLIGHT_RGB = [230, 119, 0]
 const toArr = (c: any): any[] => { try { return c ? (c.toArray ? c.toArray() : Array.isArray(c) ? c : Array.from(c)) : [] } catch (e) { return [] } }
 const isSublayer = (l: any): boolean => !!l && (l.declaredClass === 'esri.layers.support.Sublayer' || (l.layer && l.id != null && typeof l.layer === 'object' && !l.layers))
@@ -127,6 +129,32 @@ export class LiveMap {
   onLayersChanged: (() => void) | null = null
   /** The user opened a popup on a feature: Mappy can offer what he knows about that layer. */
   onPopup: ((layerTitle: string, feature: any) => void) | null = null
+
+  /** The widget's own switch for calm map moves (Pause, or the builder's setting). The OS preference counts too. */
+  reducedMotion = false
+  /** Jumps instead of flying: the OS "reduce motion" preference, the widget paused, or the builder's setting. */
+  get calm (): boolean {
+    if (this.reducedMotion) return true
+    try { return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches } catch (e) { return false }
+  }
+
+  /**
+   * One place for every map move: durations are short (at most 700 ms, slower for small
+   * nudges), the easing settles gently, and under reduced motion the map jumps with no
+   * animation at all. A target scale never goes closer than the minimum for its kind.
+   */
+  async go (target: any, ms = 700): Promise<void> {
+    const view = this.view
+    if (!view) return
+    const opts = this.calm ? { animate: false } : { duration: Math.min(700, Math.max(200, ms)), easing: 'ease-out' }
+    await withTimeout(view.goTo(target, opts), 12000)
+  }
+
+  /** After zooming to a geometry: never closer than `min` (1:600 is a few houses), so a tiny parcel or a point does not fill the screen. */
+  private async backOffTo (min: number): Promise<void> {
+    const view = this.view
+    if (view?.scale && view.scale < min) { try { await this.go({ scale: min }, 250) } catch (e) { } }
+  }
 
   get view (): any { return this.jmv?.view || null }
   get ready (): boolean { return !!this.view }
@@ -195,6 +223,7 @@ export class LiveMap {
   }
 
   private changed (force: boolean): void {
+    this.entriesCache = null
     let sig = ''
     try { sig = this.entries().map(e => e.key + ':' + this.status(e)).join('|') + '#' + (this.bridge?.widgetId || '') } catch (e) { }
     if (force || sig !== this.lastSig) {
@@ -212,7 +241,21 @@ export class LiveMap {
   // ------------------------------------------------------------------ the layer tree
 
   /** Layer tree, top of the list first, groups included, through the layer list when there is one. */
+  /** The layer tree is read many times while one request is answered; the same reading is reused for a moment. */
+  private entriesCache: { at: number, view: any, sig: string, list: LayerEntry[] } | null = null
+
   entries (): LayerEntry[] {
+    const c = this.entriesCache
+    const now = Date.now()
+    const map = this.view?.map
+    const sig = `${toArr(map?.layers).length}/${toArr(map?.tables).length}/${toArr(map?.allLayers).length}`
+    if (c && c.view === this.view && c.sig === sig && now - c.at < 250) return c.list
+    const list = this.entriesNow()
+    this.entriesCache = { at: now, view: this.view, sig, list }
+    return list
+  }
+
+  private entriesNow (): LayerEntry[] {
     const b = this.bridge
     if (b) {
       try {
@@ -459,6 +502,7 @@ export class LiveMap {
   // ------------------------------------------------------------------ switching
 
   setVisible (e: LayerEntry, on: boolean): ToggleResult {
+    this.entriesCache = null
     const t = this.target(e)
     if (!t) return { parents: [], children: [] }
     const b = this.bridge
@@ -542,13 +586,13 @@ export class LiveMap {
     try {
       if (!e.isGroup && typeof t.queryExtent === 'function') {
         const r = await withTimeout(t.queryExtent({ where: t.definitionExpression || '1=1', outSpatialReference: view.spatialReference }), 10000)
-        if (r?.extent && r.count !== 0) { await view.goTo(r.extent.expand ? r.extent.expand(1.1) : r.extent, { duration: 900 }); return true }
+        if (r?.extent && r.count !== 0) { await this.go(r.extent.expand ? r.extent.expand(1.15) : r.extent); await this.backOffTo(SCALE.layerMin); return true }
       }
     } catch (err) { }
     try {
       if (t.load && !t.loaded) await withTimeout(t.load(), 8000)
       const ext = t.fullExtent || e.layer.fullExtent
-      if (ext) { await view.goTo(ext, { duration: 900 }); return true }
+      if (ext) { await this.go(ext); await this.backOffTo(SCALE.layerMin); return true }
     } catch (err) { }
     return false
   }
@@ -569,7 +613,7 @@ export class LiveMap {
     let next = scale
     if (scale > hi) next = hi * 0.8
     else if (scale < lo) next = lo * 1.25
-    if (next !== scale && isFinite(next)) { try { await view.goTo({ scale: next }, { duration: 700 }) } catch (err) { } }
+    if (next !== scale && isFinite(next)) { try { await this.go({ scale: next }, 500) } catch (err) { } }
   }
 
   async count (e: LayerEntry, inView: boolean): Promise<number | null> {
@@ -656,7 +700,11 @@ export class LiveMap {
     this.clear()
     const g = r.graphic
     const isPoint = /point/i.test(g.geometry.type || '')
-    try { await view.goTo(isPoint ? { target: g.geometry, scale: Math.min(view.scale || 4000, 2400) } : { target: g.geometry }, { duration: 900 }) } catch (e) { }
+    // A point: a block around it, closer only if the map already was. An area: the feature with room around it, never closer than a few houses.
+    try {
+      if (isPoint) await this.go({ target: g.geometry, scale: Math.min(view.scale || SCALE.feature, SCALE.feature) })
+      else { const ext = g.geometry.extent; await this.go(ext?.expand ? ext.expand(1.6) : { target: g.geometry }); await this.backOffTo(SCALE.closest) }
+    } catch (e) { }
     if (view !== this.view) return
     await this.highlight(r)
     try {
@@ -673,7 +721,7 @@ export class LiveMap {
     try {
       const [Graphic] = await loadArcGISJSAPIModules(['esri/Graphic'])
       if (view !== this.view) return false
-      await withTimeout(view.goTo({ target: location, scale: 2400 }, { duration: 900 }), 10000)
+      await this.go({ target: location, scale: SCALE.address })
       if (view !== this.view) return false
       this.clear()
       const marker = new Graphic({ geometry: location, attributes: { [TAG]: true }, symbol: { type: 'simple-marker', size: 16, color: HIGHLIGHT_RGB, outline: { color: 'white', width: 2 } } })
@@ -820,9 +868,9 @@ export class LiveMap {
       if (origin) marks.push(add(pt(origin), { type: 'simple-marker', style: 'circle', size: 12, color: [0, 92, 230], outline: { color: 'white', width: 2 } }))
       const targets = marks.map(m => m.geometry)
       const single = targets.length === 1
-      await withTimeout(view.goTo(single ? { target: targets[0], scale: 1200 } : targets, { duration: 900 }), 10000)
-      if (!single && view.scale && view.scale < 600) await withTimeout(view.goTo({ scale: 600 }, { duration: 300 }), 5000)
-      if (!single && view.zoom > 0) await withTimeout(view.goTo({ zoom: view.zoom - 0.5 }, { duration: 300 }), 5000)
+      await this.go(single ? { target: targets[0], scale: SCALE.place } : targets)
+      // Several pins: a little room around them, and never closer than a few houses.
+      if (!single) { await this.backOffTo(SCALE.closest); if (view.scale) await this.go({ scale: view.scale * 1.3 }, 250) }
       return true
     } catch (e) { return false }
   }
@@ -859,7 +907,7 @@ export class LiveMap {
     if (!view) return
     try {
       const vp = this.home || view.map?.initialViewProperties?.viewpoint
-      if (vp) await view.goTo(vp, { duration: 900 })
+      if (vp) await this.go(vp)
     } catch (e) { }
   }
 
@@ -870,7 +918,7 @@ export class LiveMap {
     this.extents.pop()
     const prev = this.extents[this.extents.length - 1]
     this.goingBack = true
-    try { await view.goTo(prev, { duration: 600 }); return true } catch (e) { this.goingBack = false; return false } finally { setTimeout(() => { this.goingBack = false }, 2500) }
+    try { await this.go(prev, 500); return true } catch (e) { this.goingBack = false; return false } finally { setTimeout(() => { this.goingBack = false }, 2500) }
   }
 
   /** The basemaps the app's portal offers, by title. */
@@ -905,14 +953,15 @@ export class LiveMap {
   async zoom (dir: 'in' | 'out'): Promise<void> {
     const view = this.view
     if (!view) return
-    try { await view.goTo({ zoom: (view.zoom ?? 10) + (dir === 'in' ? 1 : -1) }, { duration: 500 }) } catch (e) { }
+    // By scale, not zoom level: zoom levels do not exist on maps in a local coordinate system.
+    try { if (view.scale) await this.go({ scale: dir === 'in' ? view.scale / 2 : view.scale * 2 }, 400) } catch (e) { }
   }
 
   async goBookmark (index: number): Promise<boolean> {
     try {
       const b = toArr(this.view?.map?.bookmarks)[index]
-      if (b?.viewpoint) { await this.view.goTo(b.viewpoint, { duration: 900 }); return true }
-      if (b?.extent) { await this.view.goTo(b.extent, { duration: 900 }); return true }
+      if (b?.viewpoint) { await this.go(b.viewpoint); return true }
+      if (b?.extent) { await this.go(b.extent); return true }
     } catch (e) { }
     return false
   }
@@ -922,7 +971,8 @@ export class LiveMap {
     try {
       const f = this.view?.popup?.selectedFeature
       if (!f?.geometry) return false
-      await this.view.goTo(f.geometry.type === 'point' ? { target: f.geometry, scale: Math.min(this.view.scale, 2500) } : f.geometry)
+      if (f.geometry.type === 'point') await this.go({ target: f.geometry, scale: Math.min(this.view.scale || SCALE.feature, SCALE.feature) })
+      else { const ext = f.geometry.extent; await this.go(ext?.expand ? ext.expand(1.6) : f.geometry); await this.backOffTo(SCALE.closest) }
       return true
     } catch (e) { return false }
   }

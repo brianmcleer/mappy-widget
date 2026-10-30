@@ -67,6 +67,8 @@ export function parseWhen (phrase: string, now = new Date()): TimeRange | null {
     }
   }
   if (t === 'today') return { from: today, to: addDays(today, 1) }
+  if (/^(?:recently|lately|not long ago|in recent weeks|in the recent past)$/.test(t)) return { from: addDays(today, -29), to: addDays(today, 1) }
+  if (/^(?:ever|at any time|at all)$/.test(t)) return { from: new Date(1900, 0, 1) }
   if (t === 'yesterday') return { from: addDays(today, -1), to: today }
   m = t.match(/^(this|last|previous)\s+(week|month|year)$/)
   if (m) {

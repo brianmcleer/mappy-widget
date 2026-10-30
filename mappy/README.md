@@ -146,6 +146,8 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | What did I click? | The feature under the open popup, as a table of its fields, with Zoom to it |
 | What's on the map? | Layers drawing, basemap, scale, center, open popup, changes so far |
 | Copy that / Export chat | Copies the last answer; saves the conversation as a text file |
+| Is there a sewer layer? / Turn on parcels and hydrants / Make parcels lighter | Yes or no with a button, several at once, 25% lighter or darker |
+| Fewer tips / Stop bugging me | Tips off for good; "tip" asks for one |
 | Tell me a joke | Regrets nothing |
 
 ## Configuration

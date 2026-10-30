@@ -65,6 +65,8 @@ export interface Config {
    */
   feed?: boolean
   feedUrl?: string
+  /** Map moves jump instead of flying, for people who get motion sick. Off means follow the person's OS "reduce motion" setting (and Pause). */
+  calmMap?: boolean
   /**
    * Who runs this app and where it is, so his wording fits any city, county, district or utility:
    * "the City's website" becomes "<orgName>'s website". Empty uses the portal's organization

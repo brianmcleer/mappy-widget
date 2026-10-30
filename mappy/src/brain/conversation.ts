@@ -44,6 +44,8 @@ export function contextualCommand (input: string, layer?: string): string {
   if (/^(?:label(?: it| them| that)?|labels|labels on|turn on (?:the )?labels|add labels|show labels)$/i.test(q)) return `label ${layer}`
   if (/^(?:unlabel(?: it| them)?|labels off|turn off (?:the )?labels|hide (?:the )?labels|remove (?:the )?labels)$/i.test(q)) return `turn off labels for ${layer}`
   if (/^(?:fade(?: it| that)?|make it (?:transparent|see[- ]through)|dim it)$/i.test(q)) return `fade ${layer}`
+  const step = q.match(/^(?:make|turn) (?:it|that|this|that layer|this layer) (?:a (?:bit|little) |slightly |more |much )?(lighter|fainter|more transparent|darker|stronger|more solid|bolder)$|^(?:turn|dial) (?:it|that) (up|down)(?: a (?:bit|little|notch))?$/i)
+  if (step) return `make ${layer} ${/lighter|fainter|transparent|down/i.test(step[1] || step[2]) ? 'lighter' : 'darker'}`
   if (/^(?:solo(?: it)?|only (?:it|that|this|that one)|show only (?:it|that|this)|just (?:it|that one)|isolate it|hide everything else|turn everything else off)$/i.test(q)) return `show only ${layer}`
   if (/^(?:summari[sz]e(?: it| that)?|explore(?: it| that)?|describe (?:it|that)|what can i ask(?: about it)?|data ideas)$/i.test(q)) return `explore ${layer}`
   if (/^(?:largest|biggest|the largest one|which is (?:the )?(?:largest|biggest))$/i.test(q)) return `largest ${layer}`
@@ -60,6 +62,8 @@ export function contextualCommand (input: string, layer?: string): string {
   }
   if (/^(?:just |only )?(?:in view|here|on screen)[?!]*$/i.test(input)) return `count ${layer} in view`
   if (/^(?:how many|count)(?: in view| here| on screen)?[?!]*$/i.test(input)) return `count ${layer}${/in view|here|on screen/i.test(input) ? ' in view' : ''}`
+  // "It" stands for the layer only in a layer command: "what day is it", "read it", "is it a holiday" keep their "it".
+  if (!/^(?:turn|switch|show|hide|zoom|go|fly|fade|label|unlabel|count|explore|describe|open|close|select|set|make|solo|only|isolate|what(?:'s| is) in|how many|fields|summarize|remove|add|enable|disable|toggle|reveal|where(?:'s| is)|expand|diagnose|why|when was|put|move|drop|take)\b/i.test(input.trim())) return input
   const condition = input.search(/\s+(?:where|with)\s+/i)
   const prefix = condition < 0 ? input : input.slice(0, condition)
   const tail = condition < 0 ? '' : input.slice(condition)

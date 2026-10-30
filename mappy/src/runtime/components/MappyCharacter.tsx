@@ -42,6 +42,8 @@ interface Props {
   pointDir?: PointDir | null
   /** Override the time-of-year hat (null for none); the date picks it otherwise. */
   hat?: string | null
+  /** Nobody has talked to him for a while: fewer, quieter idle acts, so he never becomes the thing on screen you notice. */
+  settled?: boolean
   onActivate?: () => void
   onPointerDown?: (e: any) => void
   onDoubleClick?: () => void
@@ -138,11 +140,12 @@ export default function MappyCharacter (props: Props): any {
       const next_ = acts[skitIndex.current++ % acts.length]
       setSkit(next_)
       finish = setTimeout(() => setSkit(''), (IDLE_ACTS as readonly string[]).includes(next_) ? 4400 : 3600)
-      next = setTimeout(perform, 16000 + rand() * 8000)
+      // Every 16 to 24 seconds while someone is around; once a minute or so once they have been working without him for a while.
+      next = setTimeout(perform, props.settled ? 60000 + rand() * 30000 : 16000 + rand() * 8000)
     }
-    next = setTimeout(perform, 8000)
+    next = setTimeout(perform, props.settled ? 30000 : 8000)
     return () => { clearTimeout(next); clearTimeout(finish) }
-  }, [still, mood, props.expanded, props.phase])
+  }, [still, mood, props.expanded, props.phase, props.settled])
 
   // Hover: he notices you. Boop (a quick press): he squishes and pops a heart.
   const [hover, setHover] = React.useState(false)

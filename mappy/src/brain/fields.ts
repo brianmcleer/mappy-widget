@@ -133,11 +133,17 @@ function realAlias (alias: string, name: string): boolean {
 }
 
 /** The name to show for a field: its alias when it is a real label, else its name made readable. */
+const LABELS = new Map<string, string>()
 export function fieldLabel (f: { name?: string, alias?: string } | null | undefined): string {
   if (!f) return ''
   const name = String(f.name || '')
-  if (f.alias && realAlias(f.alias, name)) return String(f.alias).trim()
-  return humanizeName(f.alias && !realAlias(f.alias, name) && f.alias.trim() ? f.alias : name) || name
+  const key = name + '\u0000' + String(f.alias || '')
+  const hit = LABELS.get(key)
+  if (hit !== undefined) return hit
+  const v = f.alias && realAlias(f.alias, name) ? String(f.alias).trim() : (humanizeName(f.alias && !realAlias(f.alias, name) && f.alias.trim() ? f.alias : name) || name)
+  if (LABELS.size > 5000) LABELS.clear()
+  LABELS.set(key, v)
+  return v
 }
 
 /** A key in a server's answer ("distance_feet", "FACILITYID") as a column heading. */

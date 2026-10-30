@@ -1039,7 +1039,7 @@ test("what's on the map, copy that, export chat and zoom to the selected feature
   const z = await mind.respond('__zoomsel')
   assert.match(z.text, /There it is/)
   assert.equal(goes.length, 1)
-  assert.equal(goes[0].scale, 2500)
+  assert.equal(goes[0].scale, 2400)
 })
 
 
@@ -1322,6 +1322,85 @@ test('any coordinate system: places on a state plane map are remembered and reus
   assert.equal(calls.length, 1)
   assert.equal(calls[0][0], 'identify')
   assert.ok(Math.abs(calls[0][1].latitude - 39.07) < 0.001 && Math.abs(calls[0][1].longitude + 108.56) < 0.001, JSON.stringify(calls[0][1]))
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+
+
+test('everyday phrasings: existence, lighter/darker, several layers, owners, dates, odds and ends', async () => {
+  const { live, layer, mind } = fixture()
+  const zoning = { id: 'zoning', title: 'Zoning Districts', type: 'feature', visible: false, opacity: 1, fields, objectIdField: 'OBJECTID', createQuery: () => ({ where: '1=1' }), queryFeatureCount: async () => 3, queryFeatures: async () => ({ features: [] }) }
+  live.jmv.view.map.layers.push(zoning)
+  const names = ['is there a sewer layer', 'do you have zoning', 'turn the parcels back on', 'make the parcels lighter', 'turn parcels down', 'back to the whole city', "what's the name of this map", 'what else is there', 'how many parcels can i see', 'what day is it', 'can i download the parcels', 'the map is broken', 'where the parks at', 'fit the parcels on screen', 'can you make the hydrants bigger', 'which layer is this', 'i hate this map', 'close the chat', 'all off', 'how does this work', 'i want to see the zoning']
+  const expect = ['hasLayer', 'hasLayer', 'layerOn', 'opacityStep', 'opacityStep', 'home', 'about', 'help', 'count', 'today', 'download', 'mapBlank', 'showLayer', 'goto', 'styleAsk', 'whichLayer', 'frustrated', 'sleep', 'allOff', 'help', 'showLayer']
+  names.forEach((q, i) => assert.equal(parseIntent(q).name, expect[i], q))
+  assert.equal(parseIntent('how many parcels can i see').scope, 'view')
+  assert.equal(parseIntent('export chat').name, 'exportChat')
+  assert.equal(parseIntent('the parcels layer is not showing').name, 'layerDiagnosis')
+
+  assert.match((await mind.respond('do you have zoning')).text, /Yes: \*\*Zoning Districts\*\* is in this map, and it is off right now/)
+  assert.match((await mind.respond('is there a sewer layer')).text, /No layer called "sewer"/)
+  await mind.respond('turn on parcels')
+  const lighter = await mind.respond('make the parcels lighter')
+  assert.match(lighter.text, /75% opacity/)
+  assert.equal(layer.opacity, 0.75)
+  await mind.respond('make the parcels darker')
+  assert.equal(layer.opacity, 1)
+  assert.match((await mind.respond('make it darker')).text, /already as solid/)
+  const both = await mind.respond('turn on parcels and zoning districts')
+  assert.equal(zoning.visible, true)
+  assert.match(both.text, /Zoning Districts/)
+  assert.match((await mind.respond('turn off parcels, zoning districts')).text, /Parcels.*Zoning Districts/s)
+  assert.equal(layer.visible, false); assert.equal(zoning.visible, false)
+  assert.match((await mind.respond('what day is it')).text, /^It is \w+day, /)
+  assert.match((await mind.respond('can you make the hydrants bigger')).text, /set by whoever made the map/)
+  assert.match((await mind.respond('how do i turn on a layer')).text, /"turn on parcels"/)
+  assert.match((await mind.respond('hydrants?')).text, /hydrants/i)
+  // Analysis phrasings.
+  assert.deepEqual(parseAnalysis('list parcels owned by smith'), { kind: 'filter', layer: 'parcels', condition: 'owner contains smith', inView: false })
+  assert.deepEqual(parseAnalysis('how many parcels does smith own'), { kind: 'countWhere', layer: 'parcels', condition: 'owner contains smith', inView: false })
+  assert.deepEqual(parseAnalysis('what zoning is most common'), { kind: 'group', layer: '*field*', field: 'zoning', inView: false, limit: 5, order: 'desc' })
+  assert.deepEqual(parseAnalysis('parcels where the owner is smith'), { kind: 'filter', layer: 'parcels', condition: 'the owner is smith', inView: false })
+  assert.deepEqual(parseAnalysis('show me the parcels that were edited this week'), { kind: 'filter', layer: 'parcels', condition: 'edited date this week', inView: false })
+  assert.deepEqual(parseAnalysis('which parcels changed recently'), { kind: 'filter', layer: 'parcels', condition: 'changed date recently', inView: false })
+  assert.equal(parseAnalysis('add parcels to the table'), null)
+  assert.equal(require('../src/brain/analysis.ts').tablePhrase('add parcels to the table'), 'show table parcels')
+  const f2 = [...fields, { name: 'ZONING', alias: 'Zoning', type: 'string' }]
+  assert.equal(compileCondition('the owner is smith', f2), "OWNER = 'smith'")
+  assert.equal(compileCondition('zone is R-4', f2), "ZONING = 'R-4'")
+  assert.equal(compileCondition('area > 5', f2), 'ACRES > 5')
+  assert.equal(compileCondition('owner contains smith', f2), "UPPER(OWNER) LIKE '%SMITH%'")
+})
+
+test('map moves: calm motion jumps, scale policy keeps distance', async () => {
+  const { live, layer, entry } = fixture()
+  const goes = []
+  live.jmv.view.goTo = async (t, o) => { goes.push([t, o]); if (t && t.scale) live.jmv.view.scale = t.scale }
+  live.jmv.view.scale = 50000
+  layer.visible = true
+  // Flying: short, eased.
+  await live.go({ scale: 1000 }, 900)
+  assert.deepEqual(goes[0][1], { duration: 700, easing: 'ease-out' })
+  // Calm: no animation at all.
+  live.reducedMotion = true
+  await live.go({ scale: 2000 })
+  assert.deepEqual(goes[1][1], { animate: false })
+  live.reducedMotion = false
+  // Zoom in and out go by scale, so they work on maps without zoom levels.
+  live.jmv.view.scale = 4000; live.jmv.view.zoom = -1
+  await live.zoom('in'); assert.equal(goes[2][0].scale, 2000)
+  await live.zoom('out'); assert.equal(goes[3][0].scale, 4000)
+  // A tiny parcel never fills the screen: the move backs off to a few houses.
+  live.jmv.view.goTo = async (t, o) => { goes.push([t, o]); live.jmv.view.scale = t && t.scale ? t.scale : 150 }
+  live.jmv.view.popup = { selectedFeature: { layer, geometry: { type: 'polygon', extent: { expand: f => ({ expanded: f }) } } } }
+  await live.zoomToSelected()
+  assert.deepEqual(goes[goes.length - 2][0], { expanded: 1.6 })
+  assert.equal(goes[goes.length - 1][0].scale, 600)
+  // An address lands at a city block.
+  live.jmv.view.goTo = async (t, o) => { goes.push([t, o]) }
+  live.jmv.view.graphics = { add () {}, remove () {} }
+  sdkLoader = async () => [function G (o) { Object.assign(this, o) }]
+  assert.equal(await live.showAddress({ x: 1, y: 2 }), true)
+  assert.equal(goes[goes.length - 1][0].scale, 2400)
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
 })
 

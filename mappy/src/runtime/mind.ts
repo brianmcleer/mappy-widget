@@ -21,7 +21,7 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
-import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase } from '../brain/analysis'
+import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField } from '../brain/analysis'
 import { reviseTask, taskSummary } from '../brain/task'
 import type { TaskOperation, TaskSummary } from '../brain/task'
 import type { AnalysisRequest } from '../brain/analysis'
@@ -29,12 +29,13 @@ import { dataIdeas } from '../brain/ideas'
 import { withTimeout } from './live'
 import { analyzeLayer } from './analysis'
 import type { TableRequest, TableResult } from './tableWidget'
-import { Fun, type Place } from '../brain/fun'
+import { Fun, todayLine, type Place } from '../brain/fun'
 import { definitionAsk, lookupTerm, codeGuess, outOfScope, CODE_SHAPE } from '../brain/glossary'
 import { V, pick } from '../brain/voice'
 import { rand } from '../brain/random'
 import { flat, clip, tokenize, stripTags } from '../brain/text'
 import type { LiveMap, LayerEntry, ToggleResult } from './live'
+import { SCALE } from './live'
 import type { LayerInfo } from '../brain/layers'
 import { completeText, addressFragment, withAddress, addressQuestions } from '../brain/complete'
 import type { CompleteSource } from '../brain/complete'
@@ -84,6 +85,12 @@ const STATUS_SR: { [s: string]: string } = { on: 'on', off: 'off', hidden: 'on, 
 class LayerChoice extends Error {
   constructor (public query: string, public entries: LayerEntry[]) { super('Choose a layer') }
 }
+
+/** Intents whose words ("there", "this") look like a place but are about the app or the conversation. */
+const NOT_PLACE = new Set(['help', 'about', 'mapBlank', 'hasLayer', 'today', 'download', 'listLayers', 'listWidgets', 'listPages', 'listBookmarks', 'tour', 'tourNext', 'tourStop', 'changes', 'tryAgain', 'mapSummary', 'whoami', 'diagnostics'])
+
+/** The service url of a layer, when it has one. */
+function live_url (live: LiveMap, e: LayerEntry): string { try { return String(live.target(e)?.url || '') } catch (err) { return '' } }
 
 /** Requests about the conversation itself: "try again" never re-runs these. */
 const META = new Set(['tryAgain', 'mapSummary', 'copyAnswer', 'exportChat', 'tourNext', 'tourStop', 'changes', 'repeat', 'speak', 'help', 'diagnostics', 'greet', 'thanks', 'ack', 'cancel', 'undo', 'forget', 'clicked', 'tip', 'joke', 'whoami', 'about', 'sleep', 'resize', 'moveCorner', 'pause'])
@@ -537,6 +544,8 @@ export class Mind {
    * for a missing place instead of guessing.
    */
   private async placeQuestion (text: string, raw: string): Promise<Reply | null> {
+    // "What else is there", "what's the name of this map": about the app, not a place.
+    if (NOT_PLACE.has(parseIntent(text).name)) return null
     const t = text.trim().replace(/\s+/g, ' ')
     // The address typed as-is, not as the typo reader saw it.
     const said = raw.trim().replace(/\s+/g, ' ')
@@ -592,6 +601,14 @@ export class Mind {
       const mine = q.replace(/\bmy\s+/i, 'the ').replace(/[?.!]+$/, '') + ' for my address'
       if (parsePlaceQuestion(mine.replace(MY_PLACE, '1 Main St'))) q = mine
     }
+    // "When is trash day", "what zone am I in", "who is my council rep" with no place at all: ask for one.
+    if (!parsePlaceQuestion(q) && /^(?:when(?:'s| is) (?:the )?(?:trash|garbage|recycling|recycle|yard waste|pickup|collection)(?: (?:day|pickup|collected|collection))?|what(?:'s| is) (?:the )?(?:zoning|zone|flood zone|council district|district|school|ward|precinct)(?: here)?|who(?:'s| is) (?:the |my )?(?:council (?:rep|member|representative)|representative|councilman|councilwoman|councilor))[?.!]*$/i.test(q)) {
+      const question = q.replace(/[?.!]+$/, '').replace(/\s+here$/i, '') + ' at 1 Main St'
+      if (parsePlaceQuestion(question)) {
+        this.awaitingPlace = { question, mine: false }
+        return { text: 'For which address? Give me one, say "my address", or choose the middle of the map.', mood: 'think', actions: [{ type: 'ask', q: 'here', label: 'Middle of the map' }, ...(this.myAddress ? [{ type: 'ask' as const, q: 'my address', label: 'My address' }] : [])] }
+      }
+    }
     // "How far is 1718 White Ave from City Hall", "what does Jane Doe own".
     const distance = await this.distanceQuestion(q)
     if (distance) return distance
@@ -628,6 +645,8 @@ export class Mind {
         this.placeNames.set(placeKey(at[0], at[1]), 'your location')
       }
     }
+    // "Whose property is this", "whose house is that": who owns it.
+    q = q.replace(/^whose\s+(?:property|parcel|land|house|lot|building|home)\s+is\s+(this|that|it|here)[?.!]*$/i, 'who owns $1')
     const thisPlace = q.match(THIS_PLACE)
     if (thisPlace && parsePlaceQuestion(q.replace(THIS_PLACE, ' 1 Main St'))) {
       const spot = this.recentPlace()
@@ -1583,6 +1602,8 @@ export class Mind {
     if (this.lastAnalysis && (this.lastAnalysis.limit || ['stats', 'group'].includes(this.lastAnalysis.kind)) && tableFollow) {
       return { text: 'That was a ranked or summarized result, so there is no single set of rows to open. Ask for the layer itself, for example “show table” and its name.', mood: 'talk' }
     }
+    // "hydrants?", "hello?": one word with a question mark is the word.
+    if (/^\S+[?!.]+$/.test(input.trim())) input = input.trim().replace(/[?!.]+$/, '')
     input = analysisFollowup(input, this.lastAnalysis) || input
     if (follow && this.lastReadIntent) input = `${this.lastReadIntent} ${follow[1]}${this.lastReadScope}`
     if (!['thanks', 'greet'].includes(parseIntent(input).name)) { this.addressChoices = null; this.lastAddress = '' }
@@ -1628,7 +1649,7 @@ export class Mind {
     if (this.ctx.fun !== false) this.fun.setPlace(this.ctx.place)
     const fun = this.ctx.fun === false ? null : this.fun.reply(raw)
     if (fun) {
-      if (fun.effect === 'nullIsland' && this.ctx.live.view) { try { await this.ctx.live.view.goTo({ center: [0, 0], zoom: 5 }) } catch (e) { } }
+      if (fun.effect === 'nullIsland' && this.ctx.live.view) { try { await this.ctx.live.go({ center: [0, 0], scale: SCALE.world }) } catch (e) { } }
       return { text: fun.text, mood: fun.mood as any, ...(fun.suggest ? { suggest: fun.suggest } : {}) }
     }
     // "What is a parcel", "what does RM-8 mean": meanings, from the map's own code lists or the glossary.
@@ -1652,6 +1673,15 @@ export class Mind {
         this.lastReadIntent = ''; this.lastReadScope = ''
         this.lastResults = []; this.tablePage = null
         if (!this.ctx.featureSearch) return { text: 'Data queries are disabled by the app author.', mood: 'confused' }
+        if (analysis.layer === '*field*') {
+          // "What zoning is most common": the layer that has such a field, the one being worked with first.
+          const live = this.ctx.live
+          const has = (e: LayerEntry) => { try { resolveField(live.info(e).fields as any, analysis.field || ''); return true } catch (err) { return false } }
+          const cands = live.entries().filter(e => !e.isGroup && live.isVisible(e)).sort((a, b) => (a.path === this.lastLayer ? -1 : 0) - (b.path === this.lastLayer ? -1 : 0))
+          const pick = cands.find(has)
+          if (!pick) return { text: `None of the layers that are on has a field like "${analysis.field}". Name the layer: "what ${analysis.field} is most common in parcels".`, mood: 'confused', suggest: ['List layers'] }
+          analysis.layer = pick.key
+        }
         const e = this.resolveLayer(analysis.layer)
         if (!e) return { text: `I cannot identify "${analysis.layer}". Use its full layer name.`, mood: 'confused', suggest: ['List layers'] }
         if (!this.ctx.live.canSee(e)) return this.offReply(e)
@@ -1714,13 +1744,13 @@ export class Mind {
         case 'coordinates': return this.needMap(async () => {
           const latitude = Number(it.target); const longitude = Number(it.value)
           if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return { text: 'Use latitude, longitude: latitude -90 to 90 and longitude -180 to 180.', mood: 'confused' }
-          await this.ctx.live.view.goTo({ center: [longitude, latitude], zoom: 16 })
+          await this.ctx.live.go({ center: [longitude, latitude], scale: SCALE.coordinates })
           return { text: `Centered at ${latitude}, ${longitude} (latitude, longitude).`, mood: 'acknowledge' }
         })
         case 'scale': return this.needMap(async () => {
           const scale = Number(it.value)
           if (!Number.isFinite(scale) || scale < 100 || scale > 1000000000) return { text: 'Use a scale between 1:100 and 1:1,000,000,000.', mood: 'confused' }
-          await this.ctx.live.view.goTo({ scale })
+          await this.ctx.live.go({ scale })
           return { text: `Map scale set to 1:${scale.toLocaleString()}.`, mood: 'acknowledge' }
         })
         case 'greet': return { text: V.hello(), mood: 'wave' }
@@ -1786,6 +1816,31 @@ export class Mind {
         case 'reveal': return this.needMap(async () => this.revealByName(it.target!))
         case 'layerOn': case 'layerOff': if (/^(?:the\s+)?labels?$/i.test(it.target || '')) return this.needMap(async () => this.labels(undefined, it.name === 'layerOn')); return this.toggle(it.target!, it.name === 'layerOn', raw)
         case 'opacity': return this.opacity(it.target!, Number(it.value))
+        case 'opacityStep': {
+          const e = this.resolveLayer(it.target!)
+          if (!e) return { text: V.noLayer(it.target!), mood: 'confused' }
+          const now = Math.round(Number(this.ctx.live.target(e)?.opacity ?? 1) * 100)
+          const next = Math.max(10, Math.min(100, now + (it.value === 'lighter' ? -25 : 25)))
+          if (next === now) return { text: `${e.title} is already as ${it.value === 'lighter' ? 'light' : 'solid'} as it goes (${now}%).`, mood: 'talk' }
+          this.ctx.live.setOpacity(e, next)
+          return { text: `${e.title} is ${it.value === 'lighter' ? 'lighter' : 'stronger'} now: ${next}% opacity.`, mood: 'acknowledge', suggest: [it.value === 'lighter' ? `Make ${e.title} lighter` : `Make ${e.title} darker`, `Set ${e.title} opacity to 100%`] }
+        }
+        case 'hasLayer': return this.hasLayer(it.target!, raw)
+        case 'styleAsk': {
+          const e = it.target ? this.resolveLayer(it.target, true) : null
+          const name = e ? `**${e.title}**` : 'a layer'
+          return { text: `Colors, sizes and symbols are set by whoever made the map, so I cannot change how ${name} draws. I can make it lighter or stronger, turn its labels on, show only that layer, or zoom to it.`, mood: 'explain', suggest: e ? [`Make ${e.title} lighter`, `Label ${e.title}`, `Show only ${e.title}`] : ['What layers are on?'] }
+        }
+        case 'whichLayer': {
+          const sel = this.ctx.live.selectedFeature()
+          if (sel?.title) { const e = this.ctx.live.find(sel.title); if (e) this.lastLayer = e.path; return { text: `That is from **${sel.title}**.`, mood: 'explain', suggest: ['What did I click', `Fields in ${sel.title}`, `Turn off ${sel.title}`] } }
+          if (this.lastLayer) { const e = this.ctx.live.find(this.lastLayer); if (e) return { text: `We were just working with **${e.title}**. Click a feature on the map and ask again to know what a drawing belongs to.`, mood: 'talk', suggest: [`Fields in ${e.title}`, 'What layers are on?'] } }
+          const r = this.listLayers(true); return { ...r, text: 'Click a feature on the map and ask again to know which layer it belongs to. Right now these layers are on:' }
+        }
+        case 'frustrated': return { text: `Sorry, that is no fun. Tell me what you are trying to do in your own words, like "find an address", "turn on a layer" or "print the map", and I will take it from there. "Show me around" walks through everything this app can do.`, mood: 'explain', suggest: ['Show me around', 'Help', 'What is on the map'] }
+        case 'topOwners': return await this.topOwners(it.value === 'count')
+        case 'today': return this.today()
+        case 'download': return this.download(it.target!)
         case 'fields': return this.fields(it.target!, raw)
         case 'count': return this.count(it.target!, it.scope === 'view', raw)
         case 'find': return await this.find(it.target!, it.scope, raw)
@@ -1818,6 +1873,7 @@ export class Mind {
         case 'clicked': return this.aboutSelected()
         case 'mapSummary': return this.mapSummary()
         case 'copyAnswer': return this.lastReply ? { text: 'Copied my last answer.', mood: 'acknowledge', effect: 'copy' } : { text: 'Nothing to copy yet.', mood: 'think' }
+        case 'fewerTips': return { text: 'Okay, no more tips from me unless you ask. Say "tip" any time you want one, and I am here when you need me.', mood: 'acknowledge', effect: 'quietTips' }
         case 'exportChat': return { text: 'Saving this conversation as a text file.', mood: 'save', effect: 'export' }
         case 'repeat': return this.lastReply ? { ...this.lastReply, pointAt: undefined } : { text: 'I have not said anything yet. Ask me something!', mood: 'think' }
         case 'speak': { const last = this.lastReply; return last ? { ...last, text: `Reading that aloud: ${last.text.replace(/\*\*/g, '')}`, mood: 'talk', effect: 'speak', pointAt: undefined } : { text: 'Nothing to read yet.', mood: 'think' } }
@@ -1825,7 +1881,14 @@ export class Mind {
         case 'moveCorner': return { text: 'Scooting over.', mood: 'acknowledge', effect: it.value === 'left' ? 'left' : it.value === 'right' ? 'right' : 'otherCorner' }
         case 'pause': return it.value === 'on' ? { text: 'Holding still. Say "animate again" when you want me moving.', mood: 'acknowledge', effect: 'pause' } : { text: 'Wheee, I can move again!', mood: 'excited', effect: 'resume' }
         case 'open': return withAct(await this.open(it.target!, raw), it.target === 'print' ? 'print' : it.target === 'share' ? 'mail' : null)
-        case 'howto': return this.ask(it.target!, raw)
+        case 'howto': {
+          const t = it.target || ''
+          if (/^(?:turn (?:on|off)|show|hide|toggle|enable|disable|add|remove)\s+(?:a|the|some|any)?\s*layers?(?: on| off)?$|^(?:use|work|see) (?:the )?layers?(?: list)?$/i.test(t)) {
+            const on = this.ctx.live.ready ? this.ctx.live.entries().filter(e => !e.isGroup && !e.isTable).length : 0
+            return { text: `Just tell me: "turn on parcels", "hide hydrants", "show only zoning", "turn on parcels and hydrants". Say "list layers" to see the ${on ? on + ' ' : ''}layers in this map, or open the layer list and use its check boxes.`, mood: 'explain', suggest: ['List layers', 'What layers are on?'], actions: this.layerListAction() }
+          }
+          return this.ask(t, raw)
+        }
         default: return this.ask(raw, raw)
       }
     } catch (e) {
@@ -1984,6 +2047,72 @@ export class Mind {
     if (!e.isTable) actions.push({ type: 'zoomLayer', id: e.key, label: 'Zoom to layer extent' })
     actions.push({ type: 'ask', q: `show table ${e.key}`, label: 'Inspect records' })
     return { text: `**${e.title}**\n\n${reasons.join('\n')}`, mood: 'talk', actions: actions.slice(0, 4), sources: [{ title: e.path, detail: 'Current map visibility, scale, opacity and load state' }] }
+  }
+
+  /** "Is there a sewer layer", "do you have zoning": yes with its state and a button, or the closest names. */
+  private hasLayer (target: string, raw: string): Reply {
+    const live = this.ctx.live
+    const t = target.replace(/\s+(?:layer|layers|data|map)$/i, '').trim()
+    if (!t) return this.help()
+    const e = this.resolveLayer(t, true)
+    if (e) {
+      const on = live.isVisible(e)
+      this.lastLayer = e.path
+      return {
+        text: `Yes: **${e.title}** is in this map${e.isGroup ? ' (a group)' : ''}, and it is ${on ? 'on' : 'off'} right now.`,
+        mood: 'pleased',
+        actions: on ? [{ type: 'ask', q: `zoom to ${e.title}`, label: 'Zoom to it' }] : [{ type: 'ask', q: `turn on ${e.title}`, label: 'Turn it on' }],
+        suggest: [`What's in ${e.title}?`, `How many ${e.title}?`]
+      }
+    }
+    // A tool, page or bookmark by that name counts too.
+    const doc = this.ctx.index.resolve(t, ['widget', 'page', 'view', 'dialog', 'bookmark'], 2)
+    if (doc) return { text: `Yes: **${doc.title}** is ${doc.kind === 'widget' ? 'a tool' : doc.kind === 'bookmark' ? 'a saved place' : 'a ' + doc.kind} in this app.`, mood: 'pleased', actions: doc.actions?.slice(0, 2) }
+    const near = live.entries().filter(e => !e.isGroup).map(e => e.title).filter(n => n.toLowerCase().split(/\W+/).some(w => w.length > 3 && t.toLowerCase().includes(w))).slice(0, 4)
+    return { text: `No layer called "${t}" here.${near.length ? ` Close: ${near.map(n => `**${n}**`).join(', ')}.` : ''} Say "list layers" for the whole set.`, mood: 'think', suggest: ['List layers', ...near.slice(0, 2).map(n => `Turn on ${n}`)] }
+  }
+
+  /** "Who owns the most land": acres (or parcel count) by owner on the parcel layer. */
+  private async topOwners (byCount: boolean): Promise<Reply> {
+    const live = this.ctx.live
+    const e = live.parcelLayers()[0]
+    if (!e) return { text: 'This map has no parcel layer to add up owners from.', mood: 'confused', suggest: ['List layers'] }
+    if (!live.canSee(e)) return this.offReply(e)
+    const owner = (live.info(e).fields || []).find(f => /owner|taxpayer/i.test(`${f.name} ${f.alias || ''}`) && !/addr|address|city|state|zip|type|id$/i.test(`${f.name} ${f.alias || ''}`))
+    if (!owner) return { text: `**${e.title}** has no owner field I can group by.`, mood: 'confused', suggest: [`Fields in ${e.title}`] }
+    const request: AnalysisRequest = byCount ? { kind: 'group', layer: e.key, field: owner.name, inView: false, limit: 10, order: 'desc' } : { kind: 'group', layer: e.key, field: owner.name, inView: false, stat: 'sum', valueField: '*size*' }
+    try {
+      const reply = await analyzeLayer(live, e, request, this.ctx.maxResults)
+      this.lastLayer = e.path
+      if (reply.table) reply.table.rows = reply.table.rows.slice(0, 10)
+      return reply
+    } catch (error) { return { text: error instanceof Error ? error.message : 'The layer query failed.', mood: 'confused' } }
+  }
+
+  /** "What day is it": the date, with the day's outfit when there is one. */
+  private today (): Reply {
+    const d = new Date()
+    const text = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    const day = this.ctx.fun === false ? '' : todayLine()
+    return { text: `It is ${text}, ${time}.${day ? ' ' + day : ''}`, mood: 'talk' }
+  }
+
+  /** "Can I download parcels": the Table widget's export, or the layer's service page. */
+  private download (target: string): Reply {
+    const t = target.replace(/\s+(?:data|layer|map)$/i, '').trim()
+    const e = t && !/^(?:this|the map|it|everything|data|the data)$/i.test(t) ? this.resolveLayer(t, true) : null
+    const table = this.ctx.index.docs.find(d => d.kind === 'widget' && /^table$/i.test(d.title))
+    const url = e ? live_url(this.ctx.live, e) : ''
+    const lines: string[] = []
+    if (e && table && this.ctx.openInTable) lines.push(`Open **${e.title}** in the Table and use its export (the menu in the table's corner) to save a CSV.`)
+    else if (e && table) lines.push(`Open **${e.title}** in the **Table** tool; its menu can export rows to CSV.`)
+    else if (e) lines.push(`This app has no table tool to export from.`)
+    else lines.push('Say which layer, for example "download parcels".')
+    if (url) lines.push(`The layer's service page is ${url}; a GIS user can also open that in ArcGIS Pro.`)
+    const org = this.org()
+    if (e) lines.push(`For a full download or a shapefile, ask ${org}'s GIS team${this.ctx.place?.website ? ` (${this.ctx.place.website})` : ''}.`)
+    return { text: lines.join(' '), mood: 'explain', actions: e && this.ctx.openInTable ? [{ type: 'ask', q: `show table ${e.key}`, label: 'Open in the table' }] : undefined, suggest: e ? [] : ['List layers'] }
   }
 
   about (): Reply {
@@ -2393,6 +2522,16 @@ export class Mind {
     const view = live.view
     await this.prepareLayerList()
     if (view !== live.view) return { text: 'The active map changed. Please select the layer again.', mood: 'confused' }
+    // "Turn on parcels and hydrants", "turn off parcels, zoning and parks": each one, when the whole is not a layer itself.
+    if (/,|\band\b|&/i.test(target) && !this.resolveLayer(target, true)) {
+      const parts = target.split(/\s*(?:,|\band\b|&)\s*/i).map(x => x.trim()).filter(Boolean)
+      if (parts.length > 1 && parts.length <= 6 && parts.every(x => this.resolveLayer(x, true))) {
+        const replies: Reply[] = []
+        for (const part of parts) replies.push(await this.toggle(part, on, raw))
+        const missed = replies.filter(r => r.mood === 'confused')
+        return { text: replies.map(r => r.text.split('\n')[0]).join(' '), mood: missed.length ? 'think' : replies[replies.length - 1].mood, actions: replies.flatMap(r => r.actions || []).filter(a => a.label !== 'Undo').slice(0, 4), pointAt: replies[replies.length - 1].pointAt, suggest: on ? ['What layers are on?', 'Zoom to it'] : ['What layers are on?'] }
+      }
+    }
     const e = this.resolveLayer(target)
     if (!e) {
       if (!on) { const w = this.ctx.index.resolve(target, ['widget'], 1.5); if (w) return this.close(target, raw) }

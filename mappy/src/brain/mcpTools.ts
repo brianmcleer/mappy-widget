@@ -141,8 +141,12 @@ export function looksLikePlace (s: string): boolean {
  * "what zone is 250 N 5th St", "who owns 123 Main St", "count sewer mains by material".
  */
 export function parsePlaceQuestion (input: string): PlaceQuestion | null {
-  const q = input.trim().replace(/[?!.]+$/, '').replace(/\s+/g, ' ')
+  let q = input.trim().replace(/[?!.]+$/, '').replace(/\s+/g, ' ')
   if (!q || q.length > 300) return null
+  // "What parcels are near here", "which hydrants are close to 250 N 5th St": a thing near a place.
+  q = q.replace(/^(?:what|which)\s+(.+?)\s+(?:are|is)\s+(?:near|nearby|around|close to|next to)\s+(.+)$/i, '$1 near $2')
+  // "Whose property is this", "whose house is that": who owns it.
+  q = q.replace(/^whose\s+(?:property|parcel|land|house|lot|building|home)\s+is\s+(this|that|it|here)$/i, 'who owns $1')
   const limited = q.match(/^(?:show|find|give me|just|only)\s+(\d+)\s+(.+)$/i)
   const nearestLimit = q.match(/^(?:the\s+)?(?:closest|nearest)\s+(\d+)\s+(.+)$/i)
   if (limited || nearestLimit) {

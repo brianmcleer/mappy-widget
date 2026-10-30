@@ -345,7 +345,24 @@
     "filter parcels where acres > 5 and zoning is R-4",
     "parcels where zoning is R-4 or R-8",
     "show parcels edited since March 2024",
-    "what is on the map"
+    "what is on the map",
+    "is there a sewer layer",
+    "do you have zoning",
+    "turn the parcels back on",
+    "make the parcels lighter",
+    "who owns the most land",
+    "how many parcels does smith own",
+    "parcels owned by smith",
+    "what zoning is most common",
+    "what day is it",
+    "can i download the parcels",
+    "what else is there",
+    "turn on parcels and hydrants",
+    "fewer tips",
+    "which layer is this",
+    "i want to see the zoning",
+    "where the parks at",
+    "all off"
   ],
   "ask": [
     {

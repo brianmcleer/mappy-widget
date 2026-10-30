@@ -180,7 +180,9 @@ export default function ChatBubble (props: Props): any {
     }, 160)
     return () => { clearTimeout(h); ctl.abort() }
   }, [draft, hintsOff, hIdx, props.complete, history])
+  // Tab fills the box to keep typing; a click on a whole request runs it. A starter ("turn on ") only fills.
   const takeHint = (h: string) => { setDraft(h.endsWith(' ') ? h : h + ' '); setHints([]); props.inputRef?.current?.focus?.() }
+  const runHint = (h: string) => { if (h.endsWith(' ') || /\s(?:on|off|to|the|in|of|by|is|where|at|for|and|or)$/i.test(h)) takeHint(h); else { setHints([]); send(h) } }
 
   const onKeyDown = (e: any) => {
     if (e.key === 'Tab' && hints.length && !e.shiftKey) { e.preventDefault(); takeHint(hints[0]); return }
@@ -427,8 +429,8 @@ export default function ChatBubble (props: Props): any {
         </div>
       )}
       {hints.length > 0 && !busy && (
-        <div className='mappy-hints' id={props.id + '-hints'} role='group' aria-label='Suggestions, Tab takes the first'>
-          {hints.map((h, i) => <button key={i} type='button' className='mappy-hint' tabIndex={-1} onMouseDown={(e: any) => e.preventDefault()} onClick={() => takeHint(h)}>{h}</button>)}
+        <div className='mappy-hints' id={props.id + '-hints'} role='group' aria-label='Suggestions: click one to ask it, Tab to keep typing it'>
+          {hints.map((h, i) => <button key={i} type='button' className='mappy-hint' tabIndex={-1} onMouseDown={(e: any) => e.preventDefault()} onClick={() => runHint(h)}>{h}</button>)}
         </div>
       )}
       <form className='mappy-form' onSubmit={(e: any) => { e.preventDefault(); send() }}>

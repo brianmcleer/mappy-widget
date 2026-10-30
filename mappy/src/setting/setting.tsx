@@ -380,6 +380,10 @@ export default function Setting (props: SettingProps): any {
           <Switch checked={config.fun !== false} onChange={(e: any) => set('fun', e.target.checked)} />
         </SettingRow>
         <Hint>Map jokes, riddles, little games and an outfit for the time of year (nothing religious or political). Turn off for a strictly formal app; he still waves and blinks.</Hint>
+        <SettingRow tag='label' label='Calm map moves'>
+          <Switch checked={config.calmMap === true} onChange={(e: any) => set('calmMap', e.target.checked)} />
+        </SettingRow>
+        <Hint>The map jumps to places instead of flying there, for people who get motion sick. Off still respects each person's operating system "reduce motion" setting, and Pause does the same. Flights are short either way (under a second) and never zoom closer than a few houses.</Hint>
         <SettingRow tag='label' label='Sound effects'>
           <Switch checked={config.sounds === true} onChange={(e: any) => set('sounds', e.target.checked)} />
         </SettingRow>

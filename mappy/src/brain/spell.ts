@@ -24,10 +24,20 @@ export interface Correction {
   swaps: Array<[string, string]>
 }
 
-interface Entry { w: string, tier: number, prior: number }
+interface Entry { w: string, tier: number, prior: number, mask: number }
+
+/** Which letters a word uses, one bit each: a cheap first look before the full typo distance. */
+function maskOf (w: string): number {
+  let m = 0
+  for (let i = 0; i < w.length; i++) { const c = w.charCodeAt(i) - 97; if (c >= 0 && c < 26) m |= 1 << c }
+  return m
+}
+function bits (n: number): number { n = n - ((n >>> 1) & 0x55555555); n = (n & 0x33333333) + ((n >>> 2) & 0x33333333); return (((n + (n >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24 }
+/** Letters in one word and not the other each need at least part of an edit: a floor on typoCost, so hopeless pairs are skipped. */
+const farApart = (a: number, b: number, cap: number): boolean => bits(a ^ b) * 0.325 > cap + 0.25
 
 const COMMAND_WORDS = (
-  'turn switch toggle shut on off show hide display enable disable add remove list open close launch start run ' +
+  'turn switch toggle shut on off show hide display enable disable add remove list open close launch start run whose whom ' +
   'find search locate lookup look where what which who why how many much count number zoom pan fly go take ' +
   'navigate jump in out full home extent layer layers group groups table tables tool tools widget widgets page pages ' +
   'view views window windows tab tabs link links bookmark bookmarks preset presets favorite favorites starred only ' +
@@ -71,28 +81,33 @@ function subCost (a: string, b: string): number {
  * random wrong letter. A wrong first letter costs a little extra (people rarely miss it).
  * Returns cap + 1 once the cap is passed.
  */
+const ROWS: Float64Array[] = [new Float64Array(40), new Float64Array(40), new Float64Array(40)]
 export function typoCost (a: string, b: string, cap = 2): number {
   if (a === b) return 0
   if (Math.abs(a.length - b.length) * 0.5 > cap) return cap + 1
   const m = a.length; const n = b.length
-  const d: number[][] = []
-  for (let i = 0; i <= m; i++) { d.push(new Array(n + 1).fill(0)); d[i][0] = i }
-  for (let j = 0; j <= n; j++) d[0][j] = j * 0.8
+  // Three rolling rows (the swap rule looks two rows back) instead of a whole table.
+  let two = ROWS[0]; let prev = ROWS[1]; let cur = ROWS[2]
+  if (prev.length < n + 1) { two = ROWS[0] = new Float64Array(n + 9); prev = ROWS[1] = new Float64Array(n + 9); cur = ROWS[2] = new Float64Array(n + 9) }
+  for (let j = 0; j <= n; j++) prev[j] = j * 0.8
   for (let i = 1; i <= m; i++) {
+    cur[0] = i
     let rowMin = Infinity
+    const ca = a[i - 1]; const caPrev = a[i - 2]
     for (let j = 1; j <= n; j++) {
-      const ca = a[i - 1]; const cb = b[j - 1]
-      const del = ca === a[i - 2] || ca === b[j - 1] ? 0.5 : 1
+      const cb = b[j - 1]
+      const del = ca === caPrev || ca === cb ? 0.5 : 1
       // A letter left out is the most common slip of all, so it costs less than an extra one.
-      const ins = cb === b[j - 2] || cb === a[i - 1] ? 0.5 : 0.8
-      let v = Math.min(d[i - 1][j] + del, d[i][j - 1] + ins, d[i - 1][j - 1] + subCost(ca, cb))
-      if (i > 1 && j > 1 && ca === b[j - 2] && a[i - 2] === cb) v = Math.min(v, d[i - 2][j - 2] + 0.5)
-      d[i][j] = v
+      const ins = cb === b[j - 2] || cb === ca ? 0.5 : 0.8
+      let v = Math.min(prev[j] + del, cur[j - 1] + ins, prev[j - 1] + (ca === cb ? 0 : subCost(ca, cb)))
+      if (i > 1 && j > 1 && ca === b[j - 2] && caPrev === cb) v = Math.min(v, two[j - 2] + 0.5)
+      cur[j] = v
       if (v < rowMin) rowMin = v
     }
     if (rowMin > cap + 0.5) return cap + 1
+    const t = two; two = prev; prev = cur; cur = t
   }
-  let cost = d[m][n]
+  let cost = prev[n]
   if (a[0] !== b[0]) cost += 0.2
   cost = Math.round(cost * 100) / 100
   return cost > cap + 1e-9 ? cap + 1 : cost
@@ -209,13 +224,25 @@ export class Lexicon {
   /** Pack fixes: a known misspelling to the word meant ("teh" to "the"). */
   fixes = new Map<string, string>()
 
+  /** Answers already worked out for this lexicon (the same typo comes up again and again while typing). */
+  private memo = new Map<string, any>()
+  private remember<T> (key: string, make: () => T): T {
+    const hit = this.memo.get(key)
+    if (hit !== undefined) return hit
+    const v = make()
+    if (this.memo.size > 4000) this.memo.clear()
+    this.memo.set(key, v === undefined ? null : v)
+    return v
+  }
+
   add (words: Iterable<string>, tier: number, prior = 0): void {
+    this.memo.clear()
     for (const raw of words) {
       const w = String(raw || '').toLowerCase()
       if (!/^[a-z]{2,24}$/.test(w)) continue
       const have = this.best.get(w)
       if (have && have.tier <= tier) continue
-      const e: Entry = { w, tier, prior }
+      const e: Entry = { w, tier, prior, mask: maskOf(w) }
       this.best.set(w, e)
       if (tier >= 3) { this.plain.push(w); this.dels = null; continue }
       const list = this.byLen.get(w.length) || []
@@ -282,11 +309,17 @@ export class Lexicon {
 
   /** Closest known word, or null when nothing is close enough or two words are equally close. */
   nearest (w: string, maxTier = 9, cap = allowance(w.length), minTier = 0, lead = false): string | null {
+    return this.remember(`n|${w}|${maxTier}|${cap}|${minTier}|${lead ? 1 : 0}`, () => this.nearestNow(w, maxTier, cap, minTier, lead))
+  }
+
+  private nearestNow (w: string, maxTier: number, cap: number, minTier: number, lead: boolean): string | null {
     let first: { e: Entry, s: number } | null = null
     let second: { e: Entry, s: number } | null = null
+    const wm = maskOf(w)
     {
       for (const e of this.around(w, 2, maxTier >= 3)) {
         if (e.tier > maxTier || e.tier < minTier) continue
+        if (farApart(wm, e.mask, cap)) continue
         // A three-letter word stretches further only as the first word of a request ("opn legend");
         // map words only fix small slips ("whitewater" is not "wastewater").
         let limit = w.length <= 3 && e.tier === 0 && lead && cap === allowance(w.length) ? allowance(w.length, 0) : cap
@@ -306,6 +339,10 @@ export class Lexicon {
 
   /** A word that sounds the same, from commands, app names and map words only, when it is the only one. */
   soundsLike (w: string, maxTier = 2): string | null {
+    return this.remember(`s|${w}|${maxTier}`, () => this.soundsLikeNow(w, maxTier))
+  }
+
+  private soundsLikeNow (w: string, maxTier: number): string | null {
     const key = soundKey(w)
     if (key.length < 3) return null
     let found: Entry | null = null
@@ -321,9 +358,14 @@ export class Lexicon {
 
   /** Known words (commands, app names, map words) close to a word, closest first, with their cost. */
   closeTo (w: string, cap: number, maxTier = 2): Array<{ w: string, cost: number, tier: number }> {
+    return this.remember(`c|${w}|${cap}|${maxTier}`, () => this.closeToNow(w, cap, maxTier))
+  }
+
+  private closeToNow (w: string, cap: number, maxTier: number): Array<{ w: string, cost: number, tier: number }> {
     const out: Array<{ w: string, cost: number, tier: number }> = []
+    const wm = maskOf(w)
     for (const e of this.around(w, 3, false)) {
-      if (e.tier > maxTier || e.w === w) continue
+      if (e.tier > maxTier || e.w === w || farApart(wm, e.mask, cap)) continue
       const c = typoCost(w, e.w, cap)
       if (c <= cap + 1e-9) out.push({ w: e.w, cost: c, tier: e.tier })
     }
@@ -337,9 +379,10 @@ export class Lexicon {
   commandsNear (w: string): string[] {
     const cap = Math.max(1.05, allowance(w.length))
     const out: Array<{ w: string, s: number }> = []
+    const wm = maskOf(w)
     {
       for (const e of this.around(w, 2, false)) {
-        if (e.tier !== 0 || e.w === w) continue
+        if (e.tier !== 0 || e.w === w || farApart(wm, e.mask, cap)) continue
         const c = typoCost(w, e.w, cap)
         if (c <= cap + 1e-9) out.push({ w: e.w, s: c - (LEADS.has(e.w) ? 0.12 : 0) })
       }

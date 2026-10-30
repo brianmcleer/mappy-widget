@@ -277,6 +277,8 @@ export default function Widget (props: Props): any {
   const [phase, setPhase] = React.useState<'enter' | 'shown' | 'exit'>('enter')
   const [hidden, setHidden] = React.useState<boolean>(() => store('mappy-hidden:' + appId, undefined, true) === '1')
   const [paused, setPaused] = React.useState<boolean>(() => store('mappy-paused') === '1')
+  // Calm map moves: Pause (the person's own switch) or the builder's setting turn animated zooms into jumps; the OS preference is read by the map itself.
+  React.useEffect(() => { live.reducedMotion = paused || cfg.calmMap === true }, [paused, cfg.calmMap])
   const [readAloud, setReadAloud] = React.useState<boolean>(() => store('mappy-read-aloud') === '1')
   const [tipsOff, setTipsOff] = React.useState<boolean>(() => store('mappy-tips-off:' + appId) === '1')
   // The chat's size when the user resized it (drag the corner grip, or arrow keys on it); null is automatic.
@@ -428,6 +430,7 @@ export default function Widget (props: Props): any {
       // "Copy that": the last answer before this one. "Export chat": the whole conversation as text.
       if (reply.effect === 'copy') { const prev = [...messagesRef.current].reverse().find(m => m.from === 'mappy'); if (prev) copyText(prev.text) }
       if (reply.effect === 'export') exportChat()
+      if (reply.effect === 'quietTips') { setTipsOff(true); store('mappy-tips-off:' + appId, '1'); setBulb(null) }
       say(reply.text, reply)
       setMood((reply.mood as Mood) || 'talk')
       handlePoint(reply.pointAt)
@@ -493,12 +496,28 @@ export default function Widget (props: Props): any {
   }
 
   const tipsEnabled = cfg.tipsEnabled !== false && !tipsOff && !isDesign && !hidden
+  // Nobody has talked to him for ten minutes: he settles down (slower, rarer idle acts) until they do.
+  const [settled, setSettled] = React.useState(false)
+  React.useEffect(() => {
+    const h = setInterval(() => setSettled(Date.now() - lastInteraction.current > 600000), 30000)
+    return () => clearInterval(h)
+  }, [])
+  // Tips a person leaves alone are tips they did not want: a bulb fades after a minute, and after a
+  // few ignored ones tips slow down, then stop for this visit. Nothing is said about it.
+  const ignoredTips = React.useRef(0)
+  const sessionStart = React.useRef(Date.now())
 
   /** A tip waiting: a light bulb over his head (default), or the bubble opens (tip style "pop"). */
   const offerTip = React.useCallback((reply: Reply, m: Mood = 'knock') => {
     setMood(m)
-    if (cfg.tipStyle === 'pop') { say(reply.text, reply); openChat(false) } else setBulb(reply)
+    const withOut = { ...reply, suggest: [...(reply.suggest || []), 'Fewer tips'].slice(0, 5) }
+    if (cfg.tipStyle === 'pop') { say(withOut.text, withOut); openChat(false) } else setBulb(withOut)
   }, [cfg.tipStyle, say])
+  React.useEffect(() => {
+    if (!bulb) return
+    const h = setTimeout(() => { setBulb(b => { if (b) ignoredTips.current++; return null }) }, 60000)
+    return () => clearTimeout(h)
+  }, [bulb])
 
   nudgeRef.current = () => {
     if (!tipsEnabled || open || bulb) return
@@ -507,10 +526,12 @@ export default function Widget (props: Props): any {
 
   // A popup opened on a feature: once in a while, a bulb with what he can do for that layer.
   const popupTipAt = React.useRef(0)
+  const popupTipped = React.useRef(new Set<string>())
   popupRef.current = (title: string) => {
     if (!tipsEnabled || open || bulb || !title) return
-    if (Date.now() - popupTipAt.current < 180000) return
-    popupTipAt.current = Date.now()
+    // Once per layer per visit, never two within three minutes, and not after tips have been left alone.
+    if (Date.now() - popupTipAt.current < 180000 || popupTipped.current.has(title) || ignoredTips.current >= 2) return
+    popupTipAt.current = Date.now(); popupTipped.current.add(title)
     offerTip({
       text: `You opened a **${title}** feature. I can tell you what it says, count them in view, or list its fields.`,
       mood: 'knock',
@@ -720,13 +741,16 @@ export default function Widget (props: Props): any {
   // Tips while the user is idle and the chat is closed.
   React.useEffect(() => {
     if (!tipsEnabled) return
-    const every = Math.max(30, Number(cfg.tipIntervalSec) || 180) * 1000
+    const base = Math.max(30, Number(cfg.tipIntervalSec) || 180) * 1000
     const h = setInterval(() => {
       if (open || bulb || document.visibilityState !== 'visible') return
       if (Date.now() - lastInteraction.current < 30000) return
+      // Not in the first few minutes of a visit, not after four ignored bulbs, and slower after two.
+      if (Date.now() - sessionStart.current < 180000 || ignoredTips.current >= 4) return
+      if (ignoredTips.current >= 2 && Date.now() - lastInteraction.current < base * 2) return
       const tip = mind.tip()
       if (tip) offerTip(tip, 'wave')
-    }, every)
+    }, base)
     return () => clearInterval(h)
   }, [tipsEnabled, cfg.tipIntervalSec, open, bulb, mind])
 
@@ -841,6 +865,7 @@ export default function Widget (props: Props): any {
         lookAt={desktop ? null : lookAt}
         pointDir={desktop ? null : pointDir}
         hat={cfg.fun === false ? null : undefined}
+        settled={settled}
         onActivate={activate}
         onPointerDown={desktop ? undefined : onPointerDown}
         onDoubleClick={animate}

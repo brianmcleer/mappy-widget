@@ -201,8 +201,16 @@ export function cleanLabel (label: string): string {
 export function uniq<T> (arr: T[]): T[] { return Array.from(new Set(arr)) }
 
 /** Lowercased text without punctuation, for contains checks. */
+const FLAT = new Map<string, string>()
+/** Lowercase letters and digits with single spaces ("Fire_Hydrants (2)" -> "fire hydrants 2"). Remembered: the same names come up on every request. */
 export function flat (s: string): string {
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const k = String(s || '')
+  const hit = FLAT.get(k)
+  if (hit !== undefined) return hit
+  const v = k.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (FLAT.size > 5000) FLAT.clear()
+  FLAT.set(k, v)
+  return v
 }
 
 export function hash (s: string): string {

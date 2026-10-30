@@ -426,6 +426,9 @@ const WEAR: { [hat: string]: string } = {
 }
 
 /** Every costume there is, for the builder's preview and the tests. */
+/** One line about today's occasion, for "what day is it"; empty on an ordinary day. */
+export function todayLine (d = new Date()): string { const s = season(d); return s.name ? `${s.name}: ${s.greeting}` : '' }
+
 export function allHats (): Hat[] { return Array.from(new Set(CALENDAR.map(e => e.hat))) }
 
 /** Every outfit with the first day it is worn, for the builder's preview: [{ hat: 'pi', name: 'Pi Day' }, ...]. */
