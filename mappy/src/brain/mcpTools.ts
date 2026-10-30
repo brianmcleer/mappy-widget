@@ -318,7 +318,11 @@ export function rankTools (q: string, tools: McpTool[]): Array<{ tool: McpTool, 
         if (pq.thing && pq.kind !== 'at') s += layerKeyOf(tool) ? 2 : (isGeocoder(tool) ? -6 : -1)
       }
       else if (pq.kind === 'at' && keys.some(k => LAT.test(k)) && !/\b(reverse|elevation|route)\b/i.test(about) && !words.includes('geocode')) s += 1
+      // "Who owns X", "what zone is X in": a thing at the place, which a geocoder cannot answer.
+      if (pq.kind === 'at' && pq.thing && !wantsAddress && isGeocoder(tool)) s -= 3
     }
+    // Tools built for assistants (lists of filters, objects): Mappy fills plain inputs only, so a simpler tool goes first.
+    if (keys.some(k => ['array', 'object'].includes(typeOf(props[k])))) s -= 2
     if (COUNT_WORDS.test(q)) s += words.includes('count') ? 3 : -0.5
     if (FIND_WORDS.test(q) && (words.includes('find') || words.includes('search')) && !words.includes('content')) s += 1.5
     if (CONTENT_WORDS.test(q)) s += words.includes('content') ? 3 : 0

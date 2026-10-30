@@ -91,6 +91,8 @@
     "Typos are fine. \"trun on parcles\" works, and Mappy says how he read it.",
     "\"What's on the map\" sums up which layers are drawing, the basemap, the scale and where the map is.",
     "\"Undo\" reverses Mappy's last layer change; \"what did I change\" lists all of them.",
-    "Ask \"what does <code> mean\" for any code you see in a popup; the meaning comes from the layer's own code list."
+    "Ask \"what does <code> mean\" for any code you see in a popup; the meaning comes from the layer's own code list.",
+    "Time questions work: \"parcels edited in the last 7 days\", \"hydrants inspected this year\", \"manholes installed before 1990\".",
+    "Ask for a share: \"what percent of parcels are over 5 acres\", or a statistic per group: \"average acres by zoning in parcels\"."
   ]
 }

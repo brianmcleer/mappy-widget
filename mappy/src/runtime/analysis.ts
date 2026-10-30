@@ -1,5 +1,5 @@
 import type { AnalysisRequest } from '../brain/analysis'
-import { compileCondition, numericField, resolveField } from '../brain/analysis'
+import { compileConditions, numericField, resolveField } from '../brain/analysis'
 import type { Reply } from '../brain/answer'
 import type { LayerEntry, LiveMap } from './live'
 import { withTimeout } from './live'
@@ -14,7 +14,8 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
   const fields = Array.from(target.fields || []) as any[]
   const q: any = target.createQuery ? target.createQuery() : { where: target.definitionExpression || '1=1' }
   q.where = q.where || target.definitionExpression || '1=1'
-  if (request.condition) q.where = `(${q.where}) AND (${compileCondition(request.condition, fields)})`
+  const base = q.where
+  if (request.condition) q.where = `(${q.where}) AND (${compileConditions(request.condition, fields)})`
   q.returnGeometry = false
   if (request.inView) {
     if (!live.view?.extent) throw new Error('The current map extent is not available yet.')
@@ -58,6 +59,21 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
         if (/^(date|esriFieldTypeDate)$/i.test(f.type || '') && typeof value === 'number') return new Date(value).toLocaleString()
         return format(value).slice(0, 300)
       })) }
+    }
+  }
+  if (request.kind === 'percent') {
+    if (!request.condition) throw new Error('Say which ones to count, for example: what percent of parcels are over 5 acres.')
+    if (typeof target.queryFeatureCount !== 'function') throw new Error('This layer does not support count queries.')
+    const all = typeof q.clone === 'function' ? q.clone() : { ...q }
+    all.where = base
+    const [part, whole] = await Promise.all([withTimeout(target.queryFeatureCount(q), 12000), withTimeout(target.queryFeatureCount(all), 12000)])
+    if (!Number.isFinite(part) || !Number.isFinite(whole)) throw new Error('The layer did not return valid counts.')
+    const pct = whole ? (part / whole) * 100 : 0
+    const shown = pct === 0 || pct === 100 || pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)
+    return {
+      text: whole ? `**${shown}%** of **${entry.title}** (${part.toLocaleString()} of ${whole.toLocaleString()}), ${scope}.` : `**${entry.title}** has no records ${request.inView ? 'in the current map extent' : 'to compare'}.`,
+      mood: 'talk', sources: [source],
+      actions: part ? [{ type: 'ask', q: `filter ${entry.key} where ${request.condition}${request.inView ? ' in view' : ''}`, label: 'Show them' }] : undefined
     }
   }
   if (request.kind === 'filter' || request.kind === 'countWhere') {
@@ -135,6 +151,27 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
   }
   q.groupByFieldsForStatistics = [field.name]
   q.outStatistics = [{ statisticType: 'count', onStatisticField: target.objectIdField || field.name, outStatisticFieldName: 'mappy_count' }]
+  // "Average acres by zoning": a statistic of another field for each group.
+  if (request.stat) {
+    const value = resolveField(fields, request.valueField || '')
+    if (!numericField(value)) throw new Error(`${fieldLabel(value)} is not numeric, so it has no ${request.stat === 'avg' ? 'average' : request.stat === 'sum' ? 'total' : request.stat === 'min' ? 'minimum' : 'maximum'}.`)
+    q.outStatistics.push({ statisticType: request.stat, onStatisticField: value.name, outStatisticFieldName: 'mappy_value' })
+    const result = await withTimeout(target.queryFeatures(q), 12000)
+    const statName = ({ avg: 'Average', sum: 'Total', min: 'Minimum', max: 'Maximum' } as any)[request.stat]
+    const rows = (Array.from(result?.features || []) as any[]).map(g => {
+      const v = g.attributes?.[field.name]
+      const code = field.domain?.codedValues?.find((c: any) => c.code === v)
+      return { label: String(code?.name ?? v ?? '(missing)'), count: Number(g.attributes?.mappy_count || 0), value: Number(g.attributes?.mappy_value) }
+    }).filter(r => Number.isFinite(r.value)).sort((a, b) => b.value - a.value)
+    if (!rows.length) throw new Error('The layer returned no grouped statistics.')
+    const limit = 25
+    const lead = `**${rows[0].label}** has the highest ${statName.toLowerCase()} ${fieldLabel(value)} (${format(rows[0].value)})${rows.length > 1 ? `; the lowest is **${rows[rows.length - 1].label}** (${format(rows[rows.length - 1].value)})` : ''}.`
+    return {
+      text: `${lead} ${statName} **${fieldLabel(value)}** by **${fieldLabel(field)}** in **${entry.title}**, ${scope}.${result.exceededTransferLimit ? ' The service truncated the groups; these are partial results.' : ''}${rows.length > limit ? ` Showing ${limit} of ${rows.length} groups.` : ''}`,
+      mood: 'talk', sources: [source],
+      table: { columns: [fieldLabel(field), 'Count', `${statName} ${fieldLabel(value)}`], rows: rows.slice(0, limit).map(r => [r.label, r.count.toLocaleString(), format(r.value)]) }
+    }
+  }
   const result = await withTimeout(target.queryFeatures(q), 12000)
   const rows = (Array.from(result?.features || []) as any[]).map(g => {
     const value = g.attributes?.[field.name]

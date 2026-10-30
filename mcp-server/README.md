@@ -16,6 +16,8 @@ It costs nothing beyond a Python process on a web server you already run. It use
 | `summarize_layer` | Counts grouped by a field ("sewer mains by material") |
 | `find_features` | Search a layer by name, address, owner, number or id |
 | `count_features` | Count a layer's features, optionally only those matching some words |
+| `describe_layer` | A layer's schema for assistants: every field with its type (text, number, date) and allowed values, record count, geometry, last edit |
+| `query_layer` | Structured data questions for assistants, with no SQL: field filters (=, !=, >, <, contains, starts_with, in, between, is_null, in_last_days...), then rows (fields, sort), a count, or sum/avg/min/max, optionally per group |
 | `list_layers` | The layers it can search |
 | `search_content` | Find maps, apps, layers and documents in Portal |
 
@@ -28,7 +30,7 @@ In Mappy, just ask: "what is the closest sewer line to my address", "hydrants wi
 - **No service account.** Mappy sends the signed-in user's own ArcGIS token. The server passes it to the services, so people only see what Portal already lets them see. A request without a token only reaches public data, or is refused if `require_token` is on.
 - **Read-only by construction.** It only calls `query`, `findAddressCandidates`, `reverseGeocode` and Portal `search`. It only calls the locator, Portal, folders and layers named in `config.json`, and no other URL can be reached.
 - **Only your apps.** Browser requests are accepted only from the addresses in `allowed_origins`, which also blocks other web pages (DNS rebinding). Desktop clients send no Origin and are allowed.
-- Searches are built from escaped words, never from SQL that someone typed.
+- Searches are built from escaped words, never from SQL that someone typed. `query_layer` takes filters as field, operator and value: fields must exist on the layer, operators come from a fixed list, numbers must parse as numbers, dates as dates, and text is quoted and escaped.
 - Logs record the tool name, how long it took and the input names. They never record tokens or values. Logs are kept 30 days.
 - Layer names are read once an hour, using whoever asks first (or `discovery_token`). Only the names are shared between people; every query runs with the asker's own token.
 
@@ -66,6 +68,8 @@ In Mappy's settings, open **MCP server**:
 Press **Connect and list tools**. Every tool is read-only, so all of them start on. Save the app.
 
 ### Connect a desktop AI tool (optional)
+
+Assistants do best with `describe_layer` first (field names, types and allowed values), then `query_layer` ("permits issued in the last 30 days", "average acres by zoning", "hydrants installed before 1990, sorted by install date").
 
 Point it at `https://gis.example.org/gis-mcp/mcp` with an `Authorization: Bearer <ArcGIS token>` header. Or run it locally over stdio. In PowerShell (regular):
 

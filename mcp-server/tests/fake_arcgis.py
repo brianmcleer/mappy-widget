@@ -19,6 +19,7 @@ FIELDS_PARCELS = [
     {'name': 'OWNER', 'type': 'esriFieldTypeString', 'alias': 'Owner'},
     {'name': 'SITUS', 'type': 'esriFieldTypeString', 'alias': 'Address'},
     {'name': 'ACRES', 'type': 'esriFieldTypeDouble', 'alias': 'Acres'},
+    {'name': 'SALE_DATE', 'type': 'esriFieldTypeDate', 'alias': 'Sale Date'},
     {'name': 'Shape', 'type': 'esriFieldTypeGeometry', 'alias': 'Shape'}
 ]
 FIELDS_ZONING = [
@@ -27,8 +28,8 @@ FIELDS_ZONING = [
     {'name': 'ORD', 'type': 'esriFieldTypeString', 'alias': 'Ordinance'}
 ]
 PARCELS = [
-    {'OBJECTID': 1, 'PARCEL_NUM': '2945-144-11-002', 'OWNER': 'DOE JANE', 'SITUS': '250 N 5TH ST', 'ACRES': 0.21},
-    {'OBJECTID': 2, 'PARCEL_NUM': '2945-123-00-001', 'OWNER': "O'BRIEN PAT", 'SITUS': '123 MAIN ST', 'ACRES': 0.5}
+    {'OBJECTID': 1, 'PARCEL_NUM': '2945-144-11-002', 'OWNER': 'DOE JANE', 'SITUS': '250 N 5TH ST', 'ACRES': 0.21, 'SALE_DATE': 1717200000000},
+    {'OBJECTID': 2, 'PARCEL_NUM': '2945-123-00-001', 'OWNER': "O'BRIEN PAT", 'SITUS': '123 MAIN ST', 'ACRES': 0.5, 'SALE_DATE': None}
 ]
 RING = [[-108.5510, 39.0635], [-108.5500, 39.0635], [-108.5500, 39.0645], [-108.5510, 39.0645], [-108.5510, 39.0635]]
 
@@ -171,6 +172,21 @@ def query(lid):
     if lid == 3 and p('token') != GOOD:
         return jsonify({'error': {'code': 499, 'message': 'Token Required'}})
     rows = PARCELS if lid == 0 else [{'OBJECTID': 1, 'ZONE': 'R-4', 'ORD': '4410'}] if lid == 1 else [{'NOTE': 'staff only'}]
+    if p('outStatistics'):
+        stats = json.loads(p('outStatistics'))
+        group = p('groupByFieldsForStatistics')
+        buckets = {}
+        for r in rows:
+            buckets.setdefault(r.get(group) if group else None, []).append(r)
+        feats = []
+        for k, rs in buckets.items():
+            at = {group: k} if group else {}
+            for st in stats:
+                vals = [r.get(st['onStatisticField']) for r in rs if r.get(st['onStatisticField']) is not None]
+                t = st['statisticType']
+                at[st['outStatisticFieldName']] = len(vals) if t == 'count' else sum(vals) if t == 'sum' else (sum(vals) / len(vals) if vals else None) if t == 'avg' else min(vals) if t == 'min' else max(vals)
+            feats.append({'attributes': at})
+        return jsonify({'features': feats})
     if p('geometry'):
         g = json.loads(p('geometry'))
         inside = -108.5510 <= g['x'] <= -108.5500 and 39.0635 <= g['y'] <= 39.0645

@@ -135,6 +135,8 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | What is an easement? / What does R-4 mean? / What zoning types are there? | Plain-language meanings, the map's own code lists |
 | Where are the parks? / What parks are there? / Label the parcels | The layer on and zoomed, its first names, labels |
 | Which zoning has the most parcels? / Largest parcel / Parcels bigger than 5 acres | Answers first, then the table |
+| Parcels edited in the last 7 days / Hydrants inspected this year / Manholes installed before 1990 | Time questions on the layer's date (or year) field |
+| What percent of parcels are over 5 acres? / Average acres by zoning in parcels / Acres > 5 and zoning is R-4 or R-8 | Percents, statistics per group, several conditions |
 | Satellite view / What is the scale? / Go back / Reset the map | Basemaps from the portal, scale in plain words, the previous view |
 | Compare 1718 White Ave and 250 N 5th St | Two parcels side by side |
 | When was parcels updated? / Is this map accurate? | The layer's last edit and source, with a general-reference note |

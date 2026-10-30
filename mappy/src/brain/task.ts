@@ -25,7 +25,7 @@ export function reviseTask (request: AnalysisRequest, operation: TaskOperation):
 }
 
 export function taskSummary (request: AnalysisRequest, layer: string, sequence: number, completed: string): TaskSummary {
-  const kinds = { browse: 'Rows', filter: 'Matching features', countWhere: 'Count', stats: 'Statistics', group: 'Grouped counts', quality: 'Data quality' }
+  const kinds = { browse: 'Rows', filter: 'Matching features', countWhere: 'Count', stats: 'Statistics', group: request.stat ? 'Grouped statistics' : 'Grouped counts', quality: 'Data quality', percent: 'Percent' }
   const action = (label: string, operation: TaskOperation) => ({ label, command: `__task:${sequence}:${operation}` })
   const actions = [action('Refresh', 'refresh'), action(request.inView ? 'Use whole layer' : 'Use current view', request.inView ? 'all' : 'view')]
   if (request.condition) actions.push(action('Remove my filter', 'unfilter'))

@@ -8,7 +8,7 @@
 */
 import { getAppStore, appActions, DataActionManager, DataLevel } from 'jimu-core'
 import type { AppModel } from '../brain/appModel'
-import { compileCondition } from '../brain/analysis'
+import { compileConditions } from '../brain/analysis'
 import type { LayerEntry, LiveMap } from './live'
 import { openWidget, bestWidgetId, wait, pulse, widgetEl } from './navigate'
 
@@ -100,7 +100,7 @@ export async function openInTable (live: LiveMap, model: AppModel, entry: LayerE
 
   const target = live.target(entry)
   const params: any = { where: '1=1', outFields: ['*'], returnGeometry: true, pageSize: TABLE_ROW_CAP, page: 1 }
-  if (req.condition) params.where = compileCondition(req.condition, Array.from(target?.fields || []) as any[])
+  if (req.condition) params.where = compileConditions(req.condition, Array.from(target?.fields || []) as any[])
   if (req.ids?.length) {
     const oid = target?.objectIdField || 'OBJECTID'
     params.where = `(${params.where}) AND ${oid} IN (${req.ids.map(v => typeof v === 'number' ? v : `'${String(v).replace(/'/g, "''")}'`).join(',')})`

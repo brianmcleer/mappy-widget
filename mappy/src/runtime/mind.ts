@@ -1884,7 +1884,7 @@ export class Mind {
         { label: 'Analyze fields', detail: 'Summarize acres in parcels · count parcels by zoning' },
         { label: 'Browse table rows', detail: 'List tables · show table parcels · next page', action: { type: 'ask', q: 'List tables' } },
         ...(this.ctx.fun === false ? [] : [{ label: 'Have some fun', detail: 'Jokes · riddles · fun facts · get wizardy · paper airplane · what are you wearing · what tricks can you do', action: { type: 'ask' as const, q: 'What tricks can you do?' } }]),
-        { label: 'Search by condition', detail: 'Parcels bigger than 5 acres · largest parcel · which zoning has the most parcels' },
+        { label: 'Search by condition', detail: 'Parcels bigger than 5 acres · parcels edited in the last 7 days · what percent of parcels are over 5 acres · average acres by zoning in parcels' },
         { label: 'Ask what things mean', detail: 'What is an easement · what does R-4 mean · what zoning types are there', action: { type: 'ask', q: 'What is a parcel?' } },
         { label: 'Move around', detail: 'Zoom to 39.0639, -108.5506 · scale 1:5000 · go back · satellite view · directions to City Hall' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),

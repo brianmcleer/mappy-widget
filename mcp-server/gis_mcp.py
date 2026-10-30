@@ -57,6 +57,7 @@ import ssl
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -64,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -468,6 +469,35 @@ def number(value, name, low, high):
 
 def sql_text(s):
     return s.replace("'", "''")
+
+
+QUERY_OPS = ('=', '!=', '>', '>=', '<', '<=', 'contains', 'starts_with', 'in', 'not_in', 'between', 'is_null', 'not_null', 'in_last_days')
+FIELD_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_.]*$')
+
+
+def field_kind(field):
+    """text, number, date or other, for assistants choosing filters."""
+    t = field.get('type') or ''
+    if t in ('esriFieldTypeString', 'esriFieldTypeGUID', 'esriFieldTypeGlobalID'):
+        return 'text'
+    if t in ('esriFieldTypeSmallInteger', 'esriFieldTypeInteger', 'esriFieldTypeSingle', 'esriFieldTypeDouble', 'esriFieldTypeOID', 'esriFieldTypeBigInteger'):
+        return 'number'
+    if t in ('esriFieldTypeDate', 'esriFieldTypeDateOnly', 'esriFieldTypeTimestampOffset'):
+        return 'date'
+    return 'other'
+
+
+def parse_day(value):
+    """A date from YYYY-MM-DD, YYYY-MM-DD HH:MM:SS, M/D/YYYY or a year; ToolError otherwise."""
+    s = clean_text(value, 40)
+    for fmt in ('%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%m/%d/%Y', '%Y'):
+        try:
+            d = datetime.strptime(s.rstrip('Z'), fmt)
+            if 1000 <= d.year <= 2999:
+                return d
+        except ValueError:
+            pass
+    raise ToolError('"%s" is not a date. Use YYYY-MM-DD.' % s)
 
 
 # -- plain words for layers ("sewer line" -> Sewer Mains)
@@ -932,6 +962,34 @@ class Tools:
                     'layer': layer_prop, 'text': {'type': 'string', 'description': 'Only count features matching these words (optional).'}}, 'required': ['layer']},
                 'annotations': dict(ro, title='Count features')})
             tools.append({
+                'name': 'describe_layer', 'title': 'Describe a layer',
+                'description': 'The schema of a layer before querying it: every field with its type (text, number, date) and allowed values, the record count, the geometry type and when the data was last edited. Use it to pick fields for query_layer.',
+                'inputSchema': {'type': 'object', 'properties': {'layer': words_prop}, 'required': ['layer']},
+                'annotations': dict(ro, title='Describe a layer')})
+            tools.append({
+                'name': 'query_layer', 'title': 'Query a layer',
+                'description': ('Structured data question on one layer, with no SQL: filters on fields (=, !=, >, >=, <, <=, contains, starts_with, in, not_in, '
+                                'between, is_null, not_null, in_last_days), then either rows (fields, order_by, descending, max_results), a count (count_only), '
+                                'or a statistic (count, sum, avg, min, max of stat_field), optionally per group_by value. Dates are YYYY-MM-DD; in_last_days takes a number of days. '
+                                'Coded values can be given by label or code. Call describe_layer first to see field names and values.'),
+                'inputSchema': {'type': 'object', 'properties': {
+                    'layer': words_prop,
+                    'filters': {'type': 'array', 'maxItems': 5, 'description': 'All must match (AND).', 'items': {'type': 'object', 'properties': {
+                        'field': {'type': 'string', 'description': 'Field name or alias.'},
+                        'op': {'type': 'string', 'enum': list(QUERY_OPS)},
+                        'value': {'description': 'A number, text, date (YYYY-MM-DD), or for in/not_in a list. Days for in_last_days.'},
+                        'value2': {'description': 'Upper bound for between.'}}, 'required': ['field', 'op']}},
+                    'text': {'type': 'string', 'description': 'Also only features matching these words (optional).'},
+                    'count_only': {'type': 'boolean', 'default': False},
+                    'statistic': {'type': 'string', 'enum': ['count', 'sum', 'avg', 'min', 'max']},
+                    'stat_field': {'type': 'string', 'description': 'Field for sum, avg, min or max.'},
+                    'group_by': {'type': 'string', 'description': 'Field to group the statistic by (optional).'},
+                    'fields': {'type': 'array', 'items': {'type': 'string'}, 'maxItems': 15, 'description': 'Fields to return with rows (optional).'},
+                    'order_by': {'type': 'string', 'description': 'Field to sort rows by (optional).'},
+                    'descending': {'type': 'boolean', 'default': False},
+                    'max_results': {'type': 'integer', 'minimum': 1, 'maximum': self.cfg['max_results'], 'default': 25}}, 'required': ['layer']},
+                'annotations': dict(ro, title='Query a layer')})
+            tools.append({
                 'name': 'list_layers', 'title': 'List searchable layers',
                 'description': 'List the GIS layers these tools can search and identify.',
                 'inputSchema': {'type': 'object', 'properties': {}},
@@ -1039,6 +1097,208 @@ class Tools:
         out = self.gis.get(layer['url'] + '/query', {'where': where, 'returnCountOnly': 'true'}, token, referer)
         count = int(out.get('count') or 0)
         return '%s has %s feature%s%s.' % (layer['name'], format(count, ','), '' if count == 1 else 's', ' matching "%s"' % text if text else ''), {'layer': layer['name'], 'count': count}
+
+    # -- structured data questions (for assistants): the schema first, then a query without SQL
+    def _fields(self, meta):
+        return [f for f in meta.get('fields') or [] if f.get('type') not in ('esriFieldTypeGeometry', 'esriFieldTypeBlob', 'esriFieldTypeRaster')
+                and FIELD_NAME.match(f.get('name') or '')]
+
+    def _field(self, layer, meta, name):
+        """A field by name, alias or plain words ("install date"); ToolError listing the fields otherwise."""
+        want = clean_text(name, 80)
+        fields = self._fields(meta)
+        key = re.sub(r'[\s_]+', '', want.lower())
+        for f in fields:
+            if key and key in (re.sub(r'[\s_]+', '', f['name'].lower()), re.sub(r'[\s_]+', '', (f.get('alias') or '').lower()), re.sub(r'[\s_]+', '', label(f).lower())):
+                return f
+        gw = layer_words(want)
+        best, score = None, 0.0
+        for f in fields:
+            fw = layer_words(f['name'] + ' ' + (f.get('alias') or ''))
+            sc = sum(max([word_match(w, x) for x in fw] or [0]) for w in gw) / max(1, len(gw))
+            if sc > score:
+                best, score = f, sc
+        if best and score >= 0.6:
+            return best
+        raise ToolError('%s has no field like "%s". Fields: %s.' % (layer['name'], want, ', '.join('%s (%s)' % (f['name'], field_kind(f)) for f in fields[:40])))
+
+    def _literal(self, field, value):
+        """One value as SQL for this field: a number, quoted text (coded labels become codes) or a TIMESTAMP."""
+        kind = field_kind(field)
+        for cv in (field.get('domain') or {}).get('codedValues') or []:
+            if isinstance(value, str) and str(cv.get('name', '')).lower() == value.strip().lower():
+                value = cv.get('code')
+                break
+        if kind == 'number':
+            try:
+                n = float(value)
+            except (TypeError, ValueError):
+                raise ToolError('%s is a number field; "%s" is not a number.' % (label(field), clean_text(value, 40)))
+            if math.isnan(n) or math.isinf(n):
+                raise ToolError('%s needs a finite number.' % label(field))
+            return repr(int(n)) if n.is_integer() else repr(n)
+        if kind == 'date':
+            return "TIMESTAMP '%s'" % parse_day(value).strftime('%Y-%m-%d %H:%M:%S')
+        if isinstance(value, (dict, list)):
+            raise ToolError('%s needs a single value.' % label(field))
+        return "'%s'" % sql_text(clean_text(value, 200))
+
+    def _filter(self, layer, meta, f):
+        if not isinstance(f, dict):
+            raise ToolError('Each filter is an object with field, op and value.')
+        field = self._field(layer, meta, f.get('field'))
+        name = field['name']
+        op = str(f.get('op') or '').strip().lower()
+        if op not in QUERY_OPS:
+            raise ToolError('Unknown op "%s". Use one of: %s.' % (clean_text(op, 20), ', '.join(QUERY_OPS)))
+        kind = field_kind(field)
+        v = f.get('value')
+        if op == 'is_null':
+            return '%s IS NULL' % name
+        if op == 'not_null':
+            return '%s IS NOT NULL' % name
+        if op == 'in_last_days':
+            if kind != 'date':
+                raise ToolError('in_last_days needs a date field; %s is %s.' % (label(field), kind))
+            days = number(v, 'value (days)', 1, 36500)
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+            return "%s >= TIMESTAMP '%s'" % (name, since.strftime('%Y-%m-%d %H:%M:%S'))
+        if op in ('contains', 'starts_with'):
+            if kind != 'text':
+                raise ToolError('%s works on text fields; %s is %s.' % (op, label(field), kind))
+            t = sql_text(clean_text(v, 120)).replace('%', '').replace('_', ' ').strip().upper()
+            if not t:
+                raise ToolError('Give some text for %s.' % op)
+            return "UPPER(%s) LIKE '%s%s%%'" % (name, '%' if op == 'contains' else '', t)
+        if op in ('in', 'not_in'):
+            items = v if isinstance(v, list) else [x for x in re.split(r'\s*,\s*', str(v or '')) if x]
+            if not items or len(items) > 25:
+                raise ToolError('Give 1 to 25 values for %s.' % op)
+            return '%s %s (%s)' % (name, 'IN' if op == 'in' else 'NOT IN', ', '.join(self._literal(field, x) for x in items))
+        if op == 'between':
+            if v is None or f.get('value2') is None:
+                raise ToolError('between needs value and value2.')
+            if kind == 'date':
+                lo, hi = parse_day(v), parse_day(f.get('value2')) + timedelta(days=1)
+                return "(%s >= TIMESTAMP '%s' AND %s < TIMESTAMP '%s')" % (name, lo.strftime('%Y-%m-%d %H:%M:%S'), name, hi.strftime('%Y-%m-%d %H:%M:%S'))
+            return '(%s >= %s AND %s <= %s)' % (name, self._literal(field, v), name, self._literal(field, f.get('value2')))
+        if v is None:
+            raise ToolError('%s needs a value.' % op)
+        if kind == 'date' and op in ('=', '!='):
+            day = parse_day(v)
+            rng = "(%s >= TIMESTAMP '%s' AND %s < TIMESTAMP '%s')" % (name, day.strftime('%Y-%m-%d %H:%M:%S'), name, (day + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'))
+            return rng if op == '=' else 'NOT ' + rng
+        return '%s %s %s' % (name, '<>' if op == '!=' else op, self._literal(field, v))
+
+    def tool_describe_layer(self, a, token, referer):
+        layer, others = self._resolve(a.get('layer'))
+        meta = self.layers.info(layer, token, referer)
+        rows = []
+        for f in self._fields(meta):
+            row = {'name': f['name'], 'label': label(f), 'type': field_kind(f)}
+            values = [str(cv.get('name')) for cv in ((f.get('domain') or {}).get('codedValues') or [])][:30]
+            if values:
+                row['values'] = values
+            rows.append(row)
+        try:
+            count = int(self.gis.get(layer['url'] + '/query', {'where': '1=1', 'returnCountOnly': 'true'}, token, referer).get('count') or 0)
+        except ToolError:
+            count = None
+        edited = ((meta.get('editingInfo') or {}).get('lastEditDate') or (meta.get('editingInfo') or {}).get('dataLastEditDate'))
+        info = {'layer': layer['name'], 'geometry': (meta.get('geometryType') or 'table').replace('esriGeometry', '').lower(), 'count': count, 'fields': rows}
+        if edited:
+            info['last_edited'] = time.strftime('%Y-%m-%d', time.gmtime(edited / 1000))
+        desc = re.sub(r'<[^>]+>', ' ', str(meta.get('description') or ''))
+        if desc.strip():
+            info['description'] = clean_text(re.sub(r'\s+', ' ', desc), 300)
+        dates = [r['name'] for r in rows if r['type'] == 'date']
+        text = '%s: %s%s, %d fields%s%s.' % (layer['name'], info['geometry'], '' if count is None else ', %s records' % format(count, ','), len(rows),
+                                             '; date fields: ' + ', '.join(dates) if dates else '', '; last edited ' + info['last_edited'] if edited else '')
+        if others:
+            text += ' (Also close: %s.)' % ', '.join(others)
+        return text, info
+
+    def tool_query_layer(self, a, token, referer):
+        layer, others = self._resolve(a.get('layer'))
+        meta = self.layers.info(layer, token, referer)
+        filters = a.get('filters') or []
+        if not isinstance(filters, list) or len(filters) > 5:
+            raise ToolError('filters is a list of up to 5 conditions.')
+        parts = [self._filter(layer, meta, f) for f in filters]
+        text = clean_text(a.get('text'), 120)
+        if text:
+            parts.append(self._where(layer, meta, text))
+        where = ' AND '.join('(%s)' % p for p in parts) if parts else '1=1'
+        said = '; '.join('%s %s %s' % (clean_text(f.get('field'), 40), f.get('op'), clean_text(json.dumps(f.get('value')) if f.get('value') is not None else '', 60)) for f in filters if isinstance(f, dict))
+        scope = (' where ' + said if said else '') + (' matching "%s"' % text if text else '')
+        stat = clean_text(a.get('statistic'), 10).lower()
+        group = clean_text(a.get('group_by'), 80)
+        if a.get('count_only') and not stat and not group:
+            count = int(self.gis.get(layer['url'] + '/query', {'where': where, 'returnCountOnly': 'true'}, token, referer).get('count') or 0)
+            return '%s: %s matching%s.' % (layer['name'], format(count, ','), scope), {'layer': layer['name'], 'where': where, 'count': count}
+        if stat or group:
+            stat = stat or 'count'
+            if stat not in ('count', 'sum', 'avg', 'min', 'max'):
+                raise ToolError('statistic is one of count, sum, avg, min, max.')
+            gfield = self._field(layer, meta, group) if group else None
+            if stat == 'count':
+                sfield = {'name': (meta.get('objectIdField') or next((f['name'] for f in meta.get('fields') or [] if f.get('type') == 'esriFieldTypeOID'), None) or (gfield or {}).get('name') or self._fields(meta)[0]['name'])}
+            else:
+                if not a.get('stat_field'):
+                    raise ToolError('Give stat_field for %s.' % stat)
+                sfield = self._field(layer, meta, a.get('stat_field'))
+                if field_kind(sfield) != 'number':
+                    raise ToolError('%s is not a number field, so it has no %s.' % (label(sfield), stat))
+            stats = [{'statisticType': 'count', 'onStatisticField': sfield['name'] if stat == 'count' else (meta.get('objectIdField') or sfield['name']), 'outStatisticFieldName': 'mappy_count'}]
+            if stat != 'count':
+                stats.append({'statisticType': stat, 'onStatisticField': sfield['name'], 'outStatisticFieldName': 'mappy_value'})
+            params = {'where': where, 'returnGeometry': 'false', 'outStatistics': json.dumps(stats)}
+            if gfield:
+                params['groupByFieldsForStatistics'] = gfield['name']
+            out = self.gis.get(layer['url'] + '/query', params, token, referer)
+            rows = []
+            for feat in out.get('features') or []:
+                at = {k.lower(): v for k, v in (feat.get('attributes') or {}).items()}
+                row = {}
+                if gfield:
+                    row[label(gfield)] = value_text(gfield, at.get(gfield['name'].lower())) or '(blank)'
+                row['count'] = int(at.get('mappy_count') or 0)
+                if stat != 'count':
+                    v = at.get('mappy_value')
+                    row[stat] = round(v, 4) if isinstance(v, float) else v
+                rows.append(row)
+            key = 'count' if stat == 'count' else stat
+            rows.sort(key=lambda r: -(r.get(key) if isinstance(r.get(key), (int, float)) else float('-inf')))
+            what = 'count' if stat == 'count' else '%s of %s' % (stat, label(sfield))
+            if not rows:
+                return 'Nothing in %s%s.' % (layer['name'], scope), {'layer': layer['name'], 'where': where, 'rows': []}
+            if gfield:
+                head = '%s: %s by %s%s, %d groups. Top: %s.' % (layer['name'], what, label(gfield), scope, len(rows),
+                                                                ', '.join('%s %s' % (r[label(gfield)], r.get(key)) for r in rows[:4]))
+            else:
+                head = '%s: %s%s = %s (%s records).' % (layer['name'], what, scope, rows[0].get(key), format(rows[0]['count'], ','))
+            return head, {'layer': layer['name'], 'where': where, 'statistic': stat, 'group_by': label(gfield) if gfield else None, 'rows': rows[:100]}
+        n = int(number(a.get('max_results', 25), 'max_results', 1, self.cfg['max_results']))
+        wanted = a.get('fields') or []
+        if not isinstance(wanted, list) or len(wanted) > 15:
+            raise ToolError('fields is a list of up to 15 field names.')
+        show = [self._field(layer, meta, x) for x in wanted] or self.layers.show_fields(layer, meta)
+        params = {'where': where, 'outFields': ','.join(f['name'] for f in show) or '*', 'resultRecordCount': n,
+                  'returnGeometry': 'false' if not meta.get('geometryType') else 'true', 'outSR': 4326, 'geometryPrecision': 6, 'maxAllowableOffset': 0.0001}
+        if a.get('order_by'):
+            ob = self._field(layer, meta, a.get('order_by'))
+            params['orderByFields'] = '%s %s' % (ob['name'], 'DESC' if a.get('descending') else 'ASC')
+        out = self.gis.get(layer['url'] + '/query', params, token, referer)
+        rows = []
+        for feat in (out.get('features') or [])[:n]:
+            at = feat.get('attributes') or {}
+            row = {label(f): value_text(f, at.get(f['name'])) for f in show}
+            c = center_of(feat.get('geometry'))
+            if c:
+                row['longitude'], row['latitude'] = round(c[0], 6), round(c[1], 6)
+            rows.append(row)
+        more = ' (first %d)' % n if out.get('exceededTransferLimit') or len(out.get('features') or []) > n else ''
+        return '%d record%s from %s%s%s.' % (len(rows), '' if len(rows) == 1 else 's', layer['name'], scope, more), {'layer': layer['name'], 'where': where, 'rows': rows}
 
     def tool_list_layers(self, a, token, referer):
         rows = [{'name': v['name'], 'path': v.get('path') or v['name']} for v in sorted(self.layers.by_name.values(), key=lambda v: (v.get('path') or v['name']).lower())]

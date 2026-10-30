@@ -329,14 +329,23 @@
     "zoom to cortez",
     "geocode 715 rood ave",
     "find owner jose",
-    "where is caf\u00e9 rio",
+    "where is café rio",
     "zeige alle ebenen",
     "find Drew in parcels",
     "how many parcels where owner equals Drew",
     "zoom to grand mesa",
     "find orchard ave",
     "find patterson rd",
-    "zoom to shelbyville"
+    "zoom to shelbyville",
+    "parcels edited in the last 7 days",
+    "how many fire hydrants were inspected this year",
+    "what percent of parcels are over 5 acres",
+    "average acres by zoning in parcels",
+    "how many parcels per zoning",
+    "filter parcels where acres > 5 and zoning is R-4",
+    "parcels where zoning is R-4 or R-8",
+    "show parcels edited since March 2024",
+    "what is on the map"
   ],
   "ask": [
     {

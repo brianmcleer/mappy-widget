@@ -1086,3 +1086,95 @@ test('knowledge feed: validation, docs, glossary terms and facts', async () => {
   for (const f of shipped.facts) assert.doesNotMatch(f, /grand junction|colorado/i)
 })
 
+
+test('dates, several conditions, value lists, percent and grouped statistics', async () => {
+  const { compileConditions, splitConditions } = require('../src/brain/analysis.ts')
+  const { parseWhen, parsePeriod } = require('../src/brain/dates.ts')
+  const now = new Date(2026, 9, 30, 10, 0, 0) // Fri Oct 30 2026
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const r = (p) => { const x = parseWhen(p, now); return x ? [x.from && ymd(x.from), x.to && ymd(x.to)] : null }
+  assert.deepEqual(r('in the last 7 days'), ['2026-10-24', '2026-10-31'])
+  assert.deepEqual(r('past week'), ['2026-10-24', '2026-10-31'])
+  assert.deepEqual(r('in the last 3 months'), ['2026-07-31', '2026-10-31'])
+  assert.deepEqual(r('today'), ['2026-10-30', '2026-10-31'])
+  assert.deepEqual(r('yesterday'), ['2026-10-29', '2026-10-30'])
+  assert.deepEqual(r('this year'), ['2026-01-01', '2026-10-31'])
+  assert.deepEqual(r('last year'), ['2025-01-01', '2026-01-01'])
+  assert.deepEqual(r('last month'), ['2026-09-01', '2026-10-01'])
+  assert.deepEqual(r('this week'), ['2026-10-25', '2026-10-31'])
+  assert.deepEqual(r('since 2020'), ['2020-01-01', undefined])
+  assert.deepEqual(r('after March 2024'), ['2024-04-01', undefined])
+  assert.deepEqual(r('before 1990'), [undefined, '1990-01-01'])
+  assert.deepEqual(r('on 6/1/2025'), ['2025-06-01', '2025-06-02'])
+  assert.deepEqual(r('on June 1, 2025'), ['2025-06-01', '2025-06-02'])
+  assert.deepEqual(r('in 2023'), ['2023-01-01', '2024-01-01'])
+  assert.deepEqual(r('during May'), ['2026-05-01', '2026-06-01'])
+  assert.deepEqual(r('between 2020 and 2022'), ['2020-01-01', '2023-01-01'])
+  assert.equal(r('between 2022 and 2020'), null)
+  assert.equal(r('on 2/30/2025'), null)
+  assert.equal(r('in a while'), null)
+  assert.equal(parsePeriod('Smith'), null)
+
+  const f2 = [...fields, { name: 'last_edited_date', alias: 'Last Edited', type: 'date' }, { name: 'INSTALLDATE', alias: 'Install Date', type: 'date' }, { name: 'ZONING', type: 'string' }, { name: 'INSP_DAY', alias: 'Inspection Day', type: 'date-only' }]
+  assert.equal(compileCondition('edited date in the last 7 days', f2, now), "(last_edited_date >= TIMESTAMP '2026-10-24 00:00:00' AND last_edited_date < TIMESTAMP '2026-10-31 00:00:00')")
+  assert.equal(compileCondition('installed date before 1990', f2, now), "INSTALLDATE < TIMESTAMP '1990-01-01 00:00:00'")
+  assert.equal(compileCondition('install date after 2015', f2, now), "INSTALLDATE >= TIMESTAMP '2016-01-01 00:00:00'")
+  assert.equal(compileCondition('install date > 2015', f2, now), "INSTALLDATE >= TIMESTAMP '2016-01-01 00:00:00'")
+  assert.equal(compileCondition('inspection day on 2025-06-01', f2, now), "(INSP_DAY >= DATE '2025-06-01' AND INSP_DAY < DATE '2025-06-02')")
+  assert.equal(compileCondition('*year* < 1990', f2, now), "INSTALLDATE < TIMESTAMP '1990-01-01 00:00:00'")
+  assert.throws(() => compileCondition('install date in a while', f2, now), /Use a time like/)
+  assert.throws(() => compileCondition('inspected date this year', fields, now), /no date fields/)
+  // Year fields: whole years.
+  const yf = [...fields, { name: 'YEAR_BUILT', alias: 'Year Built', type: 'integer' }]
+  assert.equal(compileCondition('built date before 1990', yf, now), 'YEAR_BUILT < 1990')
+  assert.equal(compileCondition('year built between 1990 and 1999', yf, now), '(YEAR_BUILT >= 1990 AND YEAR_BUILT < 2000)')
+  assert.equal(compileCondition('built date in 1995', yf, now), '(YEAR_BUILT >= 1995 AND YEAR_BUILT < 1996)')
+  // Lists and several conditions.
+  assert.equal(compileCondition('zoning is R-4 or R-8 or RM-8', f2), "ZONING IN ('R-4', 'R-8', 'RM-8')")
+  assert.equal(compileCondition('zoning is not R-4 or R-8', f2), "ZONING NOT IN ('R-4', 'R-8')")
+  assert.equal(compileCondition('status is Active or 2', f2), 'STATUS IN (1, 2)')
+  assert.equal(compileCondition("zoning is 'R-4 or R-8'", f2), "ZONING = 'R-4 or R-8'")
+  assert.throws(() => compileCondition('acres = 1 or 1=1', f2), /numbers or coded/)
+  assert.deepEqual(splitConditions('acres > 5 and zoning is R-4'), ['acres > 5', 'zoning is R-4'])
+  assert.deepEqual(splitConditions('acres between 5 and 10 and zoning is R-4'), ['acres between 5 and 10', 'zoning is R-4'])
+  assert.deepEqual(splitConditions("owner is 'Smith and Sons' and acres > 1"), ["owner is 'Smith and Sons'", 'acres > 1'])
+  assert.deepEqual(splitConditions('edited date between March 2020 and May 2021 and acres > 1'), ['edited date between March 2020 and May 2021', 'acres > 1'])
+  assert.equal(compileConditions('acres > 5 and zoning is R-4', f2), "(ACRES > 5) AND (ZONING = 'R-4')")
+  assert.throws(() => compileConditions('acres > 1 and acres > 2 and acres > 3 and acres > 4', f2), /up to three/)
+  assert.throws(() => compileConditions('acres > 1 and 1=1', f2))
+
+  // Asking.
+  assert.deepEqual(parseAnalysis('parcels edited in the last 7 days'), { kind: 'filter', layer: 'parcels', condition: 'edited date in the last 7 days', inView: false })
+  assert.deepEqual(parseAnalysis('how many hydrants were inspected this year'), { kind: 'countWhere', layer: 'hydrants', condition: 'inspected date this year', inView: false })
+  assert.deepEqual(parseAnalysis('show manholes installed before 1990 in view'), { kind: 'filter', layer: 'manholes', condition: 'installed date before 1990', inView: true })
+  assert.deepEqual(parseAnalysis('what percent of parcels are over 5 acres'), { kind: 'percent', layer: 'parcels', condition: 'acres > 5', inView: false })
+  assert.deepEqual(parseAnalysis('what share of hydrants were inspected this year'), { kind: 'percent', layer: 'hydrants', condition: 'inspected date this year', inView: false })
+  assert.deepEqual(parseAnalysis('what percent of parcels where zoning is R-4'), { kind: 'percent', layer: 'parcels', condition: 'zoning is R-4', inView: false })
+  assert.deepEqual(parseAnalysis('average acres by zoning in parcels'), { kind: 'group', stat: 'avg', valueField: 'acres', field: 'zoning', layer: 'parcels', inView: false })
+  assert.deepEqual(parseAnalysis('total length of sewer mains by material'), { kind: 'group', stat: 'sum', valueField: 'length', layer: 'sewer mains', field: 'material', inView: false })
+  assert.deepEqual(parseAnalysis('how many parcels per zoning'), { kind: 'group', layer: 'parcels', field: 'zoning', inView: false })
+  assert.equal(parseAnalysis('average acres in parcels').kind, 'stats')
+  assert.deepEqual(parseAnalysis('filter parcels where acres > 5 and owner contains Smith'), { kind: 'filter', layer: 'parcels', condition: 'acres > 5 and owner contains Smith', inView: false })
+  assert.deepEqual(parseAnalysis('parcels where edited date is in the last 30 days'), { kind: 'filter', layer: 'parcels', condition: 'edited date is in the last 30 days', inView: false })
+
+  // Running them against the live layer.
+  const { mind, layer, queries } = fixture()
+  layer.visible = true
+  layer.fields = [...layer.fields, { name: 'last_edited_date', alias: 'Last Edited', type: 'date' }, { name: 'ZONING', type: 'string' }]
+  let n = 0
+  layer.queryFeatureCount = async q => { queries.push(q); return n++ % 2 ? 40 : 10 }
+  const pct = await mind.respond('what percent of parcels are over 5 acres')
+  assert.match(pct.text, /\*\*25%\*\* of \*\*Parcels\*\* \(10 of 40\)/)
+  assert.match(queries[queries.length - 2].where, /ACRES > 5/)
+  assert.doesNotMatch(queries[queries.length - 1].where, /ACRES/)
+  assert.equal(pct.actions[0].label, 'Show them')
+  layer.queryFeatures = async q => { queries.push(q); return { features: [{ attributes: { ZONING: 'R-4', mappy_count: 3, mappy_value: 2.5 } }, { attributes: { ZONING: 'C-1', mappy_count: 2, mappy_value: 9 } }] } }
+  const g = await mind.respond('average acres by zoning in parcels')
+  assert.match(g.text, /\*\*C-1\*\* has the highest average Lot Area \(9\); the lowest is \*\*R-4\*\* \(2\.5\)/)
+  assert.deepEqual(g.table.columns, ['Zoning', 'Count', 'Average Lot Area'])
+  assert.deepEqual(queries[queries.length - 1].outStatistics.map(s => s.statisticType), ['count', 'avg'])
+  const ed = await mind.respond('how many parcels were edited in the last 7 days')
+  assert.match(ed.text, /matching records in \*\*Parcels\*\*/)
+  assert.match(queries[queries.length - 1].where, /last_edited_date >= TIMESTAMP '/)
+})
+

@@ -95,7 +95,7 @@ class GisMcpTest(unittest.TestCase):
     def test_tools_listed_read_only_with_layer_choices(self):
         tools = self.rpc('tools/list').get_json()['result']['tools']
         names = [t['name'] for t in tools]
-        self.assertEqual(names, ['geocode', 'reverse_geocode', 'nearest_feature', 'features_near', 'identify', 'summarize_layer', 'find_features', 'count_features', 'list_layers', 'search_content'])
+        self.assertEqual(names, ['geocode', 'reverse_geocode', 'nearest_feature', 'features_near', 'identify', 'summarize_layer', 'find_features', 'count_features', 'describe_layer', 'query_layer', 'list_layers', 'search_content'])
         self.assertTrue(all(t['annotations']['readOnlyHint'] for t in tools))
         find = next(t for t in tools if t['name'] == 'find_features')
         self.assertEqual(find['inputSchema']['properties']['layer']['enum'], ['Fire Hydrants', 'High Zone', 'Hydrant Inspections', 'Parcels', 'Sanitary - Manholes', 'Sanitary Sewer Mains', 'Sewer Manholes', 'Storm - Manholes', 'System Valves', 'Zoning'], 'MapServer copy only, no group layers, no staff layer without a token')
@@ -209,6 +209,54 @@ class GisMcpTest(unittest.TestCase):
         self.assertEqual(s['structuredContent']['groups'][0], {'Material': 'PVC', 'count': 2})
         self.assertIn('Sanitary Sewer Mains by Material: 3 features', s['content'][0]['text'])
         self.assertTrue(self.call('summarize_layer', {'layer': 'sewer line', 'group_by': 'zzzz'})['isError'])
+
+    def test_describe_and_query_layer(self):
+        d = self.call('describe_layer', {'layer': 'parcels'})
+        info = d['structuredContent']
+        self.assertEqual(info['geometry'], 'polygon')
+        self.assertEqual(info['count'], 2)
+        types = {f['name']: f['type'] for f in info['fields']}
+        self.assertEqual((types['ACRES'], types['OWNER'], types['SALE_DATE']), ('number', 'text', 'date'))
+        self.assertIn('date fields: SALE_DATE', d['content'][0]['text'])
+        z = self.call('describe_layer', {'layer': 'zoning'})['structuredContent']
+        self.assertEqual([f for f in z['fields'] if f['name'] == 'ZONE'][0]['values'], ['Residential 4 du/ac'])
+
+        def where_of(args):
+            before = len(fake_arcgis.CALLS)
+            r = self.call('query_layer', args)
+            self.assertFalse(r['isError'], r)
+            return [c['where'] for c in fake_arcgis.CALLS[before:] if c.get('where')][-1], r
+        w, r = where_of({'layer': 'parcels', 'filters': [{'field': 'acres', 'op': '>', 'value': 0.3}, {'field': 'owner', 'op': 'contains', 'value': "o'brien"}]})
+        self.assertEqual(w, "(ACRES > 0.3) AND (UPPER(OWNER) LIKE '%O''BRIEN%')")
+        w, r = where_of({'layer': 'parcels', 'filters': [{'field': 'Sale Date', 'op': 'between', 'value': '2024-01-01', 'value2': '2024-12-31'}]})
+        self.assertEqual(w, "((SALE_DATE >= TIMESTAMP '2024-01-01 00:00:00' AND SALE_DATE < TIMESTAMP '2025-01-01 00:00:00'))")
+        w, r = where_of({'layer': 'parcels', 'filters': [{'field': 'sale date', 'op': 'in_last_days', 'value': 30}]})
+        self.assertRegex(w, r"^\(SALE_DATE >= TIMESTAMP '\d{4}-\d\d-\d\d \d\d:\d\d:\d\d'\)$")
+        w, r = where_of({'layer': 'zoning', 'filters': [{'field': 'zone', 'op': 'in', 'value': ['Residential 4 du/ac', 'C-1']}], 'count_only': True})
+        self.assertEqual(w, "(ZONE IN ('R-4', 'C-1'))")
+        self.assertEqual(r['structuredContent']['count'], 1)
+        w, r = where_of({'layer': 'parcels', 'filters': [{'field': 'owner', 'op': 'is_null'}], 'count_only': True})
+        self.assertEqual(w, '(OWNER IS NULL)')
+        # Statistics, whole layer and per group.
+        s = self.call('query_layer', {'layer': 'parcels', 'statistic': 'sum', 'stat_field': 'acres'})['structuredContent']
+        self.assertEqual(s['rows'][0]['sum'], 0.71)
+        self.assertEqual(s['rows'][0]['count'], 2)
+        g = self.call('query_layer', {'layer': 'parcels', 'statistic': 'avg', 'stat_field': 'acres', 'group_by': 'owner'})
+        self.assertEqual(g['structuredContent']['rows'][0], {'Owner': "O'BRIEN PAT", 'count': 1, 'avg': 0.5})
+        self.assertIn('avg of Acres by Owner', g['content'][0]['text'])
+        # Rows with chosen fields and order.
+        before = len(fake_arcgis.CALLS)
+        rows = self.call('query_layer', {'layer': 'parcels', 'fields': ['owner', 'acres'], 'order_by': 'acres', 'descending': True, 'max_results': 5})['structuredContent']['rows']
+        self.assertEqual(set(rows[0]) - {'latitude', 'longitude'}, {'Owner', 'Acres'})
+        # Refused: unknown field, bad op, SQL in a value stays quoted text, numbers stay numbers.
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'filters': [{'field': 'zzzz', 'op': '=', 'value': 1}]})['isError'])
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'filters': [{'field': 'acres', 'op': 'OR 1=1', 'value': 1}]})['isError'])
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'filters': [{'field': 'acres', 'op': '=', 'value': '1 OR 1=1'}]})['isError'])
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'filters': [{'field': 'acres', 'op': 'contains', 'value': 'x'}]})['isError'])
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'statistic': 'avg', 'stat_field': 'owner'})['isError'])
+        self.assertTrue(self.call('query_layer', {'layer': 'parcels', 'filters': [{'field': 'sale date', 'op': '=', 'value': 'yesterday-ish'}]})['isError'])
+        w, r = where_of({'layer': 'parcels', 'filters': [{'field': 'owner', 'op': '=', 'value': "x' OR '1'='1"}]})
+        self.assertEqual(w, "(OWNER = 'x'' OR ''1''=''1')")
 
     def test_features_near_searches_every_matching_layer(self):
         r = self.call('features_near', {'layer': 'manholes', 'address': '250 N 5th St', 'distance_feet': 1000})
