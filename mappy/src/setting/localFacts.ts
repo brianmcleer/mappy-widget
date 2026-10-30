@@ -10,7 +10,20 @@
 */
 
 export interface BuiltFact { text: string, source: string, url: string }
-export interface FactBuild { facts: BuiltFact[], pages: string[], note: string }
+export interface FactBuild { facts: BuiltFact[], pages: string[], note: string, bySource?: { [source: string]: number } }
+export interface BuildOptions {
+  signal?: AbortSignal
+  radiusMeters?: number
+  nearby?: number
+  progress?: (line: string) => void
+  /** Which extra sources to read besides Wikipedia (all when absent). */
+  sources?: SourceId[]
+  /** A free US Census API key, for the Census source. */
+  censusKey?: string
+}
+
+import { SOURCES, fetchWikidata, fetchClimate, fetchUsgsElevation, fetchCensus, fetchWikivoyage, fetchDbpedia, fetchOsm } from './factSources'
+import type { SourceId, Spot } from './factSources'
 
 const WIKI = 'https://en.wikipedia.org'
 
@@ -49,8 +62,11 @@ export function tidy (facts: BuiltFact[], max = 24): BuiltFact[] {
   return out
 }
 
-/** The one-line form saved in settings: the fact and where it came from. */
-export function factLine (f: BuiltFact): string { return `${f.text} (${f.source}, Wikipedia)` }
+/** The one-line form saved in settings: the fact and where it came from. Wikipedia pages say so; other sources are named as they are. */
+export function factLine (f: BuiltFact): string {
+  const wiki = !/Wikivoyage|Wikidata|DBpedia|Open-Meteo|OpenStreetMap|USGS|Census/i.test(f.source)
+  return `${f.text} (${f.source}${wiki ? ', Wikipedia' : ''})`
+}
 
 async function getJson (url: string, signal?: AbortSignal): Promise<any> {
   const r = await fetch(url, { signal, headers: { Accept: 'application/json' } })
@@ -84,7 +100,7 @@ async function searchTitle (q: string, signal?: AbortSignal): Promise<string | n
  * found by title and then by Wikipedia search, then up to eight pages within 10 km of it
  * (geosearch), skipping people, companies and lists. `progress` gets a line as it goes.
  */
-export async function buildLocalFacts (place: string, region: string, opts: { signal?: AbortSignal, radiusMeters?: number, nearby?: number, progress?: (line: string) => void } = {}): Promise<FactBuild> {
+export async function buildLocalFacts (place: string, region: string, opts: BuildOptions = {}): Promise<FactBuild> {
   const name = place.trim()
   const say = opts.progress || (() => {})
   if (!name) return { facts: [], pages: [], note: 'Give the place a name first.' }
@@ -128,6 +144,36 @@ export async function buildLocalFacts (place: string, region: string, opts: { si
       }
     } catch (e) { }
   }
-  const all = tidy(facts)
-  return { facts: all, pages, note: all.length ? `${all.length} facts from ${pages.length} Wikipedia page${pages.length === 1 ? '' : 's'} (CC BY-SA). Read them over, delete any you do not want, then Save.` : 'Nothing usable came back. You can type facts by hand below.' }
+  // The other open sources, each on its own: a failure in one never spoils the rest.
+  const wanted = new Set<SourceId>(opts.sources || SOURCES.map(x => x.id))
+  const bySource: { [source: string]: number } = { Wikipedia: facts.length }
+  if (at && typeof at.lat === 'number' && wanted.size) {
+    const us = /\b(?:united states|usa|u\.s\.)\b/i.test(String(main.description || '')) || /\b(?:united states|usa)\b/i.test(main.extract || '') || US_STATES.test(where) || US_STATES.test(main.title)
+    const spot: Spot = { lat: at.lat, lon: at.lon, place: name, us, qid: main.wikibase_item, title: main.title, metric: !us }
+    const steps: Array<[SourceId, string, () => Promise<BuiltFact[]>]> = [
+      ['wikidata', 'Wikidata', () => fetchWikidata(spot, opts.signal)],
+      ['climate', 'Open-Meteo climate', () => fetchClimate(spot, opts.signal)],
+      ['usgs', 'USGS elevation', () => fetchUsgsElevation(spot, opts.signal)],
+      ['census', 'US Census', () => fetchCensus(spot, opts.censusKey || '', opts.signal)],
+      ['wikivoyage', 'Wikivoyage', () => fetchWikivoyage(spot, pickFacts, opts.signal)],
+      ['dbpedia', 'DBpedia', () => fetchDbpedia(spot, facts, opts.signal)],
+      ['osm', 'OpenStreetMap', () => fetchOsm(spot, opts.signal)]
+    ]
+    for (const [id, label, run] of steps) {
+      if (!wanted.has(id)) continue
+      if (opts.signal?.aborted) break
+      if (id === 'census' && !opts.censusKey) continue
+      if ((id === 'usgs' || id === 'census') && !us) continue
+      say(`Reading ${label}...`)
+      try {
+        const got = await run()
+        if (got.length) { facts.push(...got); bySource[label] = got.length }
+      } catch (e) { say(`${label}: ${e instanceof Error ? e.message : 'not available'} (skipped)`) }
+    }
+  }
+  const all = tidy(facts, 60)
+  const parts = Object.entries(bySource).filter(([, c]) => c > 0).map(([k, c]) => `${k} ${c}`)
+  return { facts: all, pages, bySource, note: all.length ? `${all.length} facts (${parts.join(', ')}). Each line names its source. Read them over, delete any you do not want, then Save.` : 'Nothing usable came back. You can type facts by hand below.' }
 }
+
+const US_STATES = /\b(?:Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming|District of Columbia|AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b/

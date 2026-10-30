@@ -26,6 +26,7 @@ import type { KnowledgeFeed } from '../brain/feed'
 import { cachedFeed, loadFeed } from './feed'
 import { addTerms } from '../brain/glossary'
 import { warmProjection, needsProjection } from './project'
+import { buildMapFacts } from './mapFacts'
 import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
@@ -159,6 +160,17 @@ export default function Widget (props: Props): any {
   }, [feedOn, feedUrl])
   React.useEffect(() => { if (feed?.glossary.length) { try { addTerms(feed.glossary) } catch (e) { } } }, [feed])
 
+  // Facts from this map's own layers, worked out once the map is idle (and again if the layers change a lot).
+  const [mapFacts, setMapFacts] = React.useState<string[]>([])
+  React.useEffect(() => {
+    if (cfg.mapFacts === false || isDesign) { setMapFacts([]); return }
+    let alive = true
+    const w: any = window
+    const run = () => { buildMapFacts(live).then(f => { if (alive) setMapFacts(f) }).catch(() => {}) }
+    const id = w.requestIdleCallback ? w.requestIdleCallback(run, { timeout: 15000 }) : setTimeout(run, 8000)
+    return () => { alive = false; try { if (w.cancelIdleCallback) w.cancelIdleCallback(id); else clearTimeout(id) } catch (e) { } }
+  }, [cfg.mapFacts, isDesign, Math.floor(liveVersion / 5)])
+
   // A language pack the builder pulled in settings (newer words, phrasings, misspellings),
   // and the feed's pack when that is newer still.
   const langVersion = React.useMemo(() => {
@@ -212,7 +224,7 @@ export default function Widget (props: Props): any {
       org: (cfg.orgName || '').trim() || (portalSelf?.name ? String(portalSelf.name) : '') || 'the City',
       name: (cfg.placeName || '').trim(),
       website: (cfg.website || '').trim(),
-      facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean).concat(feed?.facts || [])
+      facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean).concat(mapFacts, feed?.facts || [])
     },
     feedInfo: feed ? describeFeed(feed) : undefined,
     store: { get: (k: string) => store(k + ':' + appId), set: (k: string, v: string | null) => { store(k + ':' + appId, v) } },
@@ -228,7 +240,7 @@ export default function Widget (props: Props): any {
     if (!mindRef.current) mindRef.current = new Mind(context)
     else mindRef.current.ctx = context
     return mindRef.current
-  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, feed, portalSelf?.name, props.id])
+  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, feed, mapFacts, portalSelf?.name, props.id])
 
   // ------------------------------------------------------------------ map
   const mapWidgetId: string | undefined = React.useMemo(() => {

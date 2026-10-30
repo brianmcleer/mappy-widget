@@ -152,6 +152,7 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | Save this view as home base / Go to home base | Saved views, kept in this browser |
 | Chart parcels by zoning / Chart that | Bars in the chat |
 | Zoom in twice / Pan left / North up / Drop a pin here | Map control in plain words |
+| Fun fact / Local fact | Facts from Wikipedia, Wikidata, Open-Meteo climate, OpenStreetMap, Wikivoyage, DBpedia, USGS and the Census (built in settings, each line names its source), and from the map's own layers |
 | Fewer tips / Stop bugging me | Tips off for good; "tip" asks for one |
 | Tell me a joke | Regrets nothing |
 

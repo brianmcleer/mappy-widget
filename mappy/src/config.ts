@@ -80,6 +80,12 @@ export interface Config {
   website?: string
   /** Local fun facts, one per line, mixed in with the built-in map facts ("fun fact"). */
   localFacts?: string
+  /** Which open sources "Build facts" reads besides Wikipedia (all when absent). */
+  factSources?: string[]
+  /** A free US Census API key (api.census.gov/data/key_signup.html), for Census facts. */
+  censusKey?: string
+  /** Facts from the app's own map layers ("The map has 2,314 fire hydrants"), worked out at runtime. Undefined means on. */
+  mapFacts?: boolean
   /** Usage telemetry through the shared Beacon module. Explicit opt-in only. */
   telemetry?: boolean
 }

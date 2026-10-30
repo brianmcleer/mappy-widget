@@ -1517,3 +1517,88 @@ test('closest and within from the app\'s own layers when no server has a tool fo
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
 })
 
+
+test('a place stays remembered by name across follow-ups; "zoning" never means a flood zone', async () => {
+  const { live, layer, mind } = fixture()
+  layer.visible = true
+  const flood = { id: 'flood', title: 'FEMA Flood Zones', type: 'feature', visible: true, opacity: 1, fields: [{ name: 'OBJECTID', type: 'oid' }, { name: 'ZONE', alias: 'Zone', type: 'string' }], objectIdField: 'OBJECTID', displayField: 'ZONE', geometryType: 'polygon', createQuery: () => ({ where: '1=1' }), queryFeatureCount: async () => 1, queryFeatures: async () => ({ features: [{ attributes: { OBJECTID: 1, ZONE: 'X' }, geometry: { type: 'polygon', rings: [] } }] }) }
+  live.jmv.view.map.layers.push(flood)
+  assert.equal(live.matchTitle('zoning'), null)
+  assert.equal(live.matchTitle('flood zone').title, 'FEMA Flood Zones')
+  live.jmv.view.graphics = { add () {}, remove () {}, toArray: () => [] }
+  live.jmv.view.spatialReference = { wkid: 4326 }
+  mind.ctx.geocoders = [{ url: 'https://city.test/GeocodeServer', name: 'City', singleLineFieldName: 'SingleLine' }]
+  sdkLoader = async (mods) => mods[0] === 'esri/Graphic' ? [function G (o) { Object.assign(this, o) }, function P (o) { Object.assign(this, o) }, function L (o) { Object.assign(this, o) }, function Y (o) { Object.assign(this, o) }] : [{ addressToLocations: async () => [{ address: '1138 White Ave', score: 100, location: { x: -108.5532, y: 39.0695, spatialReference: { wkid: 4326 } }, attributes: { X: -108.5532, Y: 39.0695 } }] }, {}]
+  await mind.respond('zoom to 1138 White Ave')
+  const z = await mind.respond('what zoning is this in')
+  assert.match(z.text, /This map has no \*\*zoning\*\* layer/)
+  // Chips name the place, not its coordinates.
+  layer.queryFeatures = async () => ({ features: [{ attributes: { OBJECTID: 1, OWNER: 'Smith', ACRES: 1 }, geometry: { type: 'polygon', rings: [], extent: { center: { x: -108.5532, y: 39.0695 } } } }] })
+  const who = await mind.respond('who owns this')
+  assert.match(who.text, /Smith/)
+  for (const c of who.suggest || []) assert.doesNotMatch(c, /\d{2}\.\d{4}/, c)
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+
+
+test('open fact sources: Wikidata, climate, Census, DBpedia, OSM shaping, and facts from the map itself', async () => {
+  const { wikidataFacts, climateFacts, censusFacts, dbpediaFacts, osmFacts, SOURCES } = require('../src/setting/factSources.ts')
+  const { factLine } = require('../src/setting/localFacts.ts')
+  assert.deepEqual(SOURCES.map(x => x.id), ['wikidata', 'climate', 'osm', 'wikivoyage', 'dbpedia', 'usgs', 'census'])
+  const q = (amount, unit) => ({ mainsnak: { datavalue: { value: { amount: String(amount), unit: 'http://www.wikidata.org/entity/' + unit } } } })
+  const entity = { id: 'Q1', claims: {
+    P1082: [{ ...q('+65000', 'Q199'), qualifiers: { P585: [{ datavalue: { value: { time: '+2020-01-01T00:00:00Z' } } }] } }, { ...q('+58000', 'Q199'), qualifiers: { P585: [{ datavalue: { value: { time: '+2010-01-01T00:00:00Z' } } }] } }],
+    P2046: [q('+100', 'Q712226')], P2044: [q('+1397', 'Q11573')],
+    P571: [{ mainsnak: { datavalue: { value: { time: '+1882-00-00T00:00:00Z' } } } }],
+    P138: [{ mainsnak: { datavalue: { value: { id: 'Q9' } } } }],
+    P190: [{ mainsnak: { datavalue: { value: { id: 'Q8' } } } }],
+    P1449: [{ mainsnak: { datavalue: { value: { text: 'River City' } } } }]
+  } }
+  const wd = wikidataFacts(entity, 'Springfield', { Q9: 'the two rivers', Q8: 'El Jadida' }).map(f => f.text)
+  assert.ok(wd.includes('Springfield had a population of about 65,000 in 2020.'), wd.join(' | '))
+  assert.ok(wd.includes('Springfield covers about 38.6 square miles (100 km²).'))
+  assert.ok(wd.includes('Springfield sits at about 4,583 feet (1,397 m) above sea level.'))
+  assert.ok(wd.includes('Springfield was founded in 1882.'))
+  assert.ok(wd.includes('Springfield is named after the two rivers.'))
+  assert.ok(wd.includes('Springfield has sister city: El Jadida.'))
+  assert.ok(wd.includes('Springfield is nicknamed "River City".'))
+  assert.equal(factLine({ text: 'X.', source: 'Wikidata', url: 'https://www.wikidata.org/wiki/Q1' }), 'X. (Wikidata)')
+  assert.equal(factLine({ text: 'X.', source: 'Springfield', url: 'https://en.wikipedia.org/wiki/Springfield' }), 'X. (Springfield, Wikipedia)')
+  // Climate: three years of a simple pattern.
+  const time = []; const hi = []; const lo = []; const p = []; const sn = []
+  for (let y = 2021; y <= 2023; y++) for (let m = 1; m <= 12; m++) for (let d = 1; d <= 28; d++) {
+    time.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+    hi.push(m === 7 ? 95 : 60); lo.push(m === 1 ? 15 : 40); p.push(d === 1 ? 0.5 : 0); sn.push(m === 1 && d === 2 ? 4 : 0)
+  }
+  const cl = climateFacts({ time, temperature_2m_max: hi, temperature_2m_min: lo, precipitation_sum: p, snowfall_sum: sn }, 'Springfield', false).map(f => f.text)
+  assert.ok(cl[0].startsWith("Springfield's warmest month is July, with afternoons around 95°F; January nights drop to about 15°F."), cl[0])
+  assert.ok(cl.some(t => /about 6 inches of precipitation a year, on roughly 12 days/.test(t)), cl.join(' | '))
+  assert.ok(cl.some(t => /about 4 inches of snow/.test(t)))
+  assert.ok(cl.some(t => /about 28 days a year at or above 90°F/.test(t)))
+  assert.ok(cl.some(t => /about 28 nights a year at or below freezing/.test(t)))
+  assert.deepEqual(climateFacts({ time: [] }, 'X', false), [])
+  // Census profile row.
+  const ce = censusFacts([['NAME', 'DP05_0001E', 'DP05_0018E', 'DP02_0001E', 'DP04_0089E', 'DP03_0025E', 'state', 'place'], ['X city', '65000', '38.4', '26000', '310000', '-666666666', '08', '31660']], 'Springfield').map(f => f.text)
+  assert.deepEqual(ce, ["The Census Bureau estimates Springfield's population at 65,000.", 'The median age in Springfield is 38.4.', 'Springfield has about 26,000 households.', 'The median home value in Springfield is about $310,000.'])
+  // DBpedia fills only what is missing.
+  const db = dbpediaFacts({ 'http://dbpedia.org/ontology/populationTotal': [{ value: 65000 }], 'http://dbpedia.org/ontology/elevation': [{ value: 1397 }] }, 'Springfield', [{ text: 'Springfield had a population of about 65,000 in 2020.', source: 'Wikidata', url: '' }]).map(f => f.text)
+  assert.deepEqual(db, ['Springfield is about 4,583 feet above sea level.'])
+  // OSM counts.
+  const { osmQuery, osmCounts } = require('../src/setting/factSources.ts')
+  assert.match(osmQuery(39.07, -108.55), /^\[out:json\]\[timeout:25\];nwr\["leisure"="park"\]\(around:8047,39\.07,-108\.55\)->\.s0;\.s0 out count;/)
+  assert.deepEqual(osmCounts({ elements: [{ tags: { total: '41' } }, { tags: { total: '1' } }, { tags: { total: '0' } }] }), { parks: 41, playgrounds: 1, schools: 0 })
+  const os = osmFacts({ parks: 41, playgrounds: 1, schools: 0 }, 'Springfield', 5).map(f => f.text)
+  assert.deepEqual(os, ['OpenStreetMap shows 41 parks within 5 miles of Springfield.', 'OpenStreetMap shows 1 playground within 5 miles of Springfield.'])
+
+  // Facts from the map itself.
+  const { layerFacts, buildMapFacts } = require('../src/runtime/mapFacts.ts')
+  assert.deepEqual(layerFacts('Sewer Mains', 'polyline', { count: 9812, lengthFt: 412 * 5280 }), ['This map has 9,812 sewer mains.', 'There are about 412 miles of sewer mains on this map, about 16 marathons.'])
+  assert.deepEqual(layerFacts('Parks', 'polygon', { count: 3, largest: { name: 'Lincoln Park', acres: 86.2 } }), ['This map has 3 parks.', 'The largest of the parks is Lincoln Park, at about 86.2 acres.'])
+  assert.deepEqual(layerFacts('Hydrants', 'point', { count: 2314, oldest: { name: '', year: 1952 }, newest: { year: 2025 } }), ['This map has 2,314 hydrants.', 'The oldest hydrant on record here dates from 1952.', 'The hydrants on this map span 73 years, from 1952 to 2025.'])
+  const { live, layer } = fixture()
+  layer.visible = true; layer.geometryType = 'polygon'
+  layer.queryFeatures = async q => q.outStatistics ? { features: [{ attributes: { mf_count: 42 } }] } : { features: [{ attributes: { ACRES: 12.5, OWNER: 'Big Lot LLC' } }] }
+  const mf = await buildMapFacts(live)
+  assert.deepEqual(mf, ['This map has 42 parcels.', 'The largest of the parcels is Big Lot LLC, at about 12.5 acres.'])
+})
+

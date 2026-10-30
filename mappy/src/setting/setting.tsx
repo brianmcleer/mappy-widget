@@ -274,7 +274,7 @@ export default function Setting (props: SettingProps): any {
         )}
       </SettingSection>
 
-      <PlaceSection orgName={config.orgName || ''} placeName={config.placeName || ''} placeRegion={config.placeRegion || ''} website={config.website || ''} localFacts={config.localFacts || ''} set={set} />
+      <PlaceSection orgName={config.orgName || ''} placeName={config.placeName || ''} placeRegion={config.placeRegion || ''} website={config.website || ''} localFacts={config.localFacts || ''} factSources={plain<string[]>(config.factSources) || null} censusKey={config.censusKey || ''} mapFacts={config.mapFacts !== false} set={set} />
 
       <PreviewSection />
 

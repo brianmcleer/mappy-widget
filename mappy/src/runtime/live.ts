@@ -765,6 +765,8 @@ export class LiveMap {
       // Count the title's words that were matched, once each ("sanitary sewer" is one sewer).
       const hit = new Set(want.map(w => have.includes(w) ? w : (FORMS[w] || []).find(f => have.includes(f))).filter(Boolean)).size
       if (!hit) continue
+      // "Zoning" is not a flood zone, fire zone or school zone: a title with another domain's word is not the zoning layer.
+      if (want.every(w => /^zon/.test(w)) && !have.includes('zoning') && /\b(?:flood|fema|fire|school|evacuation|snow|hazard|overlay|watershed|utility|sewer|water|parking|speed|time|climate|hardiness)\b/.test(flat(e.title))) continue
       const s = hit / want.length + hit / Math.max(have.length, 1) * 0.5 - (e.isGroup ? 0.3 : 0) + near(e) * 0.05
       if (s > score) { pick = e; score = s }
     }

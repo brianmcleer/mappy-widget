@@ -661,6 +661,9 @@ export class Mind {
         q = q.replace(THIS_PLACE, ` ${spot.lat.toFixed(6)}, ${spot.lon.toFixed(6)}`)
         spotLabel = spot.label
         fromPopup = !!spot.popup
+        // Follow-up chips and later "it" keep the place's name, never its coordinates.
+        this.placeNames.set(placeKey(spot.lat, spot.lon), spot.label)
+        if (!spot.popup) this.lastPlace = { label: spot.label, lat: spot.lat, lon: spot.lon, at: Date.now() }
       } else {
         this.awaitingPlace = { question: q, mine: false }
         return { text: 'Which place do you mean? Give me an address, or choose the middle of the map.', mood: 'think', actions: [{ type: 'ask', q: 'here', label: 'Middle of the map' }] }
@@ -1264,6 +1267,10 @@ export class Mind {
       }
     }
     // A general "what's at" goes to the server's full report when there is one.
+    // A named kind of layer the map does not have ("what zoning is this in" on a utilities map): say so rather than guess.
+    if (!entries.length && thing && !parcelish && only) {
+      return { text: `This map has no **${thing}** layer, so I cannot answer that here. ${this.ctx.place?.website ? `The ${this.org()} website may have it.` : ''}`.trim(), mood: 'think', suggest: ['What layers are on?', 'List layers'] }
+    }
     if (!entries.length || (!thing && !only && !g)) return null
     const spot = g ? { at: (() => { const ll = this.recentPlace(); return ll ? [ll.lat, ll.lon] as [number, number] : this.mapContext()?.center })(), label: spotLabel || 'this feature', location: undefined } : await this.pointFor(pq, spotLabel)
     if (!spot || !spot.at) return null
@@ -1314,7 +1321,9 @@ export class Mind {
     else reply.text = `${spot.label} is in ${entry.title}.`
     reply.text += '\n\nThe details are open on the map.'
     // Offer what was not just asked, about the same place.
-    const next = followUps({ ...pq, place: pq.place || spot.label }, q, this.layerTest())
+    // The place by its name ("1138 White Ave"), never its coordinates, so a chip reads well and works.
+    const placeName = /^-?\d{1,2}\.\d+\s*,/.test(pq.place || '') || !pq.place ? spot.label : pq.place
+    const next = followUps({ ...pq, place: placeName }, q.replace(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/g, placeName), this.layerTest()).map(f => this.nameCoordinates(f))
     reply.suggest = (next.length ? next : parcelish ? ['What zoning is this in?', 'Is it in city limits?', 'Closest hydrant to it'] : ['Who owns it?']).slice(0, 3)
     return reply
   }
