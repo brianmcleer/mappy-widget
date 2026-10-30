@@ -14,6 +14,7 @@
 - "What percent of parcels are over 5 acres", "what share of hydrants were inspected this year": the part, the whole and the percent, with Show them.
 - Statistics per group: "average acres by zoning in parcels", "total length of sewer mains by material", "how many parcels per zoning", answer first (highest and lowest), then the table.
 - MCP server 1.6.0: `describe_layer` (schema with field types, allowed values, count, last edit) and `query_layer` (field filters with a fixed set of operators, dates, lists, rows with sort, counts, sum/avg/min/max per group), so desktop assistants can ask the GIS real data questions without SQL. Mappy keeps choosing the simpler tools for plain place questions.
+- He keeps track of the layer you are working with. After "turn on annexations", bare follow-ups go to that layer instead of a "which layer?" question: "open table", "show the attribute table", "put it in a table", "fields", "what's in it", "label it", "fade it", "only it", "explore", "largest", "when was it updated", "turn off that layer". When nothing has been worked with yet and exactly one layer is on, "open table" and "turn off a layer" use it and say so; otherwise the picker lists the layers that are on first.
 - First visit: the greeting offers the tour ("New here? Say show me around") with Show me around, What is on the map and Help chips.
 - Help lists "Take the tour" and "Look back"; the "new since last time" line mentions the tour, history and suggestions.
 

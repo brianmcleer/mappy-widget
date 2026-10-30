@@ -731,17 +731,23 @@ test('incomplete layer commands collect a target before acting', async () => {
   assert.equal(layer.visible, false)
   await mind.respond('Parcels')
   assert.equal(layer.visible, true)
-  await mind.respond('turn off a layer')
-  await mind.respond('the first one')
+  // Only one layer is on: "turn off a layer" needs no question.
+  const off = await mind.respond('turn off a layer')
+  assert.match(off.text, /only layer on, so I used it/)
   assert.equal(layer.visible, false)
   await mind.respond('select a layer')
   await mind.respond('1')
   assert.equal(layer.visible, true)
-  await mind.respond('show table')
-  assert.equal(queries.length, 0)
-  const table = await mind.respond('Parcels')
+  // "Show table" right after working with Parcels is its table.
+  const table = await mind.respond('show table')
   assert.ok(table.table)
   assert.equal(queries.length, 1)
+  // With nothing worked on and nothing on, he asks.
+  const { mind: m2, queries: q2 } = fixture()
+  await m2.respond('show table')
+  assert.equal(q2.length, 0)
+  const picked = await m2.respond('Parcels')
+  assert.match(picked.text, /isn't drawing/)
 })
 
 test('incomplete layer choices expire on cancel, map changes, and new requests', async () => {
@@ -1232,5 +1238,47 @@ test('predictive text: names after verbs, bookmarks, fields, code lists, address
   sdkLoader = async () => [{ suggestLocations: async () => { throw new Error('down') } }, async () => ({ data: { capabilities: 'Geocode' } })]
   assert.deepEqual(await mind.completeAsync('who owns 250 n 5'), [])
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+
+
+test('the layer we are working with fills in bare follow-ups: open table, fields, label it, only it', async () => {
+  assert.equal(contextualCommand('open table', 'Annexations'), 'show table Annexations')
+  assert.equal(contextualCommand('show the attribute table', 'Annexations'), 'show table Annexations')
+  assert.equal(contextualCommand('put it in a table', 'Annexations'), 'show table Annexations')
+  assert.equal(contextualCommand('fields', 'Annexations'), 'fields in Annexations')
+  assert.equal(contextualCommand("what's in it", 'Annexations'), 'fields in Annexations')
+  assert.equal(contextualCommand('label it', 'Annexations'), 'label Annexations')
+  assert.equal(contextualCommand('fade it', 'Annexations'), 'fade Annexations')
+  assert.equal(contextualCommand('only it', 'Annexations'), 'show only Annexations')
+  assert.equal(contextualCommand('explore', 'Annexations'), 'explore Annexations')
+  assert.equal(contextualCommand('largest', 'Annexations'), 'largest Annexations')
+  assert.equal(contextualCommand('open table', ''), 'open table')
+  assert.equal(contextualCommand('show table parcels', 'Annexations'), 'show table parcels')
+  const { mind, live, layer, entry } = fixture()
+  const other = { id: 'zoning', title: 'Zoning', type: 'feature', visible: false, opacity: 1, fields, objectIdField: 'OBJECTID', createQuery: () => ({ where: '1=1' }), queryFeatureCount: async () => 3, queryFeatures: async () => ({ features: [] }) }
+  live.jmv.view.map.layers.push(other)
+  // No layer yet, two layers off: he asks.
+  const ask = await mind.respond('open table')
+  assert.match(ask.text, /Which layer should I open as a table/)
+  await mind.respond('cancel')
+  // After turning one on, "open table" means that one.
+  await mind.respond('turn on parcels')
+  const t = await mind.respond('open table')
+  assert.match(t.text, /\*\*Parcels\*\*/)
+  assert.ok(t.table || t.page, 'rows came back')
+  const f = await mind.respond('fields')
+  assert.match(f.text, /Owner name|Lot Area/)
+  // Fresh mind, only one layer on: no question, a note instead.
+  const { mind: m2, live: l2 } = fixture()
+  l2.jmv.view.map.layers.push({ ...other, visible: false })
+  l2.jmv.view.map.layers[0].visible = true
+  const t2 = await m2.respond('open table')
+  assert.match(t2.text, /^\*\*Parcels\*\* is the only layer on, so I used it\./)
+  assert.match(t2.text, /\*\*Parcels\*\*: rows/)
+  // Turn off with two on: asks, the ones that are on first.
+  l2.jmv.view.map.layers[1].visible = true
+  const off = await m2.respond('turn off a layer')
+  assert.match(off.text, /The ones that are on come first/)
+  assert.equal(off.list.length, 2)
 })
 

@@ -154,6 +154,9 @@ export class Mind {
   private taskSequence = 0
   /** A layer command that is still missing its layer ("turn on a layer"): waiting for the person to pick one. */
   private layerPick: { sequence: number, view: any, verb: 'on' | 'off' | 'table', all: LayerEntry[], shown: LayerEntry[] } | null = null
+  /** Set when an incomplete command was filled with the only layer that is on; the reply says which one. */
+  private pendingPickNote = ''
+  private pendingRewrite = ''
   private pickSequence = 0
   constructor (ctx: MindContext) { this.ctx = ctx }
 
@@ -219,9 +222,19 @@ export class Mind {
     else if (/^(?:show|open|browse)\s+(?:a\s+|the\s+)?(?:table|attribute table)$/i.test(q)) verb = 'table'
     if (!verb) return null
     if (!this.ctx.live.ready) return { text: V.noMap(), mood: 'confused' }
-    const all = this.ctx.live.entries().filter(e => verb === 'table' ? !e.isGroup : !e.isTable && !e.isGroup)
+    const live = this.ctx.live
+    const all = live.entries().filter(e => verb === 'table' ? !e.isGroup : !e.isTable && !e.isGroup)
     if (!all.length) return { text: 'There are no layers on this map to choose from.', mood: 'confused' }
-    return this.offerPick(verb, all, all)
+    // The layers that are on come first; when only one is on and that is what the table or "turn off" is about, no need to ask.
+    const on = all.filter(e => !e.isTable && live.isVisible(e))
+    if (verb !== 'on' && on.length === 1) {
+      this.lastLayer = on[0].path
+      this.pendingPickNote = on[0].title
+      this.pendingRewrite = verb === 'table' ? `show table ${on[0].key}` : `turn off ${on[0].title}`
+      return null
+    }
+    const ordered = verb === 'on' ? all : [...on, ...all.filter(e => !on.includes(e))]
+    return this.offerPick(verb, all, ordered, verb === 'on' ? undefined : `Which layer should I ${verb === 'off' ? 'turn off' : 'open as a table'}? The ones that are on come first. Choose one, say its name or “the first one”, or say “cancel”.`)
   }
 
   private offerPick (verb: 'on' | 'off' | 'table', all: LayerEntry[], matches: LayerEntry[], lead?: string): Reply {
@@ -1592,8 +1605,11 @@ export class Mind {
     if (follow && this.lastReadIntent) input = `${this.lastReadIntent} ${follow[1]}${this.lastReadScope}`
     if (!['thanks', 'greet'].includes(parseIntent(input).name)) { this.addressChoices = null; this.lastAddress = '' }
     if (input.length > 2000) return { text: 'Please keep each request under 2,000 characters.', mood: 'confused' }
-    const incomplete = this.incompleteLayerCommand(input)
+    // "Open table" right after "turn on annexations" means that layer's table: the layer we are working with fills in first.
+    const incomplete = this.incompleteLayerCommand(contextualCommand(input, this.lastLayer))
     if (incomplete) { this.lastReply = incomplete; return incomplete }
+    let note = ''
+    if (this.pendingPickNote) { note = this.pendingPickNote; this.pendingPickNote = ''; input = this.pendingRewrite || contextualCommand(input, this.lastLayer); this.pendingRewrite = '' }
     const commands = splitCommands(normalizeCommand(input))
     if (commands.length > 5) return { text: 'I can run up to five steps at once. Split this into smaller requests.', mood: 'confused' }
     if (commands.length > 1 && commands.some(q => addressPrompt(q))) return { text: 'Search for the address on its own first so we can resolve any possible matches. Then ask for the next map action.', mood: 'think' }
@@ -1609,6 +1625,7 @@ export class Mind {
       if (r.mood === 'confused' || r.mood === 'think') break
     }
     const last = replies[replies.length - 1] || this.help()
+    if (note && last.text && !/^__/.test(input)) last.text = `**${note}** is the only layer on, so I used it.\n\n${last.text}`
     const changed = commands.length && parseIntent(commands[0]).name !== 'undo' && this.ctx.live.remember(before, commands.join('; '))
     const reply = replies.length > 1 || commands.length > 1
       ? { ...last, text: replies.map((r, i) => `${i + 1}. ${r.text}`).join('\n\n') + (replies.length < commands.length ? '\n\nStopped here; the remaining steps were not run.' : '') }
