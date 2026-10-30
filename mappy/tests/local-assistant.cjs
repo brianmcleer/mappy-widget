@@ -1282,3 +1282,46 @@ test('the layer we are working with fills in bare follow-ups: open table, fields
   assert.equal(off.list.length, 2)
 })
 
+
+const GIS_TOOLS = [{"name": "geocode", "title": "Find an address", "description": "Geocode: find the location of a street address, intersection or place name with the city address locator.", "inputSchema": {"type": "object", "properties": {"address": {"type": "string", "description": "Address or place, for example 250 N 5th St."}, "max_results": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5}}, "required": ["address"]}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "title": "Find an address"}}, {"name": "nearest_feature", "title": "Closest feature", "description": "Nearest / closest feature: the closest sewer line, water main, hydrant, park, school, bus stop or any layer to an address or point, with the distance in feet.", "inputSchema": {"type": "object", "properties": {"layer": {"type": "string", "description": "What to look for, as a layer name or plain words such as sewer line, fire hydrant, park or zoning."}, "address": {"type": "string", "description": "Street address or place (instead of latitude and longitude)."}, "latitude": {"type": "number"}, "longitude": {"type": "number"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3}}, "required": ["layer"]}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "title": "Closest feature"}}, {"name": "features_near", "title": "Features within a distance", "description": "Features within a distance (buffer) of an address or point: what hydrants are within 500 feet, how many parcels within a quarter mile.", "inputSchema": {"type": "object", "properties": {"layer": {"type": "string", "description": "What to look for, as a layer name or plain words such as sewer line, fire hydrant, park or zoning."}, "address": {"type": "string", "description": "Street address or place (instead of latitude and longitude)."}, "latitude": {"type": "number"}, "longitude": {"type": "number"}, "distance_feet": {"type": "number", "minimum": 1, "maximum": 26400, "default": 500}, "max_results": {"type": "integer", "minimum": 1, "maximum": 25, "default": 25}}, "required": ["layer"]}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "title": "Features within a distance"}}, {"name": "identify", "title": "What's here", "description": "Identify / property report: what is at an address or point, such as the parcel and owner, zoning district, flood zone and every other layer at that spot.", "inputSchema": {"type": "object", "properties": {"address": {"type": "string", "description": "Street address or place (instead of latitude and longitude)."}, "latitude": {"type": "number"}, "longitude": {"type": "number"}, "layer": {"type": "string", "description": "Only this layer (optional), such as zoning or flood zone."}}, "required": []}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "title": "What's here"}}, {"name": "summarize_layer", "title": "Summarize a layer", "description": "Summary statistics: count features grouped by a field (sewer mains by material, parcels by zoning) and the total, optionally only those matching some text.", "inputSchema": {"type": "object", "properties": {"layer": {"type": "string", "description": "What to look for, as a layer name or plain words such as sewer line, fire hydrant, park or zoning."}, "group_by": {"type": "string", "description": "Field to group by, by name or alias (optional)."}, "text": {"type": "string", "description": "Only features matching these words (optional)."}}, "required": ["layer"]}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "title": "Summarize a layer"}}]
+test('any coordinate system: places on a state plane map are remembered and reused', async () => {
+  const { toLatLon, setProjectionOperator, needsProjection } = require('../src/runtime/project.ts')
+  assert.deepEqual(toLatLon({ x: -108.5, y: 39.1, spatialReference: { wkid: 4326 } }), [39.1, -108.5])
+  assert.deepEqual(toLatLon({ latitude: 39.1, longitude: -108.5 }), [39.1, -108.5])
+  const merc = toLatLon({ x: -12078000, y: 4737000, spatialReference: { wkid: 102100 } })
+  assert.ok(Math.abs(merc[0] - 39.1) < 0.2 && Math.abs(merc[1] + 108.5) < 0.2)
+  assert.equal(needsProjection({ wkid: 2232 }), true)
+  assert.equal(needsProjection({ wkid: 3857 }), false)
+  // State plane before the engine is loaded: unknown, so callers ask.
+  setProjectionOperator(null)
+  assert.equal(toLatLon({ x: 3150000, y: 1420000, spatialReference: { wkid: 2232 } }), null)
+  // With the engine: projected.
+  setProjectionOperator({ execute: (g, sr) => ({ latitude: 39.07, longitude: -108.56 }) })
+  assert.deepEqual(toLatLon({ x: 3150000, y: 1420000, spatialReference: { wkid: 2232 } }), [39.07, -108.56])
+
+  // The locator's own X/Y attributes give the place in longitude and latitude on any map.
+  const { geocodeAddress } = require('../src/runtime/geocoder.ts')
+  sdkLoader = async () => [{ addressToLocations: async (url, params) => { assert.ok(params.outFields.includes('X')); return [{ address: '1138 White Ave, Springfield', score: 100, location: { x: 3150000, y: 1420000, spatialReference: { wkid: 2232 } }, attributes: { X: -108.56, Y: 39.07 } }] } }, {}]
+  const found = await geocodeAddress('1138 white', [{ url: 'https://city.test/GeocodeServer', name: 'City', singleLineFieldName: 'SingleLine' }], { spatialReference: { wkid: 2232 } })
+  assert.deepEqual(found.results[0].latLon, [39.07, -108.56])
+
+  // After "zoom to <address>" on a state plane map, "what zoning is this in" knows the place.
+  const { live } = fixture()
+  live.jmv.view.spatialReference = { wkid: 2232 }
+  live.jmv.view.extent = { xmin: 3140000, ymin: 1410000, xmax: 3160000, ymax: 1430000, spatialReference: { wkid: 2232 } }
+  live.jmv.view.center = { x: 3150000, y: 1420000, spatialReference: { wkid: 2232 } }
+  live.jmv.view.graphics = { add () {}, remove () {}, toArray: () => [] }
+  const calls = []
+  const port = { label: 'City GIS', fallback: true, tools: async () => GIS_TOOLS, call: async (n, a) => { calls.push([n, a]); return { content: [{ type: 'text', text: 'At that spot, Zoning: R-4' }], structuredContent: { results: [{ layer: 'Zoning', summary: 'Zone: R-4', count: 1 }] } } } }
+  sdkLoader = async (mods) => mods[0] === 'esri/Graphic' ? [function G (o) { Object.assign(this, o) }] : [{ addressToLocations: async () => [{ address: '1138 White Ave, Springfield', score: 100, location: { x: 3150000, y: 1420000, spatialReference: { wkid: 2232 } }, attributes: { X: -108.56, Y: 39.07 } }] }, {}]
+  const mind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', geocoders: [{ url: 'https://city.test/GeocodeServer', name: 'City', singleLineFieldName: 'SingleLine' }], mcp: port })
+  const shown = await mind.respond('zoom to 1138 White Ave')
+  assert.match(shown.text, /Showing \*\*1138 White Ave/)
+  const zone = await mind.respond('what zoning is this in')
+  assert.doesNotMatch(zone.text, /Which place do you mean/)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], 'identify')
+  assert.ok(Math.abs(calls[0][1].latitude - 39.07) < 0.001 && Math.abs(calls[0][1].longitude + 108.56) < 0.001, JSON.stringify(calls[0][1]))
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+

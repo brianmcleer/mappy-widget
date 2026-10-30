@@ -2,7 +2,7 @@ import { loadArcGISJSAPIModules } from 'jimu-core'
 import type { GeocoderSource } from '../brain/addresses'
 import { withTimeout } from './live'
 
-export interface AddressResult { label: string, score: number, location: any, source: string }
+export interface AddressResult { label: string, score: number, location: any, source: string, latLon?: [number, number] }
 export async function geocodeAddress (text: string, sources: GeocoderSource[], view: any, load = loadArcGISJSAPIModules): Promise<{ results: AddressResult[], failed: number }> {
   const [locator, request] = await load(['esri/rest/locator', 'esri/request'])
   const results: AddressResult[] = []
@@ -16,7 +16,7 @@ export async function geocodeAddress (text: string, sources: GeocoderSource[], v
       }
       if (!field) throw new Error('This locator has no single-line address field.')
       if (source.withinViewEnabled && !view?.extent) throw new Error('The locator requires a map extent.')
-      const params: any = { address: { [field]: [source.prefix, text, source.suffix].filter(Boolean).join(' ') }, maxLocations: 5, outFields: ['Match_addr', 'Addr_type'], outSpatialReference: view?.spatialReference }
+      const params: any = { address: { [field]: [source.prefix, text, source.suffix].filter(Boolean).join(' ') }, maxLocations: 5, outFields: ['Match_addr', 'Addr_type', 'X', 'Y', 'DisplayX', 'DisplayY'], outSpatialReference: view?.spatialReference }
       if (source.countryCode) params.countryCode = source.countryCode
       if (source.categories?.length) params.categories = source.categories
       if (source.withinViewEnabled) params.searchExtent = view.extent
@@ -25,7 +25,11 @@ export async function geocodeAddress (text: string, sources: GeocoderSource[], v
         if (!c.location || !Number.isFinite(c.location.x) || !Number.isFinite(c.location.y)) continue
         const label = String(c.address || c.attributes?.Match_addr || text)
         if (results.some(r => r.label === label && r.location.x === c.location.x && r.location.y === c.location.y)) continue
-        results.push({ label, score: Number.isFinite(c.score) ? c.score : 0, location: c.location, source: source.name })
+        // Locators also give the match in longitude and latitude (X, Y), which spares a projection on state plane maps.
+        const a = c.attributes || {}
+        const lon = Number(a.X ?? a.DisplayX); const lat = Number(a.Y ?? a.DisplayY)
+        const latLon: [number, number] | undefined = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : undefined
+        results.push({ label, score: Number.isFinite(c.score) ? c.score : 0, location: c.location, source: source.name, latLon })
       }
       // Prefer the author's first locator that returns candidates; no address fan-out.
       if (results.length) break

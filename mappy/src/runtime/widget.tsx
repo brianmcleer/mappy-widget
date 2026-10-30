@@ -25,6 +25,7 @@ import { DEFAULT_FEED_URL, feedDocs, describeFeed } from '../brain/feed'
 import type { KnowledgeFeed } from '../brain/feed'
 import { cachedFeed, loadFeed } from './feed'
 import { addTerms } from '../brain/glossary'
+import { warmProjection, needsProjection } from './project'
 import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
@@ -243,6 +244,8 @@ export default function Widget (props: Props): any {
     live.onLayersChanged = () => setLiveVersion(v => v + 1)
     live.onBusy = () => nudgeRef.current?.()
     live.onPopup = (title) => popupRef.current?.(title)
+    // Local coordinate systems (state plane): load the projection engine now, so places read right away.
+    try { if (needsProjection(jmv?.view?.spatialReference)) warmProjection().catch(() => {}) } catch (e) { }
     setLiveVersion(v => v + 1)
     if (jmv?.view) {
       Promise.resolve(jmv.view.when?.()).then(() => live.warmFields()).then(() => setLiveVersion(v => v + 1)).catch(() => {})

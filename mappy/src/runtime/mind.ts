@@ -39,6 +39,7 @@ import type { LayerInfo } from '../brain/layers'
 import { completeText, addressFragment, withAddress, addressQuestions } from '../brain/complete'
 import type { CompleteSource } from '../brain/complete'
 import { suggestAddresses } from './geocoder'
+import { toLatLon as projectToLatLon, warmProjection, needsProjection } from './project'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
 import { fieldLabel, keyLabel } from '../brain/fields'
@@ -314,6 +315,7 @@ export class Mind {
 
   /** Builds the typo reader ahead of the first question (about a tenth of a second), while the page is idle. */
   warm (): void {
+    try { if (needsProjection(this.ctx.live.view?.spatialReference)) warmProjection().catch(() => {}) } catch (e) { }
     if (this.ctx.typoFix === false) return
     try { readRequest('hello', lexiconFor(this.appNames(), this.ctx.index)) } catch (e) { }
   }
@@ -1401,34 +1403,14 @@ export class Mind {
   }
 
   /** [latitude, longitude] of a map point in WGS84, Web Mercator or anything with latitude set. */
-  private toLatLon (p: any): [number, number] | null {
-    if (!p) return null
-    if (Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) return [p.latitude, p.longitude]
-    const sr = p.spatialReference
-    const x = Number(p.x); const y = Number(p.y)
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-    if (!sr || sr.isWGS84 || sr.wkid === 4326) return Math.abs(y) <= 90 && Math.abs(x) <= 180 ? [y, x] : null
-    if (sr.isWebMercator || [102100, 3857, 102113].includes(sr.wkid)) {
-      return [(Math.PI / 2 - 2 * Math.atan(Math.exp(-y / 6378137))) * 180 / Math.PI, x / 6378137 * 180 / Math.PI]
-    }
-    return null
-  }
+  private toLatLon (p: any): [number, number] | null { return projectToLatLon(p) }
+
 
   /** The map right now, in longitude and latitude, for tool inputs the request leaves out. */
   private mapContext (): MapContext | undefined {
     const view: any = this.ctx.live.view
     if (!view) return undefined
-    const toLL = (x: number, y: number): [number, number] | null => {
-      const sr = view.spatialReference
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-      if (sr?.isWGS84 || sr?.wkid === 4326) return [y, x]
-      if (sr?.isWebMercator || [102100, 3857, 102113].includes(sr?.wkid)) {
-        const lon = x / 6378137 * 180 / Math.PI
-        const lat = (Math.PI / 2 - 2 * Math.atan(Math.exp(-y / 6378137))) * 180 / Math.PI
-        return [lat, lon]
-      }
-      return null
-    }
+    const toLL = (x: number, y: number): [number, number] | null => projectToLatLon({ x, y, spatialReference: view.spatialReference })
     const c = view.center
     const center = c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? [c.latitude, c.longitude] as [number, number] : (c ? toLL(c.x, c.y) : null)
     const e = view.extent
@@ -1901,7 +1883,7 @@ export class Mind {
     const shown = await this.ctx.live.showAddress(result.location)
     if (shown) {
       choice.selected = index
-      const ll = this.toLatLon(result.location)
+      const ll = result.latLon || this.toLatLon(result.location)
       if (ll) this.lastPlace = { label: niceAddress(String(result.label || '').split(',')[0]), lat: ll[0], lon: ll[1], at: Date.now() }
     }
     const parcel = shown ? await this.parcelUnder(result.location, String(result.label || '').split(',')[0]) : ''
