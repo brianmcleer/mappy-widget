@@ -136,7 +136,11 @@ export const numericField = (f: QueryField): boolean => /^(?:small-integer|integ
 
 export function parseAnalysis (text: string): AnalysisRequest | null {
   const inView = /\s+(?:in view|on screen|here)[?.!]*$/i.test(text)
-  const q = text.replace(/\s+(?:in view|on screen|here)[?.!]*$/i, '').replace(/[?!]+$/, '').trim()
+  // "An acre" is 1 acre; "on the map" at the end says nothing; "which parcel is biggest" is the largest parcel.
+  const q = text.replace(/\s+(?:in view|on screen|here)[?.!]*$/i, '').replace(/[?!]+$/, '').replace(/\s+on the map$/i, '')
+    .replace(/\b(?:an?|one)\s+(acre|mile|foot|meter|metre|hectare|year|day|week|month)\b/gi, '1 $1')
+    .replace(/^(?:which|what)\s+(.+?)\s+is\s+(?:the\s+)?(biggest|largest|smallest|longest|shortest|oldest|newest)$/i, (m, a, b) => `${b} ${a}`)
+    .trim()
   const filtered = filterParts(q)
   if (filtered) {
     const base = parseAnalysis(filtered[0])
@@ -188,10 +192,10 @@ export function parseAnalysis (text: string): AnalysisRequest | null {
   const most = q.match(/^(?:which|what)\s+(.+?)\s+(?:has|have)\s+the\s+(most|fewest|least)\s+(.+)$/i) || q.match(/^(?:which|what)\s+(.+?)\s+is\s+(?:the\s+)?(most|least)\s+common\s+(?:in|among|for)\s+(.+)$/i)
   if (most) return { kind: 'group', layer: unquote(most[3]), field: unquote(most[1]), inView, limit: 5, order: /fewest|least/i.test(most[2]) ? 'asc' : 'desc' }
   // "Largest parcel", "the 3 smallest parks", "biggest lot in view": ranked by the layer's size field.
-  const sized = q.match(/^(?:(?:what(?:'s| is| are)|which(?: is| are)?|show(?: me)?|find)\s+)?(?:the\s+)?(?:(\d+)\s+)?(largest|biggest|smallest|longest|shortest|tiniest)\s+(?:(\d+)\s+)?(.+)$/i)
-  if (sized && !/\bby\b/i.test(sized[4])) return { kind: 'browse', layer: unquote(sized[4]), field: '*size*', limit: Number(sized[1] || sized[3] || 1), order: /smallest|shortest|tiniest/i.test(sized[2]) ? 'asc' : 'desc', inView }
+  const sized = q.match(/^(?:(?:what(?:'s| is| are)|which(?: is| are)?|show(?: me)?|find)\s+)?(?:the\s+)?(?:(\d+)\s+)?(largest|biggest|smallest|longest|shortest|tiniest|oldest|newest|most recent)\s+(?:(\d+)\s+)?(.+)$/i)
+  if (sized && !/\bby\b/i.test(sized[4])) return { kind: 'browse', layer: unquote(sized[4]), field: /oldest|newest|recent/i.test(sized[2]) ? '*year*' : '*size*', limit: Number(sized[1] || sized[3] || 1), order: /smallest|shortest|tiniest|oldest/i.test(sized[2]) ? 'asc' : 'desc', inView }
   // "Parcels bigger than 5 acres", "hydrants older than 1990", "parcels over 2 acres".
-  const compare = q.match(/^(?:show(?: me)?\s+|find\s+|list\s+|count\s+|how many\s+)?(?:the\s+)?(.+?)\s+(bigger|larger|greater|more|over|above|smaller|less|under|below|fewer|newer|older|longer|shorter|higher|lower)\s+(?:than\s+)?([\d,.]+)\s*([a-z][a-z _]*)?$/i)
+  const compare = q.match(/^(?:show(?: me)?\s+|find\s+|list\s+|count\s+|how many\s+|highlight\s+|select\s+|which\s+|what\s+|only show\s+|show only\s+|just show\s+|display only\s+)?(?:the\s+|all\s+)?(.+?)\s+(?:(?:that|which)\s+(?:are|is)\s+)?(bigger|larger|greater|more|over|above|smaller|less|under|below|fewer|newer|older|longer|shorter|higher|lower)\s+(?:than\s+)?([\d,.]+)\s*([a-z][a-z _]*)?$/i)
   if (compare) {
     const op = /bigger|larger|greater|more|over|above|newer|longer|higher/i.test(compare[2]) ? '>' : '<'
     const unit = (compare[4] || '').trim()

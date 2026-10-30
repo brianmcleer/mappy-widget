@@ -37,7 +37,7 @@ function bits (n: number): number { n = n - ((n >>> 1) & 0x55555555); n = (n & 0
 const farApart = (a: number, b: number, cap: number): boolean => bits(a ^ b) * 0.325 > cap + 0.25
 
 const COMMAND_WORDS = (
-  'turn switch toggle shut on off show hide display enable disable add remove list open close launch start run whose whom ' +
+  'turn switch toggle shut on off show hide display enable disable add remove list open close launch start run whose whom bit little touch tad slightly twice notch pin pins marker markers darker lighter fainter stronger bolder dim brighter ' +
   'find search locate lookup look where what which who why how many much count number zoom pan fly go take ' +
   'navigate jump in out full home extent layer layers group groups table tables tool tools widget widgets page pages ' +
   'view views window windows tab tabs link links bookmark bookmarks preset presets favorite favorites starred only ' +

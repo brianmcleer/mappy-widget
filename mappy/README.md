@@ -147,6 +147,11 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | What's on the map? | Layers drawing, basemap, scale, center, open popup, changes so far |
 | Copy that / Export chat | Copies the last answer; saves the conversation as a text file |
 | Is there a sewer layer? / Turn on parcels and hydrants / Make parcels lighter | Yes or no with a button, several at once, 25% lighter or darker |
+| Only show parcels over 5 acres on the map / Clear the filter | Filters the layer itself, undoable |
+| Closest hydrant to 1138 White Ave / Hydrants within 500 ft of here | From the app's own layers when no server has a tool for it |
+| Save this view as home base / Go to home base | Saved views, kept in this browser |
+| Chart parcels by zoning / Chart that | Bars in the chat |
+| Zoom in twice / Pan left / North up / Drop a pin here | Map control in plain words |
 | Fewer tips / Stop bugging me | Tips off for good; "tip" asks for one |
 | Tell me a joke | Regrets nothing |
 

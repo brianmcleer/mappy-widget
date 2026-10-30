@@ -365,7 +365,23 @@ export default function ChatBubble (props: Props): any {
           <div key={m.id} className={'mappy-msg ' + (m.from === 'user' ? 'mappy-user' : 'mappy-bot')}>
             <p><span className='mappy-sr'>{m.from === 'user' ? __t('you') : props.name}: </span>{renderText(m)}</p>
             {m.from === 'mappy' && !typingNow(m) && m.text && <button type='button' className='mappy-copy' onClick={(e: any) => copy(m, e.currentTarget)} aria-label='Copy this answer' title='Copy'>{copied === m.id ? '✓' : '⧉'}</button>}
-            {!typingNow(m) && m.reply?.table && <div className='mappy-table-wrap' tabIndex={0} role='region' aria-label='Analysis results'>
+            {!typingNow(m) && m.reply?.chart && m.reply.chart.rows.length > 0 && (() => {
+              const c = m.reply!.chart!
+              const max = Math.max(...c.rows.map(r => Math.abs(r.value)), 1)
+              return (
+                <div className='mappy-chart' role='img' aria-label={`${c.title || 'Chart'}: ${c.rows.map(r => `${r.label} ${r.value.toLocaleString()}`).join(', ')}`}>
+                  {c.title && <div className='mappy-chart-title'>{c.title}</div>}
+                  {c.rows.map((r, i) => (
+                    <div className='mappy-bar-row' key={i}>
+                      <span className='mappy-bar-label' title={r.label}>{r.label}</span>
+                      <span className='mappy-bar-track'><span className='mappy-bar' style={{ width: `${Math.max(1, Math.abs(r.value) / max * 100)}%` }} /></span>
+                      <span className='mappy-bar-value'>{r.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}{c.unit || ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+            {!typingNow(m) && m.reply?.table && !m.reply?.chart && <div className='mappy-table-wrap' tabIndex={0} role='region' aria-label='Analysis results'>
               <table className='mappy-table'><caption className='mappy-sr'>Analysis results</caption><thead><tr>{m.reply.table.columns.map((c, i) => <th scope='col' key={i}>{c}</th>)}{m.reply.table.rowActions?.some(Boolean) && <th scope='col'>Map</th>}</tr></thead>
                 <tbody>{m.reply.table.rows.map((row, i) => <tr key={i}>{row.map((v, j) => <td key={j}>{v}</td>)}{m.reply.table.rowActions?.some(Boolean) && <td>{m.reply.table.rowActions[i] ? <button type='button' className='mappy-chip' disabled={busy} aria-label={m.reply.table.rowActions[i].label} onClick={() => props.onAction(m.reply.table.rowActions[i])}>Show</button> : '—'}</td>}</tr>)}</tbody>
               </table>

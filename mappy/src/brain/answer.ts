@@ -21,6 +21,8 @@ export interface Reply {
   mood?: 'happy' | 'think' | 'confused' | 'wave' | 'search' | 'celebrate' | 'sleep' | 'talk' | 'point' | 'pleased' | 'acknowledge' | 'attention' | 'love' | 'excited' | 'dance' | 'roll' | 'dizzy' | 'party'
     // the Clippy pack (runtime/components/Acts.tsx)
     | 'processing' | 'writing' | 'checking' | 'alert' | 'explain' | 'knock' | 'print' | 'trash' | 'mail' | 'save' | 'artsy' | 'techy' | 'wizardy' | 'airplane' | 'bike' | 'congratulate' | 'goodbye'
+  /** A small bar chart of the table (labels and numbers), drawn by the chat. */
+  chart?: { title?: string, rows: Array<{ label: string, value: number }>, unit?: string }
   /** Feature search results, filled by the runtime. */
   results?: any[]
   list?: ListRow[]

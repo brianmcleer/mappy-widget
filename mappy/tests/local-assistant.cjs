@@ -1404,3 +1404,116 @@ test('map moves: calm motion jumps, scale policy keeps distance', async () => {
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
 })
 
+
+test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps; density; compare', async () => {
+  const { live, layer, mind } = fixture()
+  layer.visible = true; layer.definitionExpression = null
+  layer.queryFeatureCount = async q => (q.where && /ACRES > 5/.test(q.where)) ? 7 : 42
+  for (const [q, name] of [['only show parcels over 5 acres on the map', 'mapFilter'], ['filter the parcels layer to acres > 5', 'mapFilter'], ['hide parcels under an acre', 'mapFilter'], ['clear the filter', 'mapUnfilter'], ['remove the filter on parcels', 'mapUnfilter'], ['what is filtered', 'mapFilters'], ['save this view as home base', 'saveView'], ['bookmark this spot as lunch', 'saveView'], ['my saved views', 'listViews'], ['delete the home base view', 'deleteView'], ['chart parcels by zoning', 'chart'], ['chart that', 'chartLast'], ['pan left', 'pan'], ['north up', 'rotate'], ['rotate the map 45 degrees', 'rotate'], ['zoom in twice', 'zoom'], ['zoom out a bit', 'zoom'], ['drop a pin here', 'pin'], ['undo the last two things', 'undoMany'], ['what did you just do', 'lastAction'], ['why did you do that', 'explainLast'], ['shorter', 'shorter'], ['how many hydrants per square mile', 'density'], ['compare parcels and zoning', 'compareLayers'], ["what's the difference between zoning and land use", 'difference'], ['whats the average lot size', 'avgSize'], ['how many parcels are there in total', 'count'], ['got it thanks', 'thanks']]) assert.equal(parseIntent(q).name, name, q)
+  assert.equal(parseIntent('zoom in twice').target, '2')
+  assert.equal(parseAnalysis('which parcel is biggest').kind, 'browse')
+  assert.deepEqual(parseAnalysis('highlight parcels over 5 acres'), { kind: 'filter', layer: 'parcels', condition: 'acres > 5', inView: false })
+
+  const f = await mind.respond('only show parcels over 5 acres on the map')
+  assert.match(f.text, /\*\*Parcels\*\* now shows only \*\*acres > 5\*\* \(7 features\)/)
+  assert.equal(layer.definitionExpression, 'ACRES > 5')
+  const list = await mind.respond('what is filtered')
+  assert.match(list.list[0].label, /Parcels: acres > 5/)
+  assert.match((await mind.respond('undo')).text, /Undid only show parcels over 5 acres/)
+  assert.equal(layer.definitionExpression, null)
+  assert.match((await mind.respond('redo')).text, /now shows only/)
+  assert.equal(layer.definitionExpression, 'ACRES > 5')
+  await mind.respond('hide parcels under 1 acre')
+  assert.equal(layer.definitionExpression, 'NOT (ACRES < 1)')
+  assert.match((await mind.respond('clear the filter')).text, /\*\*Parcels\*\* shows everything again/)
+  assert.equal(layer.definitionExpression, null)
+  // The author's own filter stays underneath.
+  layer.definitionExpression = 'ACTIVE = 1'
+  await mind.respond('only show parcels where owner contains smith')
+  assert.equal(layer.definitionExpression, "(ACTIVE = 1) AND (UPPER(OWNER) LIKE '%SMITH%')")
+  await mind.respond('remove the filter on parcels')
+  assert.equal(layer.definitionExpression, 'ACTIVE = 1')
+
+  // Charts from grouped counts.
+  layer.queryFeatures = async q => ({ features: [{ attributes: { ZONING: 'R-4', mappy_count: 30 } }, { attributes: { ZONING: 'C-1', mappy_count: 12 } }] })
+  layer.fields = [...fields, { name: 'ZONING', alias: 'Zoning', type: 'string' }]
+  const c = await mind.respond('chart parcels by zoning')
+  assert.deepEqual(c.chart.rows, [{ label: 'R-4', value: 30 }, { label: 'C-1', value: 12 }])
+  const c2 = await mind.respond('count parcels by zoning')
+  assert.ok(!c2.chart)
+  assert.deepEqual((await mind.respond('chart that')).chart.rows.length, 2)
+
+  // Saved views live in the store.
+  const kept = {}
+  mind.ctx.store = { get: k => kept[k] || null, set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } }
+  live.jmv.view.viewpoint = { toJSON: () => ({ scale: 5000, targetGeometry: { x: 1, y: 2 } }) }
+  assert.match((await mind.respond('save this view as home base')).text, /Saved this view as \*\*home base\*\*/)
+  assert.equal(Object.keys(kept).length, 1)
+  const gone = []
+  live.jmv.view.goTo = async t => { gone.push(t) }
+  sdkLoader = async () => [{ fromJSON: j => ({ ...j, fromJSON: true }) }]
+  assert.match((await mind.respond('go to home base')).text, /Back to \*\*home base\*\*/)
+  assert.equal(gone[gone.length - 1].fromJSON, true)
+  assert.match((await mind.respond('my saved views')).list[0].label, /home base/)
+  assert.match((await mind.respond('delete the home base view')).text, /Forgot the \*\*home base\*\* view/)
+  assert.equal(Object.keys(kept).length, 0)
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+
+  // Zoom steps, pans, turns.
+  live.jmv.view.scale = 8000
+  live.jmv.view.goTo = async (t) => { gone.push(t); if (t.scale) live.jmv.view.scale = t.scale }
+  await mind.respond('zoom in twice'); assert.equal(live.jmv.view.scale, 2000)
+  await mind.respond('zoom out a bit'); assert.ok(Math.abs(live.jmv.view.scale - 2000 * Math.SQRT2) < 1)
+  live.jmv.view.extent = { xmin: -108.6, ymin: 39.0, xmax: -108.5, ymax: 39.1, spatialReference: { wkid: 4326 } }
+  live.jmv.view.center = { x: -108.55, y: 39.05, spatialReference: { wkid: 4326 }, clone () { return { ...this } } }
+  const pan = await mind.respond('pan left'); assert.match(pan.text, /Moved the map west/)
+  assert.ok(Math.abs(gone[gone.length - 1].center.x - (-108.55 - 0.1 / 3)) < 1e-9)
+  live.jmv.view.rotation = 0
+  assert.match((await mind.respond('rotate the map 45 degrees')).text, /Turned the map 45°/)
+  assert.equal(gone[gone.length - 1].rotation, 45)
+  assert.match((await mind.respond('north up')).text, /North is up/)
+
+  // Density from the view.
+  layer.queryFeatureCount = async () => 50
+  const d = await mind.respond('how many parcels per square mile')
+  assert.match(d.text, /parcels per square mile/)
+  // Compare two layers.
+  const zoning = { id: 'zoning', title: 'Zoning Districts', type: 'feature', visible: true, opacity: 1, fields, objectIdField: 'OBJECTID', geometryType: 'polygon', createQuery: () => ({ where: '1=1' }), queryFeatureCount: async () => 9, queryFeatures: async () => ({ features: [] }) }
+  live.jmv.view.map.layers.push(zoning)
+  const cmp = await mind.respond('compare parcels and zoning districts')
+  assert.deepEqual(cmp.table.columns, ['Layer', 'Shape', 'Features', 'Fields', 'Now'])
+  assert.equal(cmp.table.rows[1][2], '9')
+  assert.match((await mind.respond("what's the difference between an easement and a right of way")).text, /\*\*easement\*\*/)
+})
+
+test('closest and within from the app\'s own layers when no server has a tool for it', async () => {
+  const { live, layer, mind } = fixture()
+  layer.visible = true
+  const asked = []
+  layer.queryFeatures = async q => {
+    asked.push(q)
+    if (q.distance) return { features: [{ attributes: { OBJECTID: 1, OWNER: 'Near' }, geometry: { x: -108.5000, y: 39.0700 } }, { attributes: { OBJECTID: 2, OWNER: 'Far' }, geometry: { x: -108.5100, y: 39.0700 } }] }
+    return { features: [] }
+  }
+  live.jmv.view.graphics = { add () {}, remove () {}, toArray: () => [] }
+  sdkLoader = async (mods) => mods[0] === 'esri/Graphic' ? [function G (o) { Object.assign(this, o) }, function P (o) { Object.assign(this, o) }, function L (o) { Object.assign(this, o) }, function Y (o) { Object.assign(this, o) }] : [{ addressToLocations: async () => [{ address: '1138 White Ave', score: 100, location: { x: -108.5, y: 39.07, spatialReference: { wkid: 4326 } }, attributes: { X: -108.5, Y: 39.07 } }] }, {}]
+  mind.ctx.geocoders = [{ url: 'https://city.test/GeocodeServer', name: 'City', singleLineFieldName: 'SingleLine' }]
+  const r = await mind.respond('closest parcel to 1138 White Ave')
+  assert.match(r.text, /The closest \*\*Parcel\*\* to 1138 White Ave is \*\*Near\*\*, right there; then Far \(2,8\d\d ft\)/)
+  assert.equal(r.results.length, 2)
+  assert.equal(asked[0].units, 'feet')
+  const w = await mind.respond('parcels within 500 ft of 1138 White Ave')
+  assert.match(w.text, /\*\*2 Parcels\*\* within 500 ft of 1138 White Ave/)
+  // No place yet: asks where.
+  const ask = await mind.respond('closest parcel')
+  assert.match(ask.text, /Closest to where/)
+  live.jmv.view.center = { latitude: 39.07, longitude: -108.5 }
+  const here = await mind.respond('here')
+  assert.match(here.text, /closest \*\*Parcel\*\* to the middle of the map/)
+  // A server that fails on the question falls back to the layers too.
+  mind.ctx.mcp = { label: 'ArcGIS Location Services', fallback: true, tools: async () => [{ name: 'places', description: 'Find places near a point', inputSchema: { type: 'object', properties: { latitude: { type: 'number' }, longitude: { type: 'number' }, category: { type: 'string' } } } }], call: async () => { throw new Error('Internal error') } }
+  const fb = await mind.respond('closest parcel to 1138 White Ave')
+  assert.match(fb.text, /The closest \*\*Parcel\*\*/)
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+

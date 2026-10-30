@@ -20,3 +20,6 @@ Thumbs.db
 language/.cache/
 issues.json
 language/report.md
+__pycache__/
+*.pyc
+language/.cache/

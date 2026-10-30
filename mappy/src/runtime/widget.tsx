@@ -215,6 +215,7 @@ export default function Widget (props: Props): any {
       facts: String(cfg.localFacts || '').split(/\r?\n/).map(f => f.trim()).filter(Boolean).concat(feed?.facts || [])
     },
     feedInfo: feed ? describeFeed(feed) : undefined,
+    store: { get: (k: string) => store(k + ':' + appId), set: (k: string, v: string | null) => { store(k + ':' + appId, v) } },
     widgetId: props.id,
     myLocation: () => new Promise<[number, number] | null>(resolve => {
       try {

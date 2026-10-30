@@ -21,7 +21,7 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
-import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField } from '../brain/analysis'
+import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField, compileConditions } from '../brain/analysis'
 import { reviseTask, taskSummary } from '../brain/task'
 import type { TaskOperation, TaskSummary } from '../brain/task'
 import type { AnalysisRequest } from '../brain/analysis'
@@ -75,6 +75,8 @@ export interface MindContext {
   widgetId?: string
   /** What the knowledge feed gave him ("feed 2026.10.29: language pack ..., 18 answers"), for diagnostics. */
   feedInfo?: string
+  /** Small things kept for the person in this browser (saved views). Absent in tests. */
+  store?: { get: (key: string) => string | null, set: (key: string, value: string | null) => void }
   /** Puts records in the app's Table widget; absent when the app has none (or in tests). */
   openInTable?: (entry: LayerEntry, req: TableRequest) => Promise<TableResult>
 }
@@ -99,6 +101,10 @@ export class Mind {
   ctx: MindContext
   private lastLayer = ''
   private lastReply: Reply | null = null
+  /** How the last request was read (typos fixed), for "why did you do that". */
+  private lastReading: { input: string, read: string, swaps: Array<[string, string]> } | null = null
+  /** The last undo, so "redo" can put it back. */
+  private redoLabel: { label: string, commands: string } | null = null
   /** The last thing the user typed that was not a chip or control word, for "try again". */
   private lastInput = ''
   /** Guided tour: the widget docs still to visit, and the one being shown. */
@@ -448,6 +454,7 @@ export class Mind {
     }
     // Only mention real fixes, not "whats" to "what's".
     const fixed = read.swaps.filter(([a, b]) => a.replace(/['’]/g, '').toLowerCase() !== b.replace(/['’]/g, '').toLowerCase())
+    this.lastReading = { input, read: read.text || input, swaps: fixed }
     if (!fixed.length || reply.mood === 'sleep') return reply
     return { ...reply, text: `${reply.text}\n\n(I read that as “${read.text.replace(/[*_`]/g, '')}”.)` }
   }
@@ -702,12 +709,20 @@ export class Mind {
       const local = await this.answerAtFromMap(pq, spotLabel, !serverOn, fromPopup, q)
       if (local) { if (!['confused', 'think'].includes(local.mood || '')) this.rememberPlaceQuestion(pq); return local }
     }
-    if (!serverOn) { if (this.awaitingPlace) this.awaitingPlace = null; return null }
-    if (Date.now() - this.mcpFailedAt < 60000) return null
+    // "Closest hydrant to ...", "hydrants within 500 ft of ...": from the app's own layers when
+    // there is no server, or the server has no tool for it (Esri's Location Services, say).
+    const nearLocal = async (): Promise<Reply | null> => {
+      if (!['nearest', 'within'].includes(pq.kind) || !pq.thing) return null
+      const r = await this.answerNearFromMap(pq, spotLabel, q)
+      if (r && !['confused', 'think'].includes(r.mood || '')) this.rememberPlaceQuestion(pq)
+      return r
+    }
+    if (!serverOn) { const r = await nearLocal(); if (r) return r; if (this.awaitingPlace) this.awaitingPlace = null; return null }
+    if (Date.now() - this.mcpFailedAt < 60000) return (await nearLocal()) || null
     let tools: McpTool[] = []
-    try { tools = await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return null }
+    try { tools = await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return (await nearLocal()) || null }
     const fits = rankTools(q, tools).filter(r => placeToolFits(r.tool, pq))
-    if (!fits.length) return null
+    if (!fits.length) return (await nearLocal()) || null
     const tool = fits[0].tool
     const map = this.mapContext()
     const { missing } = fillArgs(tool, q, map)
@@ -738,7 +753,63 @@ export class Mind {
       return reply
     } catch (e) {
       this.ctx.beacon?.error(e, 'mcp')
+      // The server failed: the app's own layers may still answer a nearest or within question.
+      const local = await nearLocal()
+      if (local) return local
       return { text: e instanceof Error ? e.message : `${port.label} did not answer.`, mood: 'alert' }
+    }
+  }
+
+  /**
+   * "Closest hydrant to 1138 White Ave", "hydrants within 500 ft of here", from the app's own
+   * layers: the address through the locator, then the layer queried by distance, nearest first,
+   * with pins and rings on the map. Null when the map has no layer like that.
+   */
+  private async answerNearFromMap (pq: PlaceQuestion, spotLabel: string, q: string): Promise<Reply | null> {
+    const live = this.ctx.live
+    if (!live.view || !pq.thing) return null
+    const e = live.matchTitle(pq.thing) || this.resolveLayer(pq.thing, true)
+    if (!e || e.isGroup || e.isTable) return null
+    if (!live.canSee(e)) return this.offReply(e)
+    if (!pq.place && !pq.here) {
+      this.awaitingPlace = { question: q, mine: false }
+      const actions: MappyAction[] = [{ type: 'ask', q: 'here', label: 'Middle of the map' }]
+      if (this.myAddress) actions.unshift({ type: 'ask', q: 'my address', label: clip(this.myAddress, 30) })
+      return { text: `Closest to where? Give me an address${this.myAddress ? ', or use yours' : ''}, or I can use the middle of the map.`, mood: 'think', actions }
+    }
+    const spot = await this.pointFor(pq, spotLabel)
+    if (!spot) return pq.place ? { text: `I could not find "${pq.place}" with the app's locator. Try the address with its street type, or a nearby cross street.`, mood: 'confused' } : { text: 'I cannot read where the map is right now. Give me an address instead.', mood: 'confused' }
+    const origin: [number, number] | null = Array.isArray(spot.at) ? [Number(spot.at[0]), Number(spot.at[1])] : this.toLatLon(spot.at)
+    if (!origin) return null
+    const within = pq.kind === 'within'
+    const limit = pq.limit || (within ? Math.max(10, this.ctx.maxResults) : 3)
+    let rows: Array<{ graphic: any, feet: number, latLon: [number, number] }> = []
+    try {
+      if (within) rows = await live.near(e, origin, pq.feet || 500, limit)
+      else for (const feet of [500, 2000, 8000, 26400]) { rows = await live.near(e, origin, feet, limit); if (rows.length >= limit || feet === 26400) break }
+    } catch (err) { return { text: `**${e.title}** could not be searched by distance (${err instanceof Error ? err.message : 'query failed'}).`, mood: 'alert' } }
+    const info = live.info(e)
+    const name = (g: any): string => {
+      const a = g.attributes || {}
+      const display = (live.target(e)?.displayField && a[live.target(e).displayField]) || a.NAME || a.Name || a.FACILITYID || a.FacilityID || a.ASSETID || a.ADDRESS || a.SITUS || a[Object.keys(a).find(k => /name|id$/i.test(k) && a[k] != null && !/objectid|globalid/i.test(k)) || '']
+      return display != null && display !== '' ? String(display) : `${e.title.replace(/s$/i, '')} ${a[live.target(e)?.objectIdField] ?? ''}`.trim()
+    }
+    const ft = (n: number): string => n < 1 ? 'right there' : n < 5280 ? `${Math.round(n).toLocaleString()} ft` : `${(n / 5280).toFixed(1)} mi`
+    const where = spot.label || (pq.here ? 'the middle of the map' : niceAddress(pq.place || ''))
+    if (!rows.length) {
+      return { text: within ? `No **${e.title}** within ${ft(pq.feet || 500)} of ${where}.` : `No **${e.title}** within 5 miles of ${where}.`, mood: 'talk', suggest: within ? [q.replace(/\d[\d,]*\s*(?:feet|ft|foot|miles?|mi)/i, m => /mi/i.test(m) ? '5 miles' : `${Math.min(26400, (pq.feet || 500) * 4).toLocaleString()} ft`)] : [] }
+    }
+    const results = rows.map(r => ({ entry: e, graphic: r.graphic, label: name(r.graphic), detail: ft(r.feet) + ' away' }))
+    this.lastResults = results
+    try { await live.showPlaces(origin, rows.map(r => r.latLon), { line: !within && rows.length > 0 }) } catch (err) { }
+    const first = rows[0]
+    const text = within
+      ? `**${rows.length}${rows.length >= limit ? '+' : ''} ${e.title}** within ${ft(pq.feet || 500)} of ${where}, nearest first.`
+      : `The closest **${e.title.replace(/s$/i, '')}** to ${where} is **${name(first.graphic)}**, ${first.feet < 1 ? 'right there' : ft(first.feet) + ' away'}${rows.length > 1 ? `; then ${rows.slice(1, 3).map(r => `${name(r.graphic)} (${ft(r.feet)})`).join(', ')}` : ''}.`
+    this.lastLayer = e.path
+    return {
+      text, mood: 'checking', results, sources: [{ title: e.title, detail: `Live layer query by distance from ${where}` }],
+      suggest: [within ? `Closest ${pq.thing} to ${pq.place || 'here'}` : `${pq.thing} within 1000 ft of ${pq.place || 'here'}`, `How many ${e.title} in view`, 'Zoom to it'].slice(0, 3)
     }
   }
 
@@ -1667,7 +1738,8 @@ export class Mind {
       if (address && !(it.name === 'find' && it.scope && this.ctx.live.find(it.scope))) return await this.locateAddress(address)
       // "... in chat": rows in the conversation, not the Table widget.
       const inChat = /\s+in (?:the )?chat$/i.test(raw) && /^show table\b/i.test(raw)
-      const analysis = parseAnalysis(inChat ? raw.replace(/\s+in (?:the )?chat$/i, '') : raw)
+      // Map filters, charts and saved views have their own readings; the data-question reading would take their words for a layer name.
+      const analysis = ['mapFilter', 'mapUnfilter', 'mapFilters', 'chart', 'chartLast', 'saveView', 'listViews', 'deleteView', 'avgSize', 'density', 'compareLayers', 'difference'].includes(it.name) ? null : parseAnalysis(inChat ? raw.replace(/\s+in (?:the )?chat$/i, '') : raw)
       if (analysis) {
         this.lastAnalysis = null
         this.lastReadIntent = ''; this.lastReadScope = ''
@@ -1737,7 +1809,11 @@ export class Mind {
             const t = this.undoBasemap?.title; this.undoBasemap = null
             return { text: `Background back to **${t || 'what it was'}**.`, mood: 'acknowledge' }
           }
-          return { text: this.ctx.live.undo(), mood: 'acknowledge' }
+          const done = this.ctx.live.changesSoFar()
+          const label = done[done.length - 1]
+          const text = this.ctx.live.undo()
+          if (label && !/^There are no/.test(text)) this.redoLabel = { label, commands: label }
+          return { text, mood: 'acknowledge', suggest: label ? ['Redo'] : [] }
         }
         case 'forget': this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.tablePage = null; this.lastAnalysis = null; this.dataTask = null; this.layerPick = null; return { text: 'Conversation context cleared. What would you like to explore?', mood: 'wave' }
         case 'diagnostics': return this.diagnostics()
@@ -1763,7 +1839,129 @@ export class Mind {
         case 'about': return this.about()
         case 'clear': this.ctx.live.clear(); this.lastResults = []; this.tablePage = null; return { text: 'Cleared.', mood: 'acknowledge' }
         case 'home': return this.needMap(async () => { await this.ctx.live.goHome(); return { text: 'Back to the starting view.', mood: 'acknowledge' } })
-        case 'zoom': return this.needMap(async () => { await this.ctx.live.zoom(it.value === 'out' ? 'out' : 'in'); return { text: it.value === 'out' ? 'Zoomed out.' : 'Zoomed in.', mood: 'acknowledge' } })
+        case 'zoom': return this.needMap(async () => { const steps = Number(it.target) || 1; await this.ctx.live.zoom(it.value === 'out' ? 'out' : 'in', steps); return { text: `Zoomed ${it.value === 'out' ? 'out' : 'in'}${steps > 1 ? ` ${steps} steps` : steps < 1 ? ' a little' : ''}.`, mood: 'acknowledge' } })
+        case 'pan': return this.needMap(async () => {
+          const dir = ({ up: 'north', down: 'south', left: 'west', right: 'east' } as any)[it.value!] || it.value
+          const ok = await this.ctx.live.pan(dir)
+          return ok ? { text: `Moved the map ${dir}.`, mood: 'acknowledge' } : { text: 'I could not move the map right now.', mood: 'confused' }
+        })
+        case 'rotate': return this.needMap(async () => {
+          const ok = await this.ctx.live.rotate(it.value === 'north' ? 'north' : Number(it.value))
+          return ok ? { text: it.value === 'north' ? 'North is up.' : `Turned the map ${Math.abs(Number(it.value))}° ${Number(it.value) < 0 ? 'counterclockwise' : 'clockwise'}.`, mood: 'acknowledge', suggest: it.value === 'north' ? [] : ['North up'] } : { text: 'This map cannot be rotated.', mood: 'confused' }
+        })
+        case 'threeD': return { text: 'This is a flat (2D) map, so there is no tilt or 3D view here. I can rotate it ("rotate the map", "north up") and zoom in close.', mood: 'explain', suggest: ['Zoom in', 'Rotate the map'] }
+        case 'pin': return this.needMap(async () => {
+          const c = this.ctx.live.view?.center
+          if (!c) return { text: 'I cannot read the map center right now.', mood: 'confused' }
+          await this.ctx.live.pin(c)
+          return { text: 'Pinned the middle of the map. Say "clear the pins" to remove it.', mood: 'acknowledge', suggest: ['What is here?', 'Clear the pins'] }
+        })
+        case 'locateMe': return this.needMap(async () => {
+          const at = this.ctx.myLocation ? await this.ctx.myLocation() : null
+          if (!at) return { text: 'I could not get your location (it may be turned off for this site). Give me an address instead.', mood: 'confused' }
+          await this.ctx.live.showPlaces(at, [], {})
+          await this.ctx.live.go({ center: [at[1], at[0]], scale: SCALE.address })
+          this.lastPlace = { label: 'your location', lat: at[0], lon: at[1], at: Date.now() }
+          return { text: 'There you are. I put a dot on your location.', mood: 'point', pointAt: this.ctx.live.mapElement(), suggest: ['What is here?', 'Closest hydrant to me'] }
+        })
+        case 'atCenter': return (await this.placeQuestion("what's here", "what's here")) || this.needMap(async () => ({ text: this.ctx.live.whereAmI() || V.noMap(), mood: 'talk' }))
+        case 'undoMany': {
+          const n = Math.min(99, Math.max(1, Number(it.value) || 1))
+          const lines: string[] = []
+          for (let i = 0; i < n; i++) { const t = this.ctx.live.undo(); if (/^There are no/.test(t)) { if (!lines.length) lines.push(t); break } lines.push(t) }
+          return { text: lines.join(' '), mood: 'acknowledge' }
+        }
+        case 'redo': return this.redoLabel ? await this.respondRead(this.redoLabel.commands) : { text: 'Nothing to redo. "Undo" first, then "redo" puts it back.', mood: 'think' }
+        case 'lastAction': {
+          const done = this.ctx.live.changesSoFar()
+          const last = done[done.length - 1]
+          const said = this.lastReply?.text ? clip(this.lastReply.text.replace(/\*\*/g, ''), 140) : ''
+          if (!last && !said) return { text: 'Nothing yet. Ask me something!', mood: 'talk' }
+          return { text: `${last ? `The last map change was **${last}**.` : 'No layer changes yet.'}${said ? ` My last answer was: ${said}` : ''}`, mood: 'explain', suggest: last ? ['Undo', 'What did I change'] : [] }
+        }
+        case 'explainLast': {
+          const r = this.lastReading
+          const src = this.lastReply?.sources?.map(x => x.title).filter(Boolean).slice(0, 3)
+          const parts: string[] = []
+          if (r?.swaps.length) parts.push(`I read "${r.input}" as "${r.read}" (${r.swaps.map(([a, b]) => `${a} → ${b}`).join(', ')}).`)
+          else if (r) parts.push(`I took "${r.input}" as written${parseIntent(r.read).name !== 'ask' ? `, as a request to ${parseIntent(r.read).name.replace(/([A-Z])/g, ' $1').toLowerCase()}` : ''}.`)
+          if (src?.length) parts.push(`The answer came from ${src.join(', ')}.`)
+          if (!parts.length) return { text: 'Nothing to explain yet. Ask me something and then ask why.', mood: 'talk' }
+          return { text: parts.join(' ') + ' If I read it wrong, retype it with the exact layer or tool name.', mood: 'explain', suggest: ['Try again', 'Help'] }
+        }
+        case 'shorter': {
+          const last = this.lastReply
+          if (!last?.text) return { text: 'Nothing to shorten yet.', mood: 'talk' }
+          const first = last.text.replace(/\*\*/g, '').split(/\n+/)[0].split(/(?<=[.!?])\s+/)[0]
+          return { text: first, mood: 'talk', table: undefined, list: undefined }
+        }
+        case 'more': {
+          const last = this.lastReply
+          if (last?.table || last?.list || last?.sources?.length) {
+            const detail = last.sources?.map(s => `**${s.title}**: ${s.detail}`).join('\n') || ''
+            return { ...last, text: `${last.text}${detail ? '\n\n' + detail : ''}`, pointAt: undefined }
+          }
+          return this.aboutSelected()
+        }
+        case 'chart': return await this.chartBy(it.target!, it.value!)
+        case 'chartLast': {
+          const last = this.lastReply
+          if (last?.chart) return { ...last, pointAt: undefined }
+          const t = last?.table
+          if (!t || t.rows.length < 2) return { text: 'Ask for something with groups first, like "count parcels by zoning", and I will chart it.', mood: 'think' }
+          const num = t.columns.findIndex((c, i) => i > 0 && t.rows.every(r => Number.isFinite(Number(String(r[i]).replace(/[,%]/g, '')))))
+          if (num < 0) return { text: 'That table has no numbers to chart.', mood: 'think' }
+          return { ...last, chart: { title: `${t.columns[num]} by ${t.columns[0]}`, rows: t.rows.slice(0, 12).map(r => ({ label: r[0], value: Number(String(r[num]).replace(/[,%]/g, '')) })) }, pointAt: undefined }
+        }
+        case 'mapFilter': return await this.mapFilter(it.target!, it.value!, it.scope === 'inverse')
+        case 'mapUnfilter': return this.mapUnfilter(it.target)
+        case 'mapFilters': {
+          const f = this.ctx.live.filtered()
+          if (!f.length) return { text: 'No layer is filtered right now. Say "only show parcels over 5 acres" to filter one on the map.', mood: 'talk' }
+          return { text: 'Filtered on the map:', mood: 'explain', list: f.map(x => ({ label: `${x.entry.title}: ${x.said}`, action: { type: 'ask' as const, q: `clear the filter on ${x.entry.title}`, label: 'Clear' } })), suggest: ['Clear all filters'] }
+        }
+        case 'avgSize': {
+          const e = this.ctx.live.parcelLayers()[0]
+          if (!e) return { text: 'This map has no parcel layer to measure.', mood: 'confused', suggest: ['List layers'] }
+          if (!this.ctx.live.canSee(e)) return this.offReply(e)
+          try { const r = await analyzeLayer(this.ctx.live, e, { kind: 'stats', layer: e.key, field: '*size*', inView: false }, this.ctx.maxResults); this.lastLayer = e.path; return r } catch (err) { return { text: err instanceof Error ? err.message : 'The layer query failed.', mood: 'confused' } }
+        }
+        case 'density': return this.needMap(async () => {
+          const e = this.resolveLayer(it.target!)
+          if (!e) return { text: V.noLayer(it.target!), mood: 'confused' }
+          if (!this.ctx.live.canSee(e)) return this.offReply(e)
+          const n = await this.ctx.live.count(e, true)
+          const area = this.ctx.live.viewAreaSqMiles()
+          if (n === null || !area) return { text: 'I could not count them in the current view.', mood: 'confused' }
+          const perSqMi = n / area
+          const unit = it.value || 'square mile'
+          const per = /km|kilomet/i.test(unit) ? perSqMi / 2.58999 : /acre/i.test(unit) ? perSqMi / 640 : /hectare/i.test(unit) ? perSqMi / 258.999 : perSqMi
+          const unitName = /km|kilomet/i.test(unit) ? 'square kilometer' : /acre/i.test(unit) ? 'acre' : /hectare/i.test(unit) ? 'hectare' : 'square mile'
+          return { text: `About **${per >= 10 ? Math.round(per).toLocaleString() : per.toFixed(2)} ${e.title.toLowerCase()} per ${unitName}** in the current view: ${n.toLocaleString()} across ${area >= 10 ? Math.round(area).toLocaleString() : area.toFixed(2)} square miles on screen.`, mood: 'explain', suggest: ['Zoom out', `How many ${e.title}`] }
+        })
+        case 'compareLayers': {
+          const a = this.resolveLayer(it.target!, true); const b = this.resolveLayer(it.value!, true)
+          if (!a || !b) return this.ask(raw, raw)
+          const live = this.ctx.live
+          const row = async (e: LayerEntry): Promise<string[]> => {
+            const t = live.target(e); const info = live.info(e)
+            let n: number | null = null; try { n = live.canSee(e) ? await live.count(e, false) : null } catch (err) { n = null }
+            return [e.title, String(t?.geometryType || (e.isTable ? 'table' : '?')).replace(/^esriGeometry/, '').toLowerCase(), n === null ? (live.canSee(e) ? '?' : 'off') : n.toLocaleString(), String((info.fields || []).length), live.isVisible(e) ? 'on' : 'off']
+          }
+          const rows = [await row(a), await row(b)]
+          return { text: `**${a.title}** and **${b.title}**, side by side:`, mood: 'explain', table: { columns: ['Layer', 'Shape', 'Features', 'Fields', 'Now'], rows }, suggest: [`Fields in ${a.title}`, `Fields in ${b.title}`] }
+        }
+        case 'difference': {
+          const ta = lookupTerm(it.target!); const tb = lookupTerm(it.value!)
+          if (ta && tb) return { text: `**${ta.term}**: ${ta.text}\n\n**${tb.term}**: ${tb.text}`, mood: 'explain' }
+          const a = this.resolveLayer(it.target!, true); const b = this.resolveLayer(it.value!, true)
+          if (a && b) return await this.respondOne(`compare ${a.title} and ${b.title}`)
+          if (ta || tb) { const t = (ta || tb)!; return { text: `**${t.term}**: ${t.text} I do not have a meaning for "${ta ? it.value : it.target}".`, mood: 'explain' } }
+          return this.ask(raw, raw)
+        }
+        case 'saveView': return this.saveView(it.target!)
+        case 'listViews': return this.listViews()
+        case 'deleteView': return this.deleteView(it.target!)
         case 'whereami': return this.needMap(async () => ({ text: this.ctx.live.whereAmI() || V.noMap(), mood: 'talk' }))
         case 'listLayers': return this.listLayers(it.value === 'visible')
         case 'layerDiagnosis': return this.needMap(async () => /^(?:it|that|this|the layer|layer|that layer|this layer|my layer)$/i.test(it.target || '') ? (this.lastLayer ? this.diagnoseLayer(this.lastLayer) : this.mapBlank()) : this.diagnoseLayer(it.target!))
@@ -1972,7 +2170,8 @@ export class Mind {
         ...(this.ctx.fun === false ? [] : [{ label: 'Have some fun', detail: 'Jokes · riddles · fun facts · get wizardy · paper airplane · what are you wearing · what tricks can you do', action: { type: 'ask' as const, q: 'What tricks can you do?' } }]),
         { label: 'Search by condition', detail: 'Parcels bigger than 5 acres · parcels edited in the last 7 days · what percent of parcels are over 5 acres · average acres by zoning in parcels' },
         { label: 'Ask what things mean', detail: 'What is an easement · what does R-4 mean · what zoning types are there', action: { type: 'ask', q: 'What is a parcel?' } },
-        { label: 'Move around', detail: 'Zoom to 39.0639, -108.5506 · scale 1:5000 · go back · satellite view · directions to City Hall' },
+        { label: 'Move around', detail: 'Zoom in twice · pan left · north up · save this view as home base · go back · satellite view · drop a pin here' },
+        { label: 'Filter the map', detail: 'Only show parcels over 5 acres · hide hydrants installed before 1990 · clear the filter · chart parcels by zoning' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
         { label: 'Look back', detail: "What's on the map · what did I change · undo · try again · what did I click (with a popup open) · copy that · export chat", action: { type: 'ask', q: 'What did I change' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
@@ -2192,6 +2391,96 @@ export class Mind {
   async zoomToSelected (): Promise<Reply> {
     const ok = await this.ctx.live.zoomToSelected()
     return ok ? { text: 'There it is.', mood: 'point', pointAt: this.ctx.live.mapElement() } : { text: 'Nothing is selected to zoom to.', mood: 'think' }
+  }
+
+  // ------------------------------------------------------------ map filters, saved views, charts
+
+  /** "Only show parcels over 5 acres": the layer's own filter on the map, undoable, with a count. */
+  private async mapFilter (target: string, condition: string, inverse: boolean): Promise<Reply> {
+    const live = this.ctx.live
+    if (!live.ready) return { text: V.noMap(), mood: 'confused' }
+    const e = this.resolveLayer(target)
+    if (!e) return { text: V.noLayer(target), mood: 'confused', suggest: ['List layers'] }
+    if (e.isGroup) return { text: `**${e.title}** is a group; filter one of its layers.`, mood: 'confused' }
+    const fields = Array.from(live.target(e)?.fields || []) as any[]
+    // "Over 5 acres", "older than 1990", "edited this week": the same reading as data questions, on this layer.
+    let cond = condition.replace(/^(?:that|which|who)\s+(?:are|is|have|has|were|was)\s+/i, '').replace(/^(?:are|is|were|was)\s+/i, '')
+    const parsed = parseAnalysis(`${e.title} ${cond}`) || parseAnalysis(`${e.title} where ${cond}`)
+    if (parsed?.condition) cond = parsed.condition
+    let where: string
+    try { where = compileConditions(cond, fields) } catch (err) { return { text: `${err instanceof Error ? err.message : 'I could not read that condition.'} For **${e.title}** try a field with a value: "only show ${e.title} where ${fieldLabel(fields.find(f => !/objectid|shape/i.test(f.name)) || { name: 'field' })} is ...".`, mood: 'confused', suggest: [`Fields in ${e.title}`] } }
+    if (inverse) where = `NOT (${where})`
+    if (!live.setFilter(e, where, (inverse ? 'all but ' : '') + cond)) return { text: `**${e.title}** cannot be filtered on this map.`, mood: 'confused' }
+    if (!live.isVisible(e)) live.setVisible(e, true)
+    let count: number | null = null
+    try { count = await live.count(e, false) } catch (err) { count = null }
+    this.lastLayer = e.path
+    return {
+      text: `**${e.title}** now shows only ${inverse ? 'the ones that are not ' : ''}**${cond}**${count !== null ? ` (${count.toLocaleString()} feature${count === 1 ? '' : 's'})` : ''}. The rest are hidden on the map until you clear the filter.`,
+      mood: 'pleased',
+      actions: [{ type: 'ask', q: `clear the filter on ${e.title}`, label: 'Clear filter' }, { type: 'ask', q: `zoom to ${e.title}`, label: 'Zoom to them' }],
+      suggest: [`How many ${e.title}`, `Show table ${e.title}`, 'What is filtered']
+    }
+  }
+
+  private mapUnfilter (target?: string): Reply {
+    const live = this.ctx.live
+    const all = live.filtered()
+    if (!all.length) return { text: 'Nothing is filtered on the map.', mood: 'talk' }
+    const picked = target ? this.resolveLayer(target, true) : null
+    const targets = picked ? all.filter(x => x.entry.key === picked.key) : all
+    if (target && !targets.length) return { text: `**${picked?.title || target}** is not filtered. Filtered: ${all.map(x => x.entry.title).join(', ')}.`, mood: 'think' }
+    for (const x of targets) live.clearFilter(x.entry)
+    return { text: `${targets.map(x => `**${x.entry.title}**`).join(', ')} show${targets.length === 1 ? 's' : ''} everything again.`, mood: 'acknowledge' }
+  }
+
+  private viewsKey (): string { return 'mappy-views:' + (this.ctx.appTitle || 'app') }
+  private views (): { [name: string]: any } { try { return JSON.parse(this.ctx.store?.get(this.viewsKey()) || '{}') || {} } catch (e) { return {} } }
+  private saveViews (v: { [name: string]: any }): void { try { this.ctx.store?.set(this.viewsKey(), Object.keys(v).length ? JSON.stringify(v) : null) } catch (e) { } }
+
+  /** "Save this view as home base": the viewpoint, kept in this browser for this app. */
+  private saveView (name: string): Reply {
+    const n = name.trim().replace(/^["']|["']$/g, '')
+    if (!n || n.length > 60) return { text: 'Give the view a short name: "save this view as home base".', mood: 'think' }
+    if (!this.ctx.store) return { text: 'Saved views are not available here.', mood: 'confused' }
+    const vp = this.ctx.live.viewpoint()
+    if (!vp) return { text: V.noMap(), mood: 'confused' }
+    const v = this.views()
+    v[n] = typeof vp.toJSON === 'function' ? vp.toJSON() : vp
+    this.saveViews(v)
+    return { text: `Saved this view as **${n}**. Say "go to ${n}" to come back to it (kept in this browser).`, mood: 'pleased', suggest: ['My saved views', `Go to ${n}`] }
+  }
+
+  private listViews (): Reply {
+    const v = this.views()
+    const names = Object.keys(v)
+    if (!names.length) return { text: 'No saved views yet. Say "save this view as home base" to keep one.', mood: 'talk' }
+    return { text: `Your saved views (${names.length}):`, mood: 'explain', list: names.map(n => ({ label: n, action: { type: 'ask' as const, q: `go to ${n}`, label: `Go to ${n}` } })), suggest: [`Delete the ${names[0]} view`] }
+  }
+
+  private deleteView (name: string): Reply {
+    const v = this.views()
+    const key = Object.keys(v).find(k => k.toLowerCase() === name.trim().toLowerCase())
+    if (!key) return { text: `No saved view called "${name}".${Object.keys(v).length ? ` You have: ${Object.keys(v).join(', ')}.` : ''}`, mood: 'think' }
+    delete v[key]; this.saveViews(v)
+    return { text: `Forgot the **${key}** view.`, mood: 'acknowledge' }
+  }
+
+  /** "Go to home base": a saved view by name. False when there is none. */
+  private async goSavedView (name: string): Promise<boolean> {
+    const v = this.views()
+    const key = Object.keys(v).find(k => k.toLowerCase() === name.trim().toLowerCase())
+    if (!key) return false
+    return this.ctx.live.goViewpoint(v[key])
+  }
+
+  /** "Chart parcels by zoning": grouped counts, as bars. */
+  private async chartBy (layer: string, field: string): Promise<Reply> {
+    const r = await this.respondOne(`count ${layer} by ${field}`)
+    if (!r.table || r.table.rows.length < 1) return r
+    const num = r.table.columns.findIndex((c, i) => i > 0 && r.table!.rows.every(row => Number.isFinite(Number(String(row[i]).replace(/[,%]/g, '')))))
+    if (num < 0) return r
+    return { ...r, chart: { title: `${r.table.columns[num]} by ${r.table.columns[0]}`, rows: r.table.rows.slice(0, 12).map(row => ({ label: row[0], value: Number(String(row[num]).replace(/[,%]/g, '')) })) } }
   }
 
   /** The feature whose popup is open, as a short table of its fields. */
@@ -2887,6 +3176,8 @@ export class Mind {
       if (!this.myAddress) { this.awaitingPlace = { question: 'zoom to my address', mine: true }; return { text: 'What is your address? Tell me once and I will remember it.', mood: 'think' } }
       return this.locateAddress(this.myAddress)
     }
+    // A view the person saved ("go to home base") comes first.
+    if (await this.goSavedView(target)) return { text: `Back to **${target}**.`, mood: 'acknowledge', pointAt: live.mapElement() }
     const presets = live.bridge ? live.bridge.presets() : []
     if (presets.some(p => flat(p.name) === flat(target))) return this.applyPreset(target)
     const nav = this.ctx.index.resolve(target, ['page', 'view', 'dialog', 'bookmark'], 2)

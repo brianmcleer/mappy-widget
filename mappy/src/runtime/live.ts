@@ -15,6 +15,7 @@
   is guarded so a layer that fails never breaks the chat.
 */
 import { loadArcGISJSAPIModules } from 'jimu-core'
+import { toLatLon } from './project'
 import type { JimuMapView } from 'jimu-arcgis'
 import type { Doc, LayerHint } from '../brain/types'
 import { docsFromLayer, pickSearchFields } from '../brain/layers'
@@ -57,7 +58,7 @@ export interface FeatureResult {
 
 export interface MapSnapshot {
   view: any
-  layers: Array<{ target: any, visible: boolean, opacity: number }>
+  layers: Array<{ target: any, visible: boolean, opacity: number, definitionExpression?: string }>
 }
 
 const TAG = '__mappy'
@@ -71,14 +72,14 @@ export class LiveMap {
   private history: Array<{ label: string, changes: Array<{ target: any, prop: string, before: any, after: any }> }> = []
 
   snapshot (): MapSnapshot {
-    return { view: this.view, layers: this.entries().map(e => { const target = this.target(e); return { target, visible: target.visible, opacity: target.opacity } }) }
+    return { view: this.view, layers: this.entries().map(e => { const target = this.target(e); return { target, visible: target.visible, opacity: target.opacity, definitionExpression: target.definitionExpression } }) }
   }
 
   remember (before: MapSnapshot, label: string): boolean {
     if (before.view !== this.view) return false
     const changes: Array<{ target: any, prop: string, before: any, after: any }> = []
-    for (const item of before.layers) for (const prop of ['visible', 'opacity']) {
-      if (item[prop as 'visible' | 'opacity'] !== item.target[prop]) changes.push({ target: item.target, prop, before: item[prop as 'visible' | 'opacity'], after: item.target[prop] })
+    for (const item of before.layers) for (const prop of ['visible', 'opacity', 'definitionExpression'] as const) {
+      if ((item[prop] ?? undefined) !== (item.target[prop] ?? undefined)) changes.push({ target: item.target, prop, before: item[prop], after: item.target[prop] })
     }
     if (!changes.length) return false
     this.history.push({ label, changes })
@@ -107,7 +108,10 @@ export class LiveMap {
     for (const change of item.changes) {
       // Do not overwrite changes made later by another widget or by the user.
       if (current.has(change.target) && change.target[change.prop] === change.after) {
-        try { change.target[change.prop] = change.before; restored++ } catch (e) { }
+        try {
+          change.target[change.prop] = change.before; restored++
+          if (change.prop === 'definitionExpression') { const f = this.filters.get(change.target); if (f && (f.base || undefined) === (change.before || undefined)) this.filters.delete(change.target) }
+        } catch (e) { }
       }
     }
     this.changed(true)
@@ -794,6 +798,33 @@ export class LiveMap {
     } catch (err) { if (strict) throw err; return null }
   }
 
+  /**
+   * Features of a layer within `feet` of a spot ([latitude, longitude] or a point), nearest first
+   * with the distance in feet to each one's closest vertex. Up to `limit`. Throws when the layer
+   * cannot be queried, so the caller can say so.
+   */
+  async near (e: LayerEntry, at: [number, number] | any, feet: number, limit = 10): Promise<Array<{ graphic: any, feet: number, latLon: [number, number] }>> {
+    const view = this.view
+    const t = this.target(e)
+    if (!view || !t || typeof t.queryFeatures !== 'function') throw new Error('This layer cannot be queried.')
+    if (t.load && !t.loaded) await withTimeout(t.load(), 8000)
+    const origin: [number, number] | null = Array.isArray(at) ? [Number(at[0]), Number(at[1])] : toLatLon(at)
+    if (!origin) throw new Error('I could not read that spot.')
+    const geometry = { type: 'point', x: origin[1], y: origin[0], spatialReference: { wkid: 4326 } }
+    const fs = await withTimeout(t.queryFeatures({
+      geometry, spatialRelationship: 'intersects', distance: Math.max(1, feet), units: 'feet',
+      where: t.definitionExpression || '1=1', outFields: ['*'], returnGeometry: true, outSpatialReference: { wkid: 4326 }, num: Math.max(limit * 4, 40)
+    }), 12000)
+    const out: Array<{ graphic: any, feet: number, latLon: [number, number] }> = []
+    for (const g of toArr(fs?.features)) {
+      const near = nearestVertex(g.geometry, origin)
+      if (!near) continue
+      out.push({ graphic: g, feet: near.feet, latLon: near.latLon })
+    }
+    out.sort((a, b) => a.feet - b.feet)
+    return out.slice(0, limit)
+  }
+
   /** The parcel layers in this map, best first: one named Parcels, polygons, ones already on. */
   parcelLayers (): LayerEntry[] {
     const rank = (e: LayerEntry) => {
@@ -805,6 +836,87 @@ export class LiveMap {
   }
 
   /** A pin at an address, kept with other highlights (not clearing them). */
+  // ------------------------------------------------------------------ filters, pans, rotation
+
+  /** What Mappy filtered a layer to (the author's own filter, if any, is kept underneath and restored). */
+  private filters = new Map<any, { base: string, where: string, said: string }>()
+
+  /** Shows only the features matching `where` on the map, on top of the author's own filter. */
+  setFilter (e: LayerEntry, where: string, said: string): boolean {
+    const t = this.target(e)
+    if (!t || (!('definitionExpression' in t) && typeof t.queryFeatures !== 'function')) return false
+    const had = this.filters.get(t)
+    const base = had ? had.base : (t.definitionExpression || '')
+    try { t.definitionExpression = base ? `(${base}) AND (${where})` : where } catch (err) { return false }
+    this.filters.set(t, { base, where, said })
+    this.entriesCache = null
+    return true
+  }
+
+  /** Back to everything the author showed. True when there was a filter to clear. */
+  clearFilter (e: LayerEntry): boolean {
+    const t = this.target(e)
+    const had = t ? this.filters.get(t) : null
+    if (!t || !had) return false
+    try { t.definitionExpression = had.base || null } catch (err) { }
+    this.filters.delete(t)
+    return true
+  }
+
+  /** The layers Mappy is filtering right now, with what each shows. */
+  filtered (): Array<{ entry: LayerEntry, said: string }> {
+    const out: Array<{ entry: LayerEntry, said: string }> = []
+    for (const e of this.entries()) { const f = this.filters.get(this.target(e)); if (f) out.push({ entry: e, said: f.said }) }
+    return out
+  }
+
+  /** Moves the view a third of the screen in a compass direction. */
+  async pan (dir: 'north' | 'south' | 'east' | 'west'): Promise<boolean> {
+    const view = this.view
+    const ext = view?.extent
+    if (!ext) return false
+    try {
+      const dx = (ext.xmax - ext.xmin) / 3; const dy = (ext.ymax - ext.ymin) / 3
+      const c = view.center.clone ? view.center.clone() : { ...view.center }
+      c.x += dir === 'east' ? dx : dir === 'west' ? -dx : 0
+      c.y += dir === 'north' ? dy : dir === 'south' ? -dy : 0
+      await this.go({ center: c }, 500)
+      return true
+    } catch (e) { return false }
+  }
+
+  /** Turns the map: north up (0), or by `degrees` from where it is. */
+  async rotate (degrees: number | 'north'): Promise<boolean> {
+    const view = this.view
+    if (!view) return false
+    try { await this.go({ rotation: degrees === 'north' ? 0 : ((Number(view.rotation) || 0) + degrees) % 360 }, 500); return true } catch (e) { return false }
+  }
+
+  /** The area the map shows right now, in square miles (from the extent in latitude and longitude). */
+  viewAreaSqMiles (): number | null {
+    const ext = this.view?.extent
+    if (!ext) return null
+    const a = toLatLon({ x: ext.xmin, y: ext.ymin, spatialReference: ext.spatialReference || this.view.spatialReference })
+    const b = toLatLon({ x: ext.xmax, y: ext.ymax, spatialReference: ext.spatialReference || this.view.spatialReference })
+    if (!a || !b) return null
+    const w = feetBetween([a[0], a[1]], [a[0], b[1]]); const h = feetBetween([a[0], a[1]], [b[0], a[1]])
+    return (w * h) / (5280 * 5280)
+  }
+
+  /** The current viewpoint, to come back to ("save this view as home base"). */
+  viewpoint (): any | null { try { return this.view?.viewpoint?.clone?.() || this.view?.viewpoint?.toJSON?.() || null } catch (e) { return null } }
+
+  /** Back to a saved viewpoint (a Viewpoint, or its JSON). */
+  async goViewpoint (vp: any): Promise<boolean> {
+    if (!vp || !this.view) return false
+    try {
+      let target = vp
+      if (!vp.clone && (vp.targetGeometry || vp.scale)) { const [Viewpoint] = await loadArcGISJSAPIModules(['esri/Viewpoint']); target = Viewpoint.fromJSON(vp) }
+      await this.go(target)
+      return true
+    } catch (e) { return false }
+  }
+
   async pin (location: any): Promise<void> {
     const view = this.view
     if (!view || !location) return
@@ -950,11 +1062,12 @@ export class LiveMap {
     try { view.map.basemap = bm; return { title: best.b.title } } catch (e) { return null }
   }
 
-  async zoom (dir: 'in' | 'out'): Promise<void> {
+  async zoom (dir: 'in' | 'out', steps = 1): Promise<void> {
     const view = this.view
     if (!view) return
-    // By scale, not zoom level: zoom levels do not exist on maps in a local coordinate system.
-    try { if (view.scale) await this.go({ scale: dir === 'in' ? view.scale / 2 : view.scale * 2 }, 400) } catch (e) { }
+    // By scale, not zoom level: zoom levels do not exist on maps in a local coordinate system. Each step halves or doubles.
+    const factor = Math.pow(2, Math.max(0.25, Math.min(6, steps)))
+    try { if (view.scale) await this.go({ scale: Math.max(100, dir === 'in' ? view.scale / factor : view.scale * factor) }, 400) } catch (e) { }
   }
 
   async goBookmark (index: number): Promise<boolean> {
@@ -1011,4 +1124,39 @@ const FORMS: { [k: string]: string[] } = {
   owner: ['parcel', 'ownership'], lot: ['parcel'], property: ['parcel'],
   floodplain: ['flood'], fema: ['flood'], sewer: ['sanitary'], sanitary: ['sewer'], storm: ['stormwater', 'drainage'],
   school: ['attendance'], trash: ['refuse', 'garbage', 'solid'], garbage: ['trash', 'refuse'], recycle: ['recycling'], recycling: ['recycle']
+}
+
+/** Feet between two [latitude, longitude] points (haversine). */
+export function feetBetween (a: [number, number], b: [number, number]): number {
+  const R = 20902231 // feet
+  const dLat = (b[0] - a[0]) * Math.PI / 180; const dLon = (b[1] - a[1]) * Math.PI / 180
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * Math.PI / 180) * Math.cos(b[0] * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+/** The closest vertex of a WGS84 geometry to a spot, with the distance in feet. Inside a polygon counts as 0. */
+export function nearestVertex (geometry: any, origin: [number, number]): { feet: number, latLon: [number, number] } | null {
+  if (!geometry) return null
+  const pts: Array<[number, number]> = []
+  if (Number.isFinite(geometry.latitude) && Number.isFinite(geometry.longitude)) pts.push([geometry.latitude, geometry.longitude])
+  else if (Number.isFinite(geometry.x) && Number.isFinite(geometry.y)) pts.push([geometry.y, geometry.x])
+  for (const part of toArr(geometry.paths).concat(toArr(geometry.rings))) for (const v of toArr(part)) if (Array.isArray(v) && v.length >= 2) pts.push([v[1], v[0]])
+  for (const v of toArr(geometry.points)) if (Array.isArray(v)) pts.push([v[1], v[0]])
+  if (!pts.length) return null
+  let best: { feet: number, latLon: [number, number] } | null = null
+  for (const p of pts) { const f = feetBetween(origin, p); if (!best || f < best.feet) best = { feet: f, latLon: p } }
+  if (best && toArr(geometry.rings).length && insideRings(geometry.rings, origin)) best = { feet: 0, latLon: origin }
+  return best
+}
+
+function insideRings (rings: any, origin: [number, number]): boolean {
+  let inside = false
+  for (const ring of toArr(rings)) {
+    const r = toArr(ring)
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const xi = r[i][0]; const yi = r[i][1]; const xj = r[j][0]; const yj = r[j][1]
+      if (((yi > origin[0]) !== (yj > origin[0])) && (origin[1] < (xj - xi) * (origin[0] - yi) / (yj - yi) + xi)) inside = !inside
+    }
+  }
+  return inside
 }

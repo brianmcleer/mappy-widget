@@ -362,7 +362,20 @@
     "which layer is this",
     "i want to see the zoning",
     "where the parks at",
-    "all off"
+    "all off",
+    "only show parcels over 5 acres on the map",
+    "clear the filter",
+    "save this view as home base",
+    "go to home base",
+    "chart parcels by zoning",
+    "zoom in twice",
+    "pan left",
+    "north up",
+    "drop a pin here",
+    "what did you just do",
+    "closest fire hydrants to 123 main st",
+    "how many parcels per square mile",
+    "compare parcels and zoning districts"
   ],
   "ask": [
     {

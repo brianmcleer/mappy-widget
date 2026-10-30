@@ -250,6 +250,14 @@ const CSS = `
 .mappy-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;flex:0 0 auto}
 .mappy-chip{border:1px solid var(--mappy-chip-border);background:transparent;color:inherit;border-radius:999px;padding:2px 12px;min-height:28px;font-size:.8125rem;cursor:pointer;font-family:inherit}
 .mappy-chip:hover{background:var(--mappy-hover)}
+.mappy-chart{margin:6px 0 2px;font-size:.8rem}
+.mappy-chart-title{font-weight:600;margin-bottom:4px;opacity:.85}
+.mappy-bar-row{display:grid;grid-template-columns:minmax(60px,34%) 1fr auto;gap:6px;align-items:center;margin:2px 0}
+.mappy-bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mappy-bar-track{display:block;height:12px;background:var(--mappy-hover);border-radius:6px;overflow:hidden}
+.mappy-bar{display:block;height:100%;background:var(--mappy-accent,#1d6fb8);border-radius:6px;transition:width .4s ease-out}
+.mappy-bar-value{font-variant-numeric:tabular-nums;opacity:.85}
+@media (prefers-reduced-motion: reduce){.mappy-bar{transition:none}}
 .mappy-hints{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 4px;flex:0 0 auto}
 .mappy-hint{border:1px dashed var(--mappy-chip-border);background:transparent;color:inherit;border-radius:8px;padding:1px 8px;min-height:22px;font-size:.75rem;opacity:.85;cursor:pointer;font-family:inherit}
 .mappy-hint:hover{background:var(--mappy-hover);opacity:1}
@@ -291,6 +299,7 @@ export const CLASSIC: BubbleColors = {
   '--mappy-line': '#767676',
   '--mappy-chip-border': '#6b6b6b',
   '--mappy-hover': 'rgba(0,0,0,.08)',
+  '--mappy-accent': '#0b57d0',
   '--mappy-user-bg': '#fff3a6',
   '--mappy-user-fg': '#111111',
   '--mappy-btn-bg': '#ffffff',
@@ -346,6 +355,7 @@ export function themeColors (t: { surface: string, text: string, textSecondary: 
     '--mappy-line': line,
     '--mappy-chip-border': line,
     '--mappy-hover': dark ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.07)',
+    '--mappy-accent': focus,
     '--mappy-user-bg': dark ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.05)',
     '--mappy-user-fg': fg,
     '--mappy-btn-bg': bg,

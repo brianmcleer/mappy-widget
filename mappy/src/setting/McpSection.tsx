@@ -64,16 +64,26 @@ export default function McpSection (props: Props): any {
     <SettingSection title='MCP server'>
       <Hint>Optional. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
 
-      <SettingRow tag='label' label='Use an MCP server'>
+      <SettingRow tag='label' label={cfg.url === ESRI_LOCATION_MCP ? 'Use ArcGIS Location Services' : cfg.label ? `Use ${cfg.label}` : 'Use an MCP server'}>
         <Switch checked={!!cfg.url && cfg.enabled !== false} onChange={(e: any) => cfg.url ? save({ enabled: e.target.checked }) : null} disabled={!cfg.url} aria-label='Use an MCP server' />
       </SettingRow>
+      {cfg.url && <Note tone={cfg.enabled === false ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
+        {cfg.enabled === false
+          ? `Off. ${cfg.label || 'The server'} is kept but not used; Mappy answers place questions from the app's own layers and locator.`
+          : cfg.url === ESRI_LOCATION_MCP
+            ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Turn it off or disconnect it if you are not using it."
+            : `Connected to ${cfg.label || cfg.url}.`}
+      </Note>}
 
       <SettingRow label='Server address' flow='wrap'>
         <TextInput size='sm' style={full} value={url} placeholder='https://server/gis-mcp/mcp' aria-label='Server address'
           onChange={(e: any) => setUrl(e.target.value.trim())} onAcceptValue={(v: string) => { if (safeServerUrl(v)) save({ url: v.trim() }) }} />
       </SettingRow>
       <SettingRow>
-        <Button type='tertiary' size='sm' style={{ padding: 0, height: 'auto' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
+        <div className='ms-inline' style={{ gap: 12 }}>
+          <Button type='tertiary' size='sm' style={{ padding: 0, height: 'auto' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
+          {cfg.url && <Button type='tertiary' size='sm' style={{ padding: 0, height: 'auto' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
+        </div>
       </SettingRow>
 
       <SettingRow label='Name in the chat' flow='wrap'>
