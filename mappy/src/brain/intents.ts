@@ -33,6 +33,8 @@ const RULES: Rule[] = [
   [/^how many\s+(.+?)\s+(?:per|in a|in each|for every)\s+(square mile|sq\.? ?mi|square kilometer|square km|sq\.? ?km|acre|hectare)[!.?]*$|^(?:density of|how dense are)\s+(?:the\s+)?(.+?)[!.?]*$/i, (m, raw) => ({ name: 'density', target: clean(m[1] || m[3]), value: (m[2] || 'square mile').toLowerCase(), raw })],
   [/^compare\s+(?:the\s+)?(.+?)\s+(?:layer\s+)?(?:and|with|to|vs\.?|versus|against)\s+(?:the\s+)?(.+?)(?:\s+layers?)?[!.?]*$/i, (m, raw) => ({ name: 'compareLayers', target: clean(m[1]), value: clean(m[2]), raw })],
   [/^(?:what(?:'s|s| is) the difference between|difference between|how (?:is|are|do|does)\s+(?:a |an |the )?)\s*(.+?)\s+(?:and|vs\.?|versus)\s+(?:a |an |the )?(.+?)(?:\s+differ(?:ent)?)?[!.?]*$/i, (m, raw) => ({ name: 'difference', target: clean(m[1]), value: clean(m[2]), raw })],
+  // The place in numbers: the Census (and other sources) facts the builder saved
+  [/^(?:census(?: facts?| data| numbers| info)?|(?:show|tell|give) me (?:the )?census(?: facts?| data| numbers)?|demographics|(?:the )?(?:town|city|county|place) in numbers|(?:local )?stats|(?:(?:what(?:'s|s| is) )?the )?(population|median age|median home (?:value|price)|home value|households?|average commute|commute(?: time)?|elevation|climate|weather like|average rain(?:fall)?|snowfall)(?: (?:of|in|for) (?:the |this )?(?:town|city|county|place|here|area|.+?))?|how many people live (?:here|in (?:the |this )?(?:town|city|county|area|.+?))|how (?:old|big|high|hot|cold|snowy|rainy) is (?:the |this )?(?:town|city|county|place|area|it|.+?)|how much (?:snow|rain) (?:does|do) (?:we|it|the (?:town|city)|.+?) get|when was (?:the |this )?(?:town|city|county|place|it|.+?) founded)[?.!]*$/i, (m, raw) => ({ name: 'placeStats', value: (m[1] || '').toLowerCase() || raw.toLowerCase(), raw })],
   // Filters on the map itself (the layer's definition expression), saved views, charts, pans and turns
   [/^(?:only show|show only|show just|just show|display only|limit (?:the )?(.+?) to)\s*(?:the\s+)?(.+?)\s+(?:where|with|that (?:are|have|is)|which (?:are|have))\s+(.+?)(?:\s+on the map)?[!.?]*$/i, (m, raw) => ({ name: 'mapFilter', target: clean(m[1] || m[2]), value: m[3].trim(), raw })],
   [/^(?:only show|show only|show just|just show)\s+(?:the\s+)?(.+?)\s+((?:over|under|above|below|bigger than|larger than|smaller than|less than|more than|greater than|older than|newer than|before|after|since|in the last|edited|updated|installed|inspected|built)\b.+?)(?:\s+on the map)?[!.?]*$/i, (m, raw) => ({ name: 'mapFilter', target: clean(m[1]), value: m[2].trim(), raw })],
@@ -210,7 +212,7 @@ const RULES: Rule[] = [
 export function parseIntent (input: string): Intent {
   const raw = normalizeCommand(String(input || ''))
   const count = raw.match(/^(?:how many|count(?: the)?|number of)\s+(.+?)\s+(?:(?:are|is)\s+)?(?:in view|visible|here|on screen|on the map)[?.!]*$/i)
-  if (count) return { name: 'count', target: clean(count[1]), scope: 'view', raw }
+  if (count && !/^(?:people|residents|folks|persons)\b/i.test(count[1])) return { name: 'count', target: clean(count[1]), scope: 'view', raw }
   for (const [rx, fn] of RULES) {
     const m = raw.match(rx)
     if (m) {

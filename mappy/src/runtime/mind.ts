@@ -2047,6 +2047,7 @@ export class Mind {
         case 'frustrated': return { text: `Sorry, that is no fun. Tell me what you are trying to do in your own words, like "find an address", "turn on a layer" or "print the map", and I will take it from there. "Show me around" walks through everything this app can do.`, mood: 'explain', suggest: ['Show me around', 'Help', 'What is on the map'] }
         case 'topOwners': return await this.topOwners(it.value === 'count')
         case 'today': return this.today()
+        case 'placeStats': return this.placeStats(it.value || '', raw)
         case 'download': return this.download(it.target!)
         case 'fields': return this.fields(it.target!, raw)
         case 'count': return this.count(it.target!, it.scope === 'view', raw)
@@ -2295,6 +2296,47 @@ export class Mind {
       if (reply.table) reply.table.rows = reply.table.rows.slice(0, 10)
       return reply
     } catch (error) { return { text: error instanceof Error ? error.message : 'The layer query failed.', mood: 'confused' } }
+  }
+
+  /**
+   * "Census facts", "what's the population", "median home value", "how much snow do we get":
+   * the place's numbers from the facts the builder saved (Census, Wikidata, Open-Meteo, USGS...).
+   */
+  private placeStats (topic: string, raw: string): Reply {
+    const facts = (this.ctx.place?.facts || []).filter(Boolean)
+    const name = this.ctx.place?.name || 'this place'
+    const t = topic.toLowerCase()
+    const want: Array<[RegExp, RegExp]> = [
+      [/census|demographic|stats|numbers/, /\(US Census|population|median|households|commute/i],
+      [/population|people live/, /population/i],
+      [/median age|how old/, /median age|founded/i],
+      [/home (?:value|price)/, /home value/i],
+      [/household/, /households/i],
+      [/commute/, /commute/i],
+      [/elevation|how high/, /above sea level/i],
+      [/climate|weather|hot|cold/, /\(Open-Meteo\)/i],
+      [/rain/, /precipitation|rain/i],
+      [/snow/, /snow/i],
+      [/founded/, /founded/i],
+      [/how big/, /square miles|covers/i]
+    ]
+    const rule = want.find(([k]) => k.test(t)) || want[0]
+    // Census lines first when asked about the Census, otherwise any source that answers.
+    let hits = facts.filter(f => rule[1].test(f))
+    if (/census/.test(t)) hits = hits.filter(f => /Census/i.test(f)).concat(hits.filter(f => !/Census/i.test(f)))
+    if (!hits.length) {
+      const how = /census|population|median|household|commute|demographic/.test(t)
+        ? 'The app builder can add them in Mappy\'s settings: Your place, check US Census, add a free Census API key, then Build facts from open sources.'
+        : 'The app builder can add them in Mappy\'s settings: Your place, Build facts from open sources.'
+      return { text: `I do not have numbers like that for ${name} yet. ${how}`, mood: 'think', suggest: ['Fun fact', 'What is on the map'] }
+    }
+    const shown = hits.slice(0, 6)
+    return {
+      text: shown.length === 1 ? `📍 ${shown[0]}` : `📍 ${name} in numbers:`,
+      mood: 'explain',
+      list: shown.length > 1 ? shown.map(f => ({ label: f })) : undefined,
+      suggest: ['Population', 'Climate', 'Local fact'].filter(x => !new RegExp(x, 'i').test(raw)).slice(0, 3)
+    }
   }
 
   /** "What day is it": the date, with the day's outfit when there is one. */

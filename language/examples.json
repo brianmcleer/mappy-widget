@@ -375,7 +375,12 @@
     "what did you just do",
     "closest fire hydrants to 123 main st",
     "how many parcels per square mile",
-    "compare parcels and zoning districts"
+    "compare parcels and zoning districts",
+    "census facts",
+    "what is the population",
+    "median home value",
+    "how many people live here",
+    "how much snow do we get"
   ],
   "ask": [
     {

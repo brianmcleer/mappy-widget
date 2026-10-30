@@ -1602,3 +1602,19 @@ test('open fact sources: Wikidata, climate, Census, DBpedia, OSM shaping, and fa
   assert.deepEqual(mf, ['This map has 42 parcels.', 'The largest of the parcels is Big Lot LLC, at about 12.5 acres.'])
 })
 
+
+test('census and place-in-numbers questions answer from the saved facts', async () => {
+  const { live } = fixture()
+  const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']
+  const mind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', place: { org: 'the City', name: 'Springfield', website: '', facts } })
+  for (const q of ['census', 'census facts', 'show me the census data', "what's the population", 'what is the median home value', 'how many people live here', 'how much snow do we get', 'demographics', 'whats the elevation']) assert.equal(parseIntent(q).name, 'placeStats', q)
+  const c = await mind.respond('census facts')
+  assert.match(c.text, /Springfield in numbers/)
+  assert.equal(c.list.length, 3)
+  assert.match((await mind.respond("what's the population")).text, /population at 65,560/)
+  assert.match((await mind.respond('median home value')).text, /\$331,000/)
+  assert.match((await mind.respond('how much snow do we get')).text, /22 inches of snow/)
+  const none = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', place: { org: 'the City', name: 'Springfield', website: '', facts: [] } })
+  assert.match((await none.respond('census')).text, /add a free Census API key/)
+})
+
