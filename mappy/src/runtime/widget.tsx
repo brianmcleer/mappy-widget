@@ -802,7 +802,7 @@ export default function Widget (props: Props): any {
       messages={messages}
       busy={busy}
       chips={chips}
-      complete={(p: string) => mind.complete(p)}
+      complete={(p: string, signal?: AbortSignal) => mind.completeAsync(p, signal)}
       vars={vars}
       placement={placement}
       size={chatSize}

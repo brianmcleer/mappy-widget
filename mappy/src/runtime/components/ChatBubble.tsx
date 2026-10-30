@@ -45,8 +45,8 @@ interface Props {
   onReset: () => void
   onMenu: (anchor: HTMLElement) => void
   onTyping: (typing: boolean) => void
-  /** Typeahead: requests that continue what has been typed so far. */
-  complete?: (prefix: string) => string[]
+  /** Typeahead: requests that continue what has been typed so far (may look addresses up, so it can be async). */
+  complete?: (prefix: string, signal?: AbortSignal) => string[] | Promise<string[]>
   inputRef: any
   /** Dragging the title bar moves Mappy, and the chat with him. */
   onHeadDrag?: (e: any) => void
@@ -168,9 +168,18 @@ export default function ChatBubble (props: Props): any {
   const [hintsOff, setHintsOff] = React.useState(false)
   React.useEffect(() => {
     if (!props.complete || hintsOff || hIdx >= 0 || draft.trim().length < 2) { setHints([]); return }
-    const h = setTimeout(() => { try { setHints(props.complete!(draft)) } catch (e) { setHints([]) } }, 120)
-    return () => clearTimeout(h)
-  }, [draft, hintsOff, hIdx, props.complete])
+    const ctl = new AbortController()
+    const h = setTimeout(async () => {
+      // What you asked before comes first, then what the app can complete.
+      const p = draft.trim().toLowerCase()
+      const past = history.filter(x => x.toLowerCase().startsWith(p) && x.toLowerCase() !== p).slice(0, 2)
+      try {
+        const got = await Promise.resolve(props.complete!(draft, ctl.signal))
+        if (!ctl.signal.aborted) setHints(Array.from(new Set([...past, ...got])).slice(0, 5))
+      } catch (e) { if (!ctl.signal.aborted) setHints(past) }
+    }, 160)
+    return () => { clearTimeout(h); ctl.abort() }
+  }, [draft, hintsOff, hIdx, props.complete, history])
   const takeHint = (h: string) => { setDraft(h.endsWith(' ') ? h : h + ' '); setHints([]); props.inputRef?.current?.focus?.() }
 
   const onKeyDown = (e: any) => {

@@ -1178,3 +1178,59 @@ test('dates, several conditions, value lists, percent and grouped statistics', a
   assert.match(queries[queries.length - 1].where, /last_edited_date >= TIMESTAMP '/)
 })
 
+
+test('predictive text: names after verbs, bookmarks, fields, code lists, addresses', async () => {
+  const { completeText, addressFragment, withAddress, addressQuestions } = require('../src/brain/complete.ts')
+  const src = {
+    layers: ['Parcels', 'Zoning Districts', 'Fire Hydrants'], widgets: ['Legend', 'Print'], bookmarks: ['Downtown', 'Airport'],
+    fieldsOf: l => l.toLowerCase() === 'parcels' ? ['Owner name', 'Lot Area', 'Zoning', 'Status'] : [],
+    valuesOf: (l, f) => f.toLowerCase() === 'zoning' ? ['R-4', 'R-8', 'C-1'] : f.toLowerCase() === 'status' ? ['Active', 'Retired'] : [],
+    places: true
+  }
+  assert.deepEqual(completeText('t', src), [])
+  assert.deepEqual(completeText('zoom to d', src), ['zoom to Downtown'])
+  assert.deepEqual(completeText('zoom to ', src), ['zoom to Airport', 'zoom to Parcels', 'zoom to Downtown', 'zoom to Fire Hydrants', 'zoom to Zoning Districts'])
+  assert.deepEqual(completeText('open le', src), ['open Legend'])
+  assert.deepEqual(completeText('where are the fi', src), ['where are the Fire Hydrants'])
+  assert.deepEqual(completeText('count parcels by ', src), ['count parcels by Zoning', 'count parcels by Status', 'count parcels by Lot Area', 'count parcels by Owner name'])
+  assert.deepEqual(completeText('count parcels by zo', src), ['count parcels by Zoning'])
+  assert.deepEqual(completeText('parcels where zoning is r', src), ['parcels where zoning is R-4', 'parcels where zoning is R-8'])
+  assert.deepEqual(completeText('parcels where status is ', src), ['parcels where status is Active', 'parcels where status is Retired'])
+  assert.deepEqual(completeText('what percent of parcels are ', src), ['what percent of parcels are Zoning', 'what percent of parcels are Status', 'what percent of parcels are Lot Area', 'what percent of parcels are Owner name'])
+  assert.ok(completeText('who', src).includes('who owns'))
+  assert.ok(!completeText('who', { ...src, places: false }).includes('who owns'))
+  assert.ok(completeText('parc', src).includes('turn on Parcels'))
+  assert.deepEqual(completeText('airp', src), ['zoom to Airport'])
+  assert.equal(addressFragment('who owns 250 n 5'), '250 n 5')
+  assert.equal(addressFragment('250 N 5th St'), '250 N 5th St')
+  assert.equal(addressFragment('closest hydrant to 1718 white'), '1718 white')
+  assert.equal(addressFragment('3 largest parcels'), null)
+  assert.equal(addressFragment('parcels over 5 acres'), null)
+  assert.equal(addressFragment('zoom to 39.06, -108.55'), null)
+  assert.equal(addressFragment('turn on parcels'), null)
+  assert.equal(withAddress('who owns 250 n 5', '250 n 5', '250 N 5th St'), 'who owns 250 N 5th St')
+  assert.deepEqual(addressQuestions('250 N 5th St', false), ['zoom to 250 N 5th St'])
+  assert.equal(addressQuestions('250 N 5th St', true).length, 4)
+
+  // Through the Mind, with a locator that suggests.
+  const { live, layer } = fixture()
+  layer.fields = [...fields, { name: 'ZONING', type: 'string', domain: { type: 'coded-value', codedValues: [{ code: 'R4', name: 'R-4' }, { code: 'C1', name: 'C-1' }] } }]
+  live.jmv.view.center = { latitude: 39, longitude: -108 }
+  const asked = []
+  sdkLoader = async () => [{ suggestLocations: async (url, params) => { asked.push(params.text); return [{ text: '250 N 5th St, Springfield' }, { text: '250 N 5th Ave, Springfield' }] } }, async () => ({ data: { capabilities: 'Geocode,ReverseGeocode,Suggest' } })]
+  const docs = [{ id: 'bm:1', kind: 'bookmark', title: 'Downtown', text: '', src: 'live' }]
+  const mind = new Mind({ live, index: new MappyIndex(docs), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', geocoders: [{ url: 'https://city.test/GeocodeServer', name: 'City' }] })
+  assert.deepEqual(await mind.completeAsync('who owns 250 n 5'), ['who owns 250 N 5th St, Springfield', 'who owns 250 N 5th Ave, Springfield'])
+  assert.deepEqual(asked, ['250 n 5'])
+  const bare = await mind.completeAsync('250 n 5th')
+  assert.equal(bare[0], 'zoom to 250 N 5th St, Springfield')
+  assert.ok(bare.includes('who owns 250 N 5th St, Springfield'))
+  assert.deepEqual(await mind.completeAsync('zoom to dow'), ['zoom to Downtown'])
+  assert.deepEqual(await mind.completeAsync('parcels where zoning is c'), ['parcels where zoning is C-1'])
+  assert.equal(asked.length, 2, 'no locator call without an address')
+  // A locator without Suggest, or one that fails, leaves the local completions.
+  sdkLoader = async () => [{ suggestLocations: async () => { throw new Error('down') } }, async () => ({ data: { capabilities: 'Geocode' } })]
+  assert.deepEqual(await mind.completeAsync('who owns 250 n 5'), [])
+  sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
+})
+

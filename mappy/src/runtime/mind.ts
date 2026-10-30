@@ -35,6 +35,10 @@ import { V, pick } from '../brain/voice'
 import { rand } from '../brain/random'
 import { flat, clip, tokenize, stripTags } from '../brain/text'
 import type { LiveMap, LayerEntry, ToggleResult } from './live'
+import type { LayerInfo } from '../brain/layers'
+import { completeText, addressFragment, withAddress, addressQuestions } from '../brain/complete'
+import type { CompleteSource } from '../brain/complete'
+import { suggestAddresses } from './geocoder'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
 import { fieldLabel, keyLabel } from '../brain/fields'
@@ -316,33 +320,53 @@ export class Mind {
     return reply
   }
 
+  /** What the app has, for predictive text: layers, tools, bookmarks, a layer's fields and code lists. */
+  private completeSource (): CompleteSource {
+    const live = this.ctx.live
+    const layers: string[] = []
+    try { for (const e of live.entries()) if (e.title && !e.isTable) layers.push(e.title) } catch (e) { }
+    const docs = this.ctx.index.docs
+    const info = (layer: string): LayerInfo | null => { try { const e = live.find(layer); return e ? live.info(e) : null } catch (e) { return null } }
+    return {
+      layers,
+      widgets: docs.filter(d => d.kind === 'widget').map(d => d.title),
+      bookmarks: docs.filter(d => d.kind === 'bookmark').map(d => d.title),
+      fieldsOf: layer => (info(layer)?.fields || []).filter(f => !/^(?:objectid|fid|oid|globalid|shape)/i.test(f.name) && !/shape[._]|globalid/i.test(f.name)).map(f => fieldLabel(f as any)),
+      valuesOf: (layer, field) => {
+        const f = (info(layer)?.fields || []).find(x => fieldLabel(x as any).toLowerCase() === field.toLowerCase() || x.name.toLowerCase() === field.toLowerCase())
+        return (f?.codes || []).map(([, name]) => String(name))
+      },
+      places: !!((this.ctx.geocoders?.length && live.view) || this.ctx.mcp)
+    }
+  }
+
   /**
    * Typeahead for the chat box: starters and app names that continue what was typed so far.
    * Pure lookup, no network, at most five, shortest first.
    */
-  complete (prefix: string): string[] {
-    const p = String(prefix || '').trim().toLowerCase()
-    if (p.length < 2) return []
-    const layers: string[] = []
-    try { for (const e of this.ctx.live.entries()) if (e.title && !e.isTable) layers.push(e.title) } catch (e) { }
-    const widgets = this.ctx.index.docs.filter(d => d.kind === 'widget').map(d => d.title)
-    const pool: string[] = [
-      'turn on ', 'turn off ', 'show only ', 'where are the ', 'how many ', 'fields in ', 'explore ', 'open ', 'close ', 'zoom to ', 'find ', 'what does ', 'what is ',
-      'list layers', 'list widgets', 'list bookmarks', 'show me around', 'what did I change', 'undo', 'tip', 'help', 'tell me a joke', 'print the map', 'share the map', 'measure', 'reset the map', 'who owns ', 'closest ', 'directions to '
-    ]
-    const out = new Set<string>()
-    const add = (x: string) => { if (x.toLowerCase() !== p && x.toLowerCase().startsWith(p)) out.add(x) }
-    for (const x of pool) add(x.trim())
-    // "turn on par" -> "turn on Parcels"; "open la" -> "open Layer List".
-    const verb = p.match(/^((?:turn on|turn off|show only|show|hide|where are the|where are|how many|fields in|explore|zoom to|find|open|close)\s+)(.*)$/)
-    if (verb) {
-      const names = /^(?:open|close)\s+$/.test(verb[1]) ? widgets : layers
-      for (const n of names) if (n.toLowerCase().startsWith(verb[2]) && verb[2].length) out.add(verb[1] + n)
+  complete (prefix: string): string[] { return completeText(prefix, this.completeSource()) }
+
+  /**
+   * The same, plus address suggestions from the app's locator when an address is being typed
+   * ("who owns 250 n 5" -> "who owns 250 N 5th St"); a bare address offers the questions to ask about it.
+   */
+  async completeAsync (prefix: string, signal?: AbortSignal): Promise<string[]> {
+    const src = this.completeSource()
+    const local = completeText(prefix, src)
+    const frag = addressFragment(prefix)
+    if (!frag || !this.ctx.geocoders?.length || !this.ctx.live.view) return local
+    let suggestions: string[] = []
+    try { suggestions = await suggestAddresses(frag, this.ctx.geocoders, this.ctx.live.view, undefined, signal) } catch (e) { suggestions = [] }
+    if (signal?.aborted || !suggestions.length) return local
+    const bare = prefix.trim().toLowerCase() === frag.toLowerCase()
+    const out: string[] = []
+    if (bare) {
+      // "250 N 5th St" alone: the top match, as the questions people ask about it.
+      for (const s of suggestions.slice(0, 2)) for (const q of addressQuestions(s, src.places)) out.push(q)
     } else {
-      for (const n of layers) if (n.toLowerCase().startsWith(p)) out.add('turn on ' + n)
-      for (const n of widgets) if (n.toLowerCase().startsWith(p)) out.add('open ' + n)
+      for (const s of suggestions) out.push(withAddress(prefix, frag, s))
     }
-    return Array.from(out).sort((a, b) => a.length - b.length).slice(0, 5)
+    return Array.from(new Set([...out, ...local])).slice(0, 5)
   }
 
   private async respondInner (input: string): Promise<Reply> {

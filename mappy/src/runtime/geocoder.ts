@@ -33,3 +33,28 @@ export async function geocodeAddress (text: string, sources: GeocoderSource[], v
   }
   return { results: results.sort((a, b) => b.score - a.score).slice(0, 5), failed }
 }
+
+/**
+ * Address suggestions while typing, from the first locator that offers Suggest (the same call
+ * the Search widget makes). Up to five texts; [] when none or when the locator cannot suggest.
+ */
+export async function suggestAddresses (text: string, sources: GeocoderSource[], view: any, load = loadArcGISJSAPIModules, signal?: AbortSignal): Promise<string[]> {
+  const t = String(text || '').trim()
+  if (t.length < 3) return []
+  const [locator, request] = await load(['esri/rest/locator', 'esri/request'])
+  for (const source of sources.slice(0, 3)) {
+    try {
+      const info = await withTimeout(request(source.url, { query: { f: 'json' }, responseType: 'json', signal }), 6000)
+      if (!/suggest/i.test(String(info?.data?.capabilities || ''))) continue
+      const params: any = { text: [source.prefix, t, source.suffix].filter(Boolean).join(' '), maxSuggestions: 5 }
+      if (source.countryCode) params.countryCode = source.countryCode
+      if (source.categories?.length) params.categories = source.categories
+      if (view?.center) params.location = view.center
+      if (source.withinViewEnabled && view?.extent) params.searchExtent = view.extent
+      const out = await withTimeout(locator.suggestLocations(source.url, params, { signal }), 6000)
+      const texts: string[] = (out || []).map((x: any) => String(x?.text || '')).filter(Boolean)
+      if (texts.length) return Array.from(new Set<string>(texts)).slice(0, 5)
+    } catch (e) { if (signal?.aborted) return [] }
+  }
+  return []
+}
