@@ -794,7 +794,7 @@ export class Mind {
     const info = live.info(e)
     const name = (g: any): string => {
       const a = g.attributes || {}
-      const display = (live.target(e)?.displayField && a[live.target(e).displayField]) || a.NAME || a.Name || a.FACILITYID || a.FacilityID || a.ASSETID || a.ADDRESS || a.SITUS || a[Object.keys(a).find(k => /name|id$/i.test(k) && a[k] != null && !/objectid|globalid/i.test(k)) || '']
+      const display = (live.target(e)?.displayField && a[live.target(e).displayField]) || a.NAME || a.Name || a.FACILITYID || a.FacilityID || a.ASSETID || a.ADDRESS || a.SITUS || a[Object.keys(a).find(k => (/name/i.test(k) || /id$/i.test(k)) && a[k] != null && !/objectid|globalid/i.test(k)) || '']
       return display != null && display !== '' ? String(display) : `${e.title.replace(/s$/i, '')} ${a[live.target(e)?.objectIdField] ?? ''}`.trim()
     }
     const ft = (n: number): string => n < 1 ? 'right there' : n < 5280 ? `${Math.round(n).toLocaleString()} ft` : `${(n / 5280).toFixed(1)} mi`
@@ -2287,7 +2287,7 @@ export class Mind {
     const e = live.parcelLayers()[0]
     if (!e) return { text: 'This map has no parcel layer to add up owners from.', mood: 'confused', suggest: ['List layers'] }
     if (!live.canSee(e)) return this.offReply(e)
-    const owner = (live.info(e).fields || []).find(f => /owner|taxpayer/i.test(`${f.name} ${f.alias || ''}`) && !/addr|address|city|state|zip|type|id$/i.test(`${f.name} ${f.alias || ''}`))
+    const owner = (live.info(e).fields || []).find(f => /owner|taxpayer/i.test(`${f.name} ${f.alias || ''}`) && !/addr|city|state|zip|type/i.test(`${f.name} ${f.alias || ''}`) && !/id$/i.test(`${f.name} ${f.alias || ''}`))
     if (!owner) return { text: `**${e.title}** has no owner field I can group by.`, mood: 'confused', suggest: [`Fields in ${e.title}`] }
     const request: AnalysisRequest = byCount ? { kind: 'group', layer: e.key, field: owner.name, inView: false, limit: 10, order: 'desc' } : { kind: 'group', layer: e.key, field: owner.name, inView: false, stat: 'sum', valueField: '*size*' }
     try {

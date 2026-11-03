@@ -46,7 +46,7 @@ async function factsFor (live: LiveMap, e: LayerEntry): Promise<string[]> {
   const where = t.definitionExpression || '1=1'
   const oid = t.objectIdField || fields.find(f => f.type === 'oid')?.name
   const numeric = (f: any) => /integer|double|single|small-integer|big-integer|long/i.test(f.type || '')
-  const lengthF = /polyline/i.test(geom) ? fields.find(f => numeric(f) && /shape.*len|^st_length|length$/i.test(f.name)) : null
+  const lengthF = /polyline/i.test(geom) ? fields.find(f => numeric(f) && (/shape.*len/i.test(f.name) || /^st_length/i.test(f.name) || /length$/i.test(f.name))) : null
   const acresF = /polygon/i.test(geom) ? (fields.find(f => numeric(f) && /acre/i.test(`${f.name} ${f.alias || ''}`)) || fields.find(f => numeric(f) && /shape.*area|^st_area/i.test(f.name))) : null
   const yearF = fields.find(f => numeric(f) && /year|\byr\b/i.test(`${f.name} ${f.alias || ''}`) && /install|built|constr|placed|service/i.test(`${f.name} ${f.alias || ''}`))
     || fields.find(f => /date/i.test(f.type || '') && /install|built|constr|placed|in.?service/i.test(`${f.name} ${f.alias || ''}`))
