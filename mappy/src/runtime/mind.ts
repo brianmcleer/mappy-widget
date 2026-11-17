@@ -580,6 +580,12 @@ export class Mind {
       } else if (m?.type === 'layer' && typeof m.layer === 'string' && m.layer.trim()) {
         const name = clip(m.layer.replace(/[*_`\[\]]/g, '').trim(), 40)
         if (!/^__/.test(name)) actions.push({ type: 'ask', q: `turn on ${name}`, label: `Turn on ${name}` })
+      } else if (m?.type === 'command' && typeof m.command === 'string') {
+        // Only requests he understands himself become buttons; nothing runs until it is clicked.
+        const command = m.command.replace(/\s+/g, ' ').trim()
+        let known = false
+        try { known = command.length > 2 && command.length <= 160 && !/^_/.test(command) && parseIntent(normalizeCommand(command)).name !== 'ask' } catch (e) { }
+        if (known) actions.push({ type: 'ask', q: command, label: clip(String(m.label || command).replace(/[*_`\[\]]/g, '').trim() || command, 40) })
       }
     }
     const followups: string[] = (Array.isArray(data.followups) ? data.followups : []).filter((f: any) => typeof f === 'string' && !/^\s*__/.test(f)).map((f: any) => clip(String(f || '').replace(/[*_`]/g, '').trim(), 70)).filter((f: string) => f.length > 3 && !/^__/.test(f)).slice(0, 3)
@@ -592,6 +598,14 @@ export class Mind {
     }
     if (actions.length) reply.actions = actions
     if (followups.length) reply.suggest = followups
+    // A chart or a small table Claude built from what it looked up.
+    const chartRows = (Array.isArray(data.chart?.rows) ? data.chart.rows : []).filter((r: any) => r && typeof r.label === 'string' && Number.isFinite(r.value)).slice(0, 12)
+      .map((r: any) => ({ label: clip(r.label, 40), value: Number(r.value) }))
+    if (chartRows.length >= 2) reply.chart = { title: clip(String(data.chart.title || ''), 60) || undefined, rows: chartRows, unit: clip(String(data.chart.unit || ''), 20) || undefined }
+    const cols: string[] = (Array.isArray(data.table?.columns) ? data.table.columns : []).slice(0, 6).map((c: any) => clip(String(c ?? ''), 30))
+    const rows: string[][] = (Array.isArray(data.table?.rows) ? data.table.rows : []).filter((r: any) => Array.isArray(r)).slice(0, 15)
+      .map((r: any[]) => cols.map((_, i) => clip(String(r[i] ?? ''), 80)))
+    if (cols.length && rows.length) reply.table = { columns: cols, rows }
     this.lastReply = reply
     return reply
   }
@@ -612,9 +626,12 @@ export class Mind {
     } catch (e) { return '' }
   }
 
-  /** The line about the map for a question going to Claude. */
+  /** The line about the map for a question going to Claude, and the app's own tools, so it can point at them. */
   private handoffContextLine (): string {
-    try { return contextLine(this.handoffContext()) } catch (e) { return '' }
+    try {
+      const tools = Array.from(new Set(this.ctx.index.docs.filter(d => d.kind === 'widget').map(d => d.title.trim()).filter(Boolean))).slice(0, 14)
+      return [contextLine(this.handoffContext()), tools.length ? `(Tools in this app: ${tools.map(t => clip(t, 30)).join(', ')}.)` : ''].filter(Boolean).join(' ')
+    } catch (e) { return '' }
   }
 
   /** "ask Claude ...", "send that to Claude": one link that opens the assistant with the question written. */

@@ -28,6 +28,12 @@ def messages():
     if 'followups' in text:
         return jsonify({'id': 'm0', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn', 'usage': USAGE,
                         'content': [{'type': 'text', 'text': 'There are **12** parks.\n\nNext: Which is the largest? | Which have playgrounds? | x | Show them by district'}]})
+    if 'chart it' in text:
+        return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use', 'usage': USAGE,
+                        'content': [{'type': 'tool_use', 'id': 'tu_c', 'name': 'show_chart', 'input': {'title': 'Parcels by zoning', 'unit': 'parcels', 'rows': [{'label': 'R-4', 'value': 120}, {'label': 'R-8', 'value': '80'}, {'label': 'bad', 'value': 'x'}]}},
+                                    {'type': 'tool_use', 'id': 'tu_t', 'name': 'show_table', 'input': {'columns': ['Zone', 'Count'], 'rows': [['R-4', 120], ['R-8']]}},
+                                    {'type': 'tool_use', 'id': 'tu_m', 'name': 'map_suggest_command', 'input': {'command': 'chart parcels by zoning', 'label': 'Chart it on the map data'}},
+                                    {'type': 'tool_use', 'id': 'tu_x', 'name': 'map_suggest_command', 'input': {'command': '__mcp:run:1', 'label': 'sneaky'}}]})
     if 'show me' in text:
         return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use', 'usage': USAGE,
                         'content': [{'type': 'tool_use', 'id': 'tu_p', 'name': 'map_show_place', 'input': {'latitude': 39.0672, 'longitude': -108.5645, 'label': 'City Hall'}},

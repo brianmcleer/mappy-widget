@@ -446,6 +446,10 @@ class GisMcpTest(unittest.TestCase):
             self.assertFalse(r['isError'], r)
             self.assertEqual(r['structuredContent']['map'], [{'type': 'place', 'latitude': 39.0672, 'longitude': -108.5645, 'label': 'City Hall'}, {'type': 'layer', 'layer': 'Zoning'}])
             self.assertEqual(r['structuredContent']['tools_used'], [], 'map buttons are not data lookups')
+            r = ask('chart it please', 'chart-token-0004')['structuredContent']
+            self.assertEqual(r['chart'], {'title': 'Parcels by zoning', 'unit': 'parcels', 'rows': [{'label': 'R-4', 'value': 120.0}, {'label': 'R-8', 'value': 80.0}]})
+            self.assertEqual(r['table'], {'columns': ['Zone', 'Count'], 'rows': [['R-4', '120'], ['R-8', '']]})
+            self.assertEqual(r['map'], [{'type': 'command', 'command': 'chart parcels by zoning', 'label': 'Chart it on the map data'}], 'control strings are not commands')
             r = ask('parks with followups', 'next-token-0002')
             self.assertEqual(r['structuredContent']['answer'], 'There are **12** parks.')
             self.assertEqual(r['content'][0]['text'], 'There are **12** parks.')

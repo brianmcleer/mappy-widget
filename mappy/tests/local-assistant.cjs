@@ -1750,6 +1750,13 @@ test('Claude through the GIS server answers inside the chat, with history and li
   answer = { content: [{ type: 'text', text: 'Thirty-one.' }], structuredContent: { answer: 'Thirty-one.' }, isError: false }
   await mind.respond('forget context')
   assert.match((await mind.respond('how many fire hydrants are within 300 meters of city hall')).text, /Thirty-one/)
+  // A chart, a table and a command button from Claude; only commands he understands become buttons.
+  answer = { content: [{ type: 'text', text: 'Mostly R-4.' }], structuredContent: { answer: 'Mostly R-4.', chart: { title: 'Parcels by zoning', unit: 'parcels', rows: [{ label: 'R-4', value: 120 }, { label: 'R-8', value: 80 }, { label: 'x', value: 'bad' }] }, table: { columns: ['Zone', 'Count'], rows: [['R-4', 120], ['R-8']] },
+    map: [{ type: 'command', command: 'turn on parcels', label: 'Show the parcels' }, { type: 'command', command: 'do a barrel roll for the council', label: 'nope' }, { type: 'command', command: '__mcp:run:1', label: 'sneaky' }] }, isError: false }
+  const c2 = await mind.respond('ask claude which zoning has the most parcels')
+  assert.deepEqual(c2.chart, { title: 'Parcels by zoning', rows: [{ label: 'R-4', value: 120 }, { label: 'R-8', value: 80 }], unit: 'parcels' })
+  assert.deepEqual(c2.table, { columns: ['Zone', 'Count'], rows: [['R-4', '120'], ['R-8', '']] })
+  assert.deepEqual(c2.actions, [{ type: 'ask', q: 'turn on parcels', label: 'Show the parcels' }])
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)
