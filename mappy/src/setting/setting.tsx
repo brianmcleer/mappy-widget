@@ -26,6 +26,8 @@ import PlaceSection from './PlaceSection'
 import PreviewSection from './PreviewSection'
 import FeedSection from './FeedSection'
 import McpSection from './McpSection'
+import HelperSection from './HelperSection'
+import { helperMode } from '../brain/handoff'
 import { SETTING_CSS, Hint, Note, Sub, FullButton, ButtonPair, Group, toneOf } from './ui'
 import { lexiconFor, readRequest } from '../brain/language'
 
@@ -282,7 +284,9 @@ export default function Setting (props: SettingProps): any {
 
       <LanguageSection stored={config.languagePack} onChange={(pack: any) => set('languagePack', pack)} />
 
-      <McpSection value={config.mcp} onChange={(v: any) => set('mcp', v)} />
+      <HelperSection helper={config.helper} assistant={config.assistant} mcp={config.mcp} appTitle={String(appConfig?.attributes?.title || '')} set={set} />
+
+      <McpSection value={config.mcp} active={helperMode(config.helper, plain<any>(config.mcp)) === 'mcp'} onChange={(v: any) => set('mcp', v)} />
 
       <Group title='Custom answers and notes'>
       <SettingSection>

@@ -1,3 +1,10 @@
+## 1.10.0 (2026-11-17)
+
+- Where he gets help, one choice in settings: **This app only**, **My GIS server (MCP)** or **An AI assistant (Claude)**. The chat follows that one setting; there are no extra buttons to pick between. Older apps keep working as they were (the server when one is connected, otherwise the app alone). The on/off switch in MCP server is gone; the choice replaces it, and a connected server is kept when another helper is chosen.
+- An AI assistant as the helper. Mappy still does map work himself and never calls a model. When he is stuck (a real question of a few words, with nothing he can offer to fix himself), his answer carries one **Ask Claude** link that opens the assistant in a new tab with the question already written. Work that suits an assistant ("make me a map of zoning around City Hall", "write a summary of...") is handed over plainly. "Ask Claude how many...", "ask Claude" (the last question again), "send that to Claude" and "open this in the assistant" do it on request, and "ask Claude" shows in the suggestions as you type.
+- Settings for the assistant: its name in the chat, a prefix written in front of every question (a skill or plugin to use, such as "/my-gis-skill"), the address that opens it (Claude when empty; any assistant that takes a question in its address works, with {q} where the question goes; https only), "Send where the map is" (one line: the address being looked at, the map center, the layers on; no feature data), and "Only for signed-in people" (on by default, so a public app never shows it to anonymous visitors). A preview shows exactly what gets written, with a link to try it.
+- Nothing is sent until the person clicks, and the question runs under their own account in the assistant. Diagnostics says which helper is in use.
+
 ## 1.9.0 (2026-10-29)
 
 - Guided tour: "show me around", "give me a tour", "walk me through this app". He visits the app's tools one at a time, says what each does and where it lives, points at it and pulses it when it is on screen, with Next and Stop tour chips ("finish tour" on the last stop).

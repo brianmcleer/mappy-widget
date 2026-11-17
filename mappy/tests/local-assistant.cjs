@@ -1603,6 +1603,92 @@ test('open fact sources: Wikidata, climate, Census, DBpedia, OSM shaping, and fa
 })
 
 
+test('one helper choice: the app alone, the MCP server, or an AI assistant', () => {
+  const { helperMode, assistantPort, safeAssistantUrl } = require('../src/brain/handoff.ts')
+  assert.equal(helperMode(undefined, null), 'local')
+  assert.equal(helperMode(undefined, { url: 'https://s/mcp' }), 'mcp')
+  assert.equal(helperMode(undefined, { url: 'https://s/mcp', enabled: false }), 'local')
+  assert.equal(helperMode('assistant', { url: 'https://s/mcp' }), 'assistant')
+  assert.equal(helperMode('local', { url: 'https://s/mcp' }), 'local')
+  assert.equal(helperMode('bogus', null), 'local')
+  assert.deepEqual(assistantPort(null), { label: 'Claude', url: 'https://claude.ai/new?q={q}', prefix: '', context: true })
+  assert.equal(assistantPort({ url: 'http://plain.example/?q={q}' }), null)
+  assert.equal(assistantPort({ url: 'javascript:alert(1)' }), null)
+  assert.equal(safeAssistantUrl('https://user:pw@example.com/?q={q}'), false)
+  assert.equal(assistantPort({ label: '  Helper\nBot ', prefix: '/my-gis', context: false }).label, 'Helper Bot')
+})
+
+test('a handed-over question carries the prefix, the question and where the map is', () => {
+  const { assistantPort, handoffPrompt, handoffUrl, contextLine, parseHandoff, assistantJob } = require('../src/brain/handoff.ts')
+  const port = assistantPort({ prefix: '/my-gis' })
+  const ctx = { app: 'Test map', place: '250 N 5th St', center: [39.0672, -108.5645], layersOn: ['Parcels', 'Zoning'], selected: 'Parcels' }
+  assert.equal(contextLine(ctx), '(Asked from the map app "Test map": looking at 250 N 5th St (map center 39.06720, -108.56450); layers on: Parcels, Zoning; a Parcels feature is selected.)')
+  assert.equal(contextLine({ app: 'Test map' }), '')
+  assert.equal(handoffPrompt(port, '  what is\nthe zoning history here? ', ctx), '/my-gis what is the zoning history here?\n\n' + contextLine(ctx))
+  assert.equal(handoffPrompt(assistantPort({ context: false }), 'hello there', ctx), 'hello there')
+  assert.equal(handoffPrompt(port, '   ', ctx), '')
+  const url = handoffUrl(port, 'who owns & what?', null)
+  assert.equal(url, 'https://claude.ai/new?q=' + encodeURIComponent('/my-gis who owns & what?'))
+  assert.equal(handoffUrl(assistantPort({ url: 'https://chat.example/start' }), 'hi there', null), 'https://chat.example/start?q=hi%20there')
+  assert.equal(handoffUrl(assistantPort({ url: 'https://chat.example/start?m=1' }), 'hi there', null), 'https://chat.example/start?m=1&q=hi%20there')
+  assert.equal(handoffUrl(null, 'hi', null), null)
+  assert.ok(handoffPrompt(port, 'x'.repeat(5000), ctx).length <= 1800)
+  assert.deepEqual(parseHandoff('ask Claude how many parcels sold last year', 'Claude'), { question: 'how many parcels sold last year' })
+  assert.deepEqual(parseHandoff('ask claude about this', 'Claude'), { question: '' })
+  assert.deepEqual(parseHandoff('send that to Claude', 'Claude'), { question: '' })
+  assert.deepEqual(parseHandoff('open this in the assistant', 'Claude'), { question: '' })
+  assert.deepEqual(parseHandoff('ask GeoBot: what is zoning', 'GeoBot'), { question: 'what is zoning' })
+  assert.equal(parseHandoff('ask the server where is city hall', 'Claude'), null)
+  assert.equal(parseHandoff('turn on parcels', 'Claude'), null)
+  assert.equal(assistantJob('make me a map of zoning around City Hall'), true)
+  assert.equal(assistantJob('can you write a summary of the parcels'), true)
+  assert.equal(assistantJob('turn on parcels'), false)
+})
+
+test('with an assistant as the helper, stuck answers and "ask Claude" carry one link to it', async () => {
+  const { assistantPort } = require('../src/brain/handoff.ts')
+  const { live } = fixture()
+  const base = { live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' }
+  const mind = new Mind({ ...base, assistant: assistantPort({ prefix: '/my-gis' }) })
+  const links = r => (r.actions || []).filter(a => a.type === 'url' && /^https:\/\/claude\.ai\/new\?q=/.test(a.url))
+  // He still does map work himself: no link on an answer he has.
+  const on = await mind.respond('turn on parcels')
+  assert.equal(links(on).length, 0)
+  // Stuck: one link, question and prefix inside.
+  const stuck = await mind.respond('why did the zoning change downtown in the nineties')
+  assert.equal(links(stuck).length, 1)
+  assert.equal(stuck.actions[0].label, 'Ask Claude')
+  assert.match(decodeURIComponent(stuck.actions[0].url), /^https:\/\/claude\.ai\/new\?q=\/my-gis why did the zoning change downtown in the nineties/)
+  assert.match(decodeURIComponent(stuck.actions[0].url), /Asked from the map app "Test map"/)
+  assert.match(stuck.text, /\*\*Claude\*\* may be able to answer/)
+  assert.notEqual(stuck.mood, 'confused')
+  // "ask Claude" alone sends the last real question.
+  const again = await mind.respond('ask Claude')
+  assert.equal(links(again).length, 1)
+  assert.match(decodeURIComponent(again.actions[0].url), /why did the zoning change downtown in the nineties/)
+  // With a question of its own.
+  const direct = await mind.respond('ask Claude what air photos exist from before 1980')
+  assert.equal(direct.actions.length, 1)
+  assert.match(decodeURIComponent(direct.actions[0].url), /\/my-gis what air photos exist from before 1980/)
+  assert.match(direct.text, /opens in a new tab/)
+  assert.doesNotMatch(direct.text, /I read that as/)
+  assert.doesNotMatch((await mind.respond('ask claude waht air fotos exist from befor 1980')).text, /I read that as/)
+  // A stray word or two, or something he can fix himself, gets no link.
+  assert.equal(links(await mind.respond('asdf qwer')).length, 0)
+  // Work for an assistant gets a plain handoff, one button only.
+  const job = await mind.respond('write me a memo about flood risk for the council')
+  if (links(job).length) { assert.equal(job.actions.length, 1); assert.match(job.text, /more than a map helper can do/) }
+  // Typeahead offers it.
+  assert.ok((mind.complete('ask c') || []).some(x => /^ask Claude/i.test(x)))
+  // No assistant: nothing about Claude anywhere.
+  const plainMind = new Mind(base)
+  const lost = await plainMind.respond('why did the zoning change downtown in the nineties')
+  assert.equal(links(lost).length, 0)
+  assert.doesNotMatch(lost.text, /Claude/)
+  const asked = await plainMind.respond('ask Claude what air photos exist')
+  assert.equal(links(asked).length, 0)
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

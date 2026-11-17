@@ -16,6 +16,8 @@ export interface CompleteSource {
   valuesOf: (layer: string, field: string) => string[]
   /** An address locator or a GIS server is connected: place questions make sense. */
   places: boolean
+  /** Extra starters for this app ("ask Claude " when an assistant is the helper). */
+  starters?: string[]
 }
 
 const STARTERS = [
@@ -66,7 +68,7 @@ export function completeText (prefix: string, src: CompleteSource, max = 5): str
   const add = (s: string) => { if (s && norm(s) !== pt && norm(s).startsWith(pt)) out.add(s) }
   const names = (list: string[], frag: string, head: string) => { for (const n of list) if ((frag.length || (head.endsWith(' ') && list.length <= 12)) && n.toLowerCase().startsWith(frag)) out.add(head + n) }
 
-  for (const s of [...STARTERS, ...(src.places ? PLACE_STARTERS : [])]) add(s.trim())
+  for (const s of [...STARTERS, ...(src.places ? PLACE_STARTERS : []), ...(src.starters || [])]) add(s.trim())
 
   // "zoom to dow" -> bookmarks, then layers.
   let m = p.match(/^((?:zoom|go|fly|take me) to (?:the )?)(.*)$/)

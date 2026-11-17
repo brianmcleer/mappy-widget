@@ -54,6 +54,14 @@ export interface Config {
    * tools [{ name, enabled, confirm }] chosen in settings. See docs/mcp.md.
    */
   mcp?: any
+  /**
+   * Where he turns for help beyond the app, one choice: 'local' (the app's own layers and
+   * locator only), 'mcp' (the MCP server above) or 'assistant' (an AI assistant in its own tab,
+   * Claude by default). Undefined means the server when one is connected, else local.
+   */
+  helper?: 'local' | 'mcp' | 'assistant'
+  /** The assistant for helper 'assistant': label, url ({q} is the question), prefix, context, signedInOnly. See brain/handoff.ts. */
+  assistant?: any
   /** Jokes, riddles, games and the hat for the time of year. Undefined means on. */
   fun?: boolean
   /** Little synthesized sounds (a pop when he arrives, a knock for a tip, a ta-da). Off unless turned on. */

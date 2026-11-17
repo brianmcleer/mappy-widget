@@ -6,7 +6,7 @@ Discussion, questions and ideas: [Mappy on Esri Community](https://community.esr
 
 He works in any app with no setup. A **deep scan** in the builder makes him much smarter.
 
-The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
+The assistant runs in the browser. There is no model download, API key, outside AI service, or LLM server (an MCP server is used only if you connect one, and an AI assistant only as a link people click, if you choose it as the helper). ArcGIS map data, feature queries, manifests and optional help scans still use the app's configured services. Telemetry is off by default and requires explicit opt-in. This is a local command and retrieval assistant, not a general-purpose language model or a fully offline map.
 
 **New in 1.9:** a knowledge feed (one JSON file fetched once a day, so words, answers, terms, facts and tips keep improving without an app update; see [Knowledge feed](#knowledge-feed)), a guided tour ("show me around" walks the app's tools one at a time, pointing at each), "what did I change" (everything he did to the map, with undo), "try again" after a server hiccup, "what did I click" (the feature under an open popup, as a table), suggestions as you type, including addresses from your locator and a layer's fields and code lists (Tab takes the first), a light bulb with ideas when a popup opens, and a Preview section in settings to see any of the 80 outfits and 30 acts now.
 
@@ -51,6 +51,18 @@ The bridge contract (`window.__exbLayerLists`, event `exb-layer-list-change`) is
 Mappy keeps improving without an app update. Once a day each browser fetches `knowledge/feed.json` from this repository (cached, ETag-aware, never waited for): the newest language pack, community questions and answers, glossary terms, fun facts and tips. The weekly language build and every change to `knowledge/knowledge.json` rebuild the feed through a pull request. Settings has a **Knowledge feed** section to turn it off, point at your own copy (an https folder on your web server, kept current by a scheduled task that pulls this repository), and check it. Only https, only JSON under 2 MB, only the feed format is used; a feed that fails is ignored and the bundled knowledge stays. Your own questions and answers always outrank the feed's. Format and limits: [knowledge/README.md](../knowledge/README.md).
 
 Code changes (new commands, art, settings) still need a widget update and an app rebuild; the feed carries data only.
+
+## Where he gets help (one choice)
+
+**Where he gets help** in settings is a single choice, and the chat follows it:
+
+| Choice | What he turns to beyond the app |
+|---|---|
+| This app only | Nothing. The app's own layers, tools, locator and your answers. |
+| My GIS server (MCP) | The MCP server you connect below, for place and data questions. |
+| An AI assistant (Claude) | He still does map work himself. When he is stuck, or someone says "ask Claude ...", his answer carries one link that opens the assistant in a new tab with the question written. |
+
+For an assistant you set its name, a prefix written in front of every question (a skill or plugin of yours, for example `/my-gis-skill`), and optionally another assistant's address (`https://.../?q={q}`). "Send where the map is" adds one line (the address being looked at, the map center, the layers on). "Only for signed-in people" keeps it away from anonymous visitors of a public app. Mappy never calls a model and holds no key: nothing is sent until the person clicks, and the question runs under their own account in the assistant.
 
 ## MCP server (optional)
 
@@ -152,6 +164,7 @@ The bubble is a labelled non-modal dialog that always stays inside the browser t
 | Save this view as home base / Go to home base | Saved views, kept in this browser |
 | Chart parcels by zoning / Chart that | Bars in the chat |
 | Zoom in twice / Pan left / North up / Drop a pin here | Map control in plain words |
+| Ask Claude (when an assistant is the helper) | "ask Claude how many parcels sold last year", "ask Claude" (the last question again), "send that to Claude": one link that opens the assistant with the question written |
 | Fun fact / Local fact | Facts from Wikipedia, Wikidata, Open-Meteo climate, OpenStreetMap, Wikivoyage, DBpedia, USGS and the Census (built in settings, each line names its source), and from the map's own layers |
 | Census / Place in numbers | "census facts", "demographics", "what's the population", "median home value", "how many people live here", "average commute", "how much snow do we get", answered from the saved facts (Census first) |
 | Fewer tips / Stop bugging me | Tips off for good; "tip" asks for one |

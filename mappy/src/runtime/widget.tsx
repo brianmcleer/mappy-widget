@@ -42,6 +42,8 @@ import { Mind } from './mind'
 import { openInTable, tableWidgetIds } from './tableWidget'
 import { McpClient } from './mcp'
 import type { McpPort } from '../brain/mcpTools'
+import { helperMode, assistantPort } from '../brain/handoff'
+import type { AssistantPort } from '../brain/handoff'
 import { configuredGeocoders } from '../brain/addresses'
 import { useDesktopWindow } from './desktop'
 import MappyCharacter from './components/MappyCharacter'
@@ -192,13 +194,27 @@ export default function Widget (props: Props): any {
   // The MCP server the builder connected (the second way Mappy can help). The signed-in
   // ArcGIS user's token is sent only when the builder chose "ArcGIS sign-in".
   const mcpConfig = React.useMemo(() => plain<any>(cfg.mcp) || null, [cfg.mcp])
+  // One choice in settings, "Where he gets help": the app alone, the MCP server, or an AI assistant.
+  const helper = helperMode(cfg.helper, mcpConfig)
   const mcp = React.useMemo<McpPort | null>(() => {
-    if (!mcpConfig?.url || mcpConfig.enabled === false) return null
+    if (!mcpConfig?.url || helper !== 'mcp') return null
     try {
       const client = new McpClient(mcpConfig, () => { try { return SessionManager.getInstance().getMainSession()?.token || null } catch (e) { return null } })
       return { label: mcpConfig.label || 'the MCP server', fallback: mcpConfig.fallback !== false, prefs: mcpConfig.tools || [], tools: () => client.listTools(), call: (n: string, a: any) => client.callTool(n, a) }
     } catch (e) { return null }
-  }, [mcpConfig])
+  }, [mcpConfig, helper])
+  // The assistant never gets called from here: a stuck answer carries one link that opens it in
+  // a new tab with the question written. Offered to signed-in people only unless the builder says otherwise.
+  const assistantConfig = React.useMemo(() => plain<any>(cfg.assistant) || null, [cfg.assistant])
+  const assistant = React.useMemo<AssistantPort | null>(() => {
+    if (helper !== 'assistant') return null
+    if (assistantConfig?.signedInOnly !== false) {
+      let signedIn = false
+      try { signedIn = !!SessionManager.getInstance().getMainSession() } catch (e) { }
+      if (!signedIn) return null
+    }
+    return assistantPort(assistantConfig)
+  }, [assistantConfig, helper])
 
   const beaconRef = React.useRef<BeaconHandle | null>(null)
   const mindRef = React.useRef<Mind | null>(null)
@@ -218,6 +234,7 @@ export default function Widget (props: Props): any {
     layerListLabel: layerList.label,
     beacon: beaconRef.current,
     mcp,
+    assistant,
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,
     place: {
@@ -240,7 +257,7 @@ export default function Widget (props: Props): any {
     if (!mindRef.current) mindRef.current = new Mind(context)
     else mindRef.current.ctx = context
     return mindRef.current
-  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, feed, mapFacts, portalSelf?.name, props.id])
+  }, [index, extracted, hints, name, appTitle, cfg.featureSearch, cfg.maxResults, cfg.showInLayerList, layerList, geocoders, mcp, assistant, cfg.typoFix, cfg.fun, cfg.orgName, cfg.placeName, cfg.website, cfg.localFacts, feed, mapFacts, portalSelf?.name, props.id])
 
   // ------------------------------------------------------------------ map
   const mapWidgetId: string | undefined = React.useMemo(() => {

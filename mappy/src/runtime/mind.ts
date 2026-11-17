@@ -21,6 +21,8 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
+import { handoffUrl, parseHandoff, assistantJob } from '../brain/handoff'
+import type { AssistantPort, HandoffContext } from '../brain/handoff'
 import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField, compileConditions } from '../brain/analysis'
 import { reviseTask, taskSummary } from '../brain/task'
 import type { TaskOperation, TaskSummary } from '../brain/task'
@@ -65,6 +67,8 @@ export interface MindContext {
   typoFix?: boolean
   /** An MCP server the builder connected in settings (the second way Mappy can help). */
   mcp?: McpPort | null
+  /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
+  assistant?: AssistantPort | null
   /** Where the person is (the device's location), when they allow it. */
   myLocation?: () => Promise<[number, number] | null>
   /** Jokes, riddles and games. Undefined means on. */
@@ -341,7 +345,7 @@ export class Mind {
     this.locationNote = false
     const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
     const reply = await this.respondInner(input)
-    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name)) this.lastInput = input
+    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(this.ctx.assistant && parseHandoff(input, this.ctx.assistant.label))) this.lastInput = input
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
     // A server hiccup: one chip runs the same request again.
     if (reply.mood === 'alert' && this.lastInput && !control && !(reply.suggest || []).some(x => /try again/i.test(x))) reply.suggest = ['Try again', ...(reply.suggest || [])].slice(0, 5)
@@ -364,7 +368,8 @@ export class Mind {
         const f = (info(layer)?.fields || []).find(x => fieldLabel(x as any).toLowerCase() === field.toLowerCase() || x.name.toLowerCase() === field.toLowerCase())
         return (f?.codes || []).map(([, name]) => String(name))
       },
-      places: !!((this.ctx.geocoders?.length && live.view) || this.ctx.mcp)
+      places: !!((this.ctx.geocoders?.length && live.view) || this.ctx.mcp),
+      starters: this.ctx.assistant ? [`ask ${this.ctx.assistant.label} `] : undefined
     }
   }
 
@@ -429,13 +434,13 @@ export class Mind {
     const continued = this.placeConversation && followPlaceQuestion(plain, this.placeConversation)
     if (continued) input = continued
     let read = { text: input, changed: false, swaps: [] as Array<[string, string]> }
-    if (this.ctx.typoFix !== false && !this.lastAddress && !this.addressChoices && !this.awaitingPlace && !parsePlaceQuestion(normalizeCommand(input)) && !outOfScope(normalizeCommand(input), this.org()) && !DISTANCE_Q.test(normalizeCommand(input)) && !OWNED_Q.test(normalizeCommand(input)) && !/^__/.test(input)) {
+    if (this.ctx.typoFix !== false && !this.lastAddress && !this.addressChoices && !this.awaitingPlace && !parsePlaceQuestion(normalizeCommand(input)) && !outOfScope(normalizeCommand(input), this.org()) && !DISTANCE_Q.test(normalizeCommand(input)) && !OWNED_Q.test(normalizeCommand(input)) && !/^__/.test(input) && !(this.ctx.assistant && parseHandoff(input, this.ctx.assistant.label))) {
       try { read = readRequest(input, lexiconFor(this.appNames(), this.ctx.index)) } catch (e) { }
     }
     // The reading is the request with typos fixed, polite words dropped, numbers in words as
     // digits ("fifty percent" to 50%) and other phrasings made plain; it equals the input otherwise.
     const text = read.text || input
-    let reply = await this.mcpCommand(text)
+    let reply = this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
     else reply = await this.offerServer(text, await this.respondRead(text))
@@ -452,11 +457,66 @@ export class Mind {
         }
       } catch (e) { }
     }
+    reply = this.offerAssistant(input, reply)
     // Only mention real fixes, not "whats" to "what's".
     const fixed = read.swaps.filter(([a, b]) => a.replace(/['’]/g, '').toLowerCase() !== b.replace(/['’]/g, '').toLowerCase())
     this.lastReading = { input, read: read.text || input, swaps: fixed }
     if (!fixed.length || reply.mood === 'sleep') return reply
     return { ...reply, text: `${reply.text}\n\n(I read that as “${read.text.replace(/[*_`]/g, '')}”.)` }
+  }
+
+  // ------------------------------------------------------------ AI assistant handoff
+
+  /** Where the map is, for the line that goes along with a handed-over question. */
+  private handoffContext (): HandoffContext {
+    const live = this.ctx.live
+    const out: HandoffContext = { app: this.ctx.appTitle }
+    try {
+      const map = this.mapContext()
+      if (map?.center) out.center = map.center
+      if (this.lastPlace && Date.now() - this.lastPlace.at < 30 * 60000) out.place = this.lastPlace.label
+      out.layersOn = live.entries().filter(e => !e.isGroup && live.isVisible(e)).map(e => e.title)
+      const picked = live.selectedFeature()
+      if (picked?.title) out.selected = picked.title
+    } catch (e) { }
+    return out
+  }
+
+  /** "ask Claude ...", "send that to Claude": one link that opens the assistant with the question written. */
+  private assistantCommand (input: string): Reply | null {
+    const port = this.ctx.assistant
+    if (!port || /^__/.test(input)) return null
+    const asked = parseHandoff(input, port.label)
+    if (!asked) return null
+    const question = asked.question || this.lastInput
+    if (!question) return { text: `Say "ask ${port.label}" and then your question, and I will open it there for you.`, mood: 'think', suggest: [`Ask ${port.label} what this map shows`] }
+    const url = handoffUrl(port, question, this.handoffContext())
+    if (!url) return { text: `I could not build a link to ${port.label}. The app builder can check its address in my settings.`, mood: 'confused' }
+    this.track('assistant')
+    return {
+      text: `One click and **${port.label}** opens in a new tab with this written for you:\n\n“${clip(question, 160)}”${port.context ? '\n\nWhere the map is goes along with it.' : ''}`,
+      mood: 'mail',
+      actions: [{ type: 'url', url, label: `Ask ${port.label}` }]
+    }
+  }
+
+  /** Stuck, and the builder chose an assistant as the helper: the answer carries one link to it. */
+  private offerAssistant (input: string, reply: Reply): Reply {
+    const port = this.ctx.assistant
+    if (!port || reply.mood !== 'confused' || /^__/.test(input)) return reply
+    // A few words at least (not a stray key press), and nothing he already offers to fix himself
+    // (a layer to turn on, a place to pick): "did you mean" guesses do not count.
+    if (input.trim().split(/\s+/).length < 3 || (reply.actions || []).some(a => a.type !== 'ask')) return reply
+    if ((reply.actions || []).some(a => a.type === 'url' && /^Ask /.test(a.label || ''))) return reply
+    const url = handoffUrl(port, input, this.handoffContext())
+    if (!url) return reply
+    const job = assistantJob(input)
+    return {
+      ...reply,
+      text: job ? `That is more than a map helper can do, but **${port.label}** can take it from here.` : `${reply.text}\n\n**${port.label}** may be able to answer that one.`,
+      mood: 'think',
+      actions: job ? [{ type: 'url', url, label: `Ask ${port.label}` }] : [{ type: 'url' as const, url, label: `Ask ${port.label}` }, ...(reply.actions || [])].slice(0, 4)
+    }
   }
 
   // ------------------------------------------------------------ MCP server
@@ -2232,7 +2292,7 @@ export class Mind {
     const entries = this.ctx.live.entries()
     const sources = new Map<string, number>()
     for (const doc of this.ctx.index.docs) sources.set(doc.src || 'live', (sources.get(doc.src || 'live') || 0) + 1)
-    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} No LLM is used. Map services and imported help may still require network access.${this.ctx.feedInfo ? ' Knowledge ' + this.ctx.feedInfo + '.' : ''}`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
+    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} ${this.ctx.assistant ? `No LLM runs in this app; questions I cannot answer can be opened in ${this.ctx.assistant.label} (a new tab, one click).` : this.ctx.mcp ? `No LLM is used; ${this.ctx.mcp.label} answers place questions.` : 'No LLM is used.'} Map services and imported help may still require network access.${this.ctx.feedInfo ? ' Knowledge ' + this.ctx.feedInfo + '.' : ''}`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
   }
 
   diagnoseLayer (target: string): Reply {

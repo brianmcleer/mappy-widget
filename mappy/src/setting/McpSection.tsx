@@ -15,6 +15,8 @@ import { Hint, Note, FullButton, Sub, toneOf } from './ui'
 
 interface Props {
   value: any
+  /** "Where he gets help" is set to the MCP server. */
+  active: boolean
   onChange: (v: McpSettings & { enabled?: boolean } | null) => void
 }
 
@@ -42,7 +44,7 @@ export default function McpSection (props: Props): any {
       setTools(list)
       // Keep earlier choices; new tools start on only when they cannot change data.
       const next: McpToolPref[] = list.map(t => prefs.find(p => p.name === t.name) || { name: t.name, enabled: !changesData(t), confirm: changesData(t) })
-      save({ url, label: cfg.label || client.serverName || '', tools: next })
+      save({ url, label: cfg.label || client.serverName || '', tools: next, enabled: true })
       setStatus(`Connected to ${client.serverName || 'the server'}: ${list.length} tools, ${next.filter(p => p.enabled).length} turned on.`)
     } catch (e) {
       setStatus(e?.message || String(e))
@@ -62,17 +64,14 @@ export default function McpSection (props: Props): any {
 
   return (
     <SettingSection title='MCP server'>
-      <Hint>Optional. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
+      <Hint>Optional, and used when "Where he gets help" is set to My GIS server. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
 
-      <SettingRow tag='label' label={cfg.url === ESRI_LOCATION_MCP ? 'Use ArcGIS Location Services' : cfg.label ? `Use ${cfg.label}` : 'Use an MCP server'}>
-        <Switch checked={!!cfg.url && cfg.enabled !== false} onChange={(e: any) => cfg.url ? save({ enabled: e.target.checked }) : null} disabled={!cfg.url} aria-label='Use an MCP server' />
-      </SettingRow>
-      {cfg.url && <Note tone={cfg.enabled === false ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
-        {cfg.enabled === false
-          ? `Off. ${cfg.label || 'The server'} is kept but not used; Mappy answers place questions from the app's own layers and locator.`
+      {cfg.url && <Note tone={!props.active ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
+        {!props.active
+          ? `Not in use. ${cfg.label || 'The server'} is kept, but "Where he gets help" is set to something else. Choose "My GIS server (MCP)" there to use it.`
           : cfg.url === ESRI_LOCATION_MCP
-            ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Turn it off or disconnect it if you are not using it."
-            : `Connected to ${cfg.label || cfg.url}.`}
+            ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Disconnect it if you are not using it."
+            : `In use: ${cfg.label || cfg.url}.`}
       </Note>}
 
       <SettingRow label='Server address' flow='wrap'>
