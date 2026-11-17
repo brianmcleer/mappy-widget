@@ -153,6 +153,9 @@ export class Mind {
   private askTool: McpTool | null = null
   /** Recent questions Claude answered here, sent along so follow-ups make sense. */
   private claudeTurns: Array<{ q: string, a: string }> = []
+  /** When Claude last answered, and the follow-ups it suggested: the conversation stays with Claude for a few minutes. */
+  private claudeAt = 0
+  private claudeFollowups: string[] = []
   private mcpDraft: { tool: McpTool, args: { [k: string]: any }, missing: string[], place?: PlaceQuestion } | null = null
   private placeConversation: PlaceQuestion | null = null
 
@@ -194,7 +197,7 @@ export class Mind {
     this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.lastReadScope = ''
     this.lastAddress = ''; this.lastAnalysis = null; this.addressChoices = null; this.tablePage = null
     this.dataTask = null; this.layerPick = null
-    this.awaitingPlace = null; this.placeConversation = null; this.lastPlace = null; this.lastToolData = null; this.mcpDraft = null; this.mcpPending = null; this.placeNames.clear(); this.claudeTurns = []
+    this.awaitingPlace = null; this.placeConversation = null; this.lastPlace = null; this.lastToolData = null; this.mcpDraft = null; this.mcpPending = null; this.placeNames.clear(); this.claudeTurns = []; this.claudeAt = 0; this.claudeFollowups = []
     this.contextView = this.ctx.live.view
   }
 
@@ -450,7 +453,7 @@ export class Mind {
     // The reading is the request with typos fixed, polite words dropped, numbers in words as
     // digits ("fifty percent" to 50%) and other phrasings made plain; it equals the input otherwise.
     const text = read.text || input
-    let reply = (await this.serverClaudeCommand(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
+    let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
     else reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, await this.respondRead(text)) : await this.offerServer(text, await this.respondRead(text))
@@ -500,11 +503,37 @@ export class Mind {
     if (!asked) return null
     const question = asked.question || this.lastInput
     if (!question) return { text: `Ask me anything after "ask ${sa.label}" and ${sa.label} will answer here, with the GIS data.`, mood: 'think' }
-    return this.askServerClaude(question)
+    // "ask Claude about this": what he just said goes along, so Claude knows what "this" is.
+    const said = !asked.question && this.lastReply?.text ? `(The map helper had answered: "${clip(this.lastReply.text.replace(/\s+/g, ' '), 400)}")` : ''
+    return this.askServerClaude(question, false, said)
+  }
+
+  /**
+   * Right after a Claude answer, a follow-up goes back to Claude: one of the follow-ups it
+   * suggested, or a question-shaped line that is not a request he knows ("what about the ones
+   * on Main St", "why is that"). Map commands and place questions stay his.
+   */
+  private async claudeFollowUp (input: string): Promise<Reply | null> {
+    if (!this.ctx.serverAssistant || !this.claudeAt || Date.now() - this.claudeAt > 5 * 60000 || /^__/.test(input)) return null
+    const plain = normalizeCommand(input).trim()
+    const suggested = this.claudeFollowups.some(f => f.toLowerCase() === plain.toLowerCase())
+    if (!suggested) {
+      if (plain.split(/\s+/).length < 3 || parseIntent(plain).name !== 'ask' || parsePlaceQuestion(plain)) return null
+      if (!/^(?:and|but|so|ok(?:ay)?,?|what about|how about|why|which|what|who|whose|how|when|where|is|are|was|were|does|do|did|can|could|would|should|tell me|explain|compare|also|only|just|break)\b/i.test(plain) && !/\?\s*$/.test(plain)) return null
+    }
+    return this.askServerClaude(input, true)
+  }
+
+  /** A long question that only got a word search back ("Found 1 match for <the whole question>") is not an answer. */
+  private weakAnswer (input: string, reply: Reply): boolean {
+    const words = input.trim().split(/\s+/).length
+    return !!reply.results?.length && words >= 6 && /^(?:why|which|what|who|whose|how|when|where|is|are|does|do|did|can|could|should|tell me|explain|compare|list|show me)\b/i.test(input.trim()) &&
+      reply.text.includes(`"${input.trim()}"`)
   }
 
   /** Stuck on a real question (a few words, nothing he can offer to fix himself): Claude answers it here. */
   private async askServerClaudeWhenStuck (input: string, reply: Reply): Promise<Reply> {
+    if (this.weakAnswer(input, reply) && !/^__/.test(input) && Date.now() - this.mcpFailedAt >= 60000) return (await this.askServerClaude(input, true)) || reply
     if (reply.mood !== 'confused' || /^__/.test(input) || input.trim().split(/\s+/).length < 3 || (reply.actions || []).some(a => a.type !== 'ask')) return reply
     if (Date.now() - this.mcpFailedAt < 60000) return reply
     const answered = await this.askServerClaude(input, true)
@@ -512,7 +541,7 @@ export class Mind {
   }
 
   /** Claude on the GIS server answers with the server's own read-only tools. Null (quiet) when it cannot and `quiet` is set. */
-  private async askServerClaude (question: string, quiet = false): Promise<Reply | null> {
+  private async askServerClaude (question: string, quiet = false, extra = ''): Promise<Reply | null> {
     const sa = this.ctx.serverAssistant
     const port = this.ctx.mcp
     if (!sa || !port) return null
@@ -521,7 +550,7 @@ export class Mind {
     } catch (e) { this.mcpFailedAt = Date.now(); return quiet ? null : { text: `I could not reach ${port.label}, so ${sa.label} cannot answer right now.`, mood: 'alert' } }
     const tool = this.askTool
     if (!tool) return quiet ? null : { text: `${sa.label} is not turned on for ${port.label} yet. The GIS team can turn it on on the server.`, mood: 'confused' }
-    const ctx = this.handoffContextLine()
+    const ctx = [this.handoffContextLine(), this.selectedLine(), extra].filter(Boolean).join(' ')
     this.track('claude')
     let raw: any
     try {
@@ -536,14 +565,48 @@ export class Mind {
     if (!answer) return quiet ? null : { text: `${sa.label} did not come back with an answer.`, mood: 'confused' }
     this.claudeTurns.push({ q: clip(question, 600), a: clip(answer, 1500) })
     if (this.claudeTurns.length > 3) this.claudeTurns.shift()
-    const used: string[] = Array.isArray(raw?.structuredContent?.tools_used) ? raw.structuredContent.tools_used.map(String) : []
+    const data: any = raw?.structuredContent || {}
+    const used: string[] = Array.isArray(data.tools_used) ? data.tools_used.map(String) : []
+    // Buttons Claude asked for: zoom to a place it found, turn on a layer that shows the answer.
+    const actions: MappyAction[] = []
+    for (const m of (Array.isArray(data.map) ? data.map : []).slice(0, 3)) {
+      if (m?.type === 'place' && Number.isFinite(m.latitude) && Number.isFinite(m.longitude) && Math.abs(m.latitude) <= 90 && Math.abs(m.longitude) <= 180) {
+        const label = clip(String(m.label || 'that spot').replace(/[*_`\[\]]/g, ''), 40)
+        this.placeNames.set(placeKey(m.latitude, m.longitude), label)
+        actions.push({ type: 'ask', q: `zoom to ${m.latitude}, ${m.longitude}`, label: `Zoom to ${label}` })
+      } else if (m?.type === 'layer' && typeof m.layer === 'string' && m.layer.trim()) {
+        const name = clip(m.layer.replace(/[*_`\[\]]/g, '').trim(), 40)
+        if (!/^__/.test(name)) actions.push({ type: 'ask', q: `turn on ${name}`, label: `Turn on ${name}` })
+      }
+    }
+    const followups: string[] = (Array.isArray(data.followups) ? data.followups : []).filter((f: any) => typeof f === 'string' && !/^\s*__/.test(f)).map((f: any) => clip(String(f || '').replace(/[*_`]/g, '').trim(), 70)).filter((f: string) => f.length > 3 && !/^__/.test(f)).slice(0, 3)
+    this.claudeAt = Date.now()
+    this.claudeFollowups = followups
     const reply: Reply = {
       text: answer,
       mood: 'explain',
       sources: [{ title: sa.label, detail: used.length ? `using ${port.label}: ${Array.from(new Set(used)).map(n => n.replace(/_/g, ' ')).join(', ')}` : `through ${port.label}` }]
     }
+    if (actions.length) reply.actions = actions
+    if (followups.length) reply.suggest = followups
     this.lastReply = reply
     return reply
+  }
+
+  /** The feature under the open popup, in a line: its layer and a few of its values, so "this parcel" means something. */
+  private selectedLine (): string {
+    try {
+      const f = this.ctx.live.selectedFeature()
+      if (!f?.title) return ''
+      const pairs: string[] = []
+      for (const [k, v] of Object.entries(f.attributes || {})) {
+        if (v == null || String(v).trim() === '' || /^(?:objectid|fid|oid|globalid|shape)|shape[._]|globalid|created_|last_edited|^gdb_/i.test(k)) continue
+        const field = f.fields.find(x => x.name === k)
+        pairs.push(`${clip(String(field?.alias || k), 30)}: ${clip(String(v).replace(/\s+/g, ' '), 60)}`)
+        if (pairs.length >= 6) break
+      }
+      return pairs.length ? `(Selected ${clip(f.title, 40)} feature: ${pairs.join('; ')}.)` : ''
+    } catch (e) { return '' }
   }
 
   /** The line about the map for a question going to Claude. */

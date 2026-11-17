@@ -1722,6 +1722,34 @@ test('Claude through the GIS server answers inside the chat, with history and li
   assert.equal(last.args.history[0].a, 'There are **31** hydrants within 300 meters.')
   assert.match(f.text, /cast iron/)
   assert.deepEqual(f.sources, [{ title: 'Claude', detail: 'through City GIS' }])
+  // Buttons Claude asked for and its follow-up suggestions; a suggested follow-up goes back to Claude.
+  answer = { content: [{ type: 'text', text: 'City Hall is in **MU-3**.' }], structuredContent: { answer: 'City Hall is in **MU-3**.', tools_used: ['identify'], followups: ['What does MU-3 allow?', '__evil', 'Which parcels nearby are R-8?'], map: [{ type: 'place', latitude: 39.0672, longitude: -108.5645, label: 'City Hall' }, { type: 'layer', layer: 'Zoning' }, { type: 'place', latitude: 999, longitude: 0, label: 'bad' }] }, isError: false }
+  const z = await mind.respond('ask claude what zoning is city hall in')
+  assert.deepEqual(z.actions, [{ type: 'ask', q: 'zoom to 39.0672, -108.5645', label: 'Zoom to City Hall' }, { type: 'ask', q: 'turn on Zoning', label: 'Turn on Zoning' }])
+  assert.deepEqual(z.suggest, ['What does MU-3 allow?', 'Which parcels nearby are R-8?'])
+  let n = calls.filter(c => c.name === 'ask_assistant').length
+  answer = { content: [{ type: 'text', text: 'Mixed use.' }], structuredContent: { answer: 'Mixed use.' }, isError: false }
+  assert.match((await mind.respond('What does MU-3 allow?')).text, /Mixed use/)
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n + 1)
+  // The conversation stays with Claude for question-shaped follow-ups, but map commands stay his.
+  assert.match((await mind.respond('and what about the ones on main street')).text, /Mixed use/)
+  n = calls.filter(c => c.name === 'ask_assistant').length
+  await mind.respond('turn off parcels')
+  await mind.respond('list layers')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n)
+  // "ask Claude about this" carries what he had just said.
+  await mind.respond('list layers')
+  await mind.respond('ask claude about this')
+  assert.match(calls.filter(c => c.name === 'ask_assistant').pop().args.context, /The map helper had answered: "/)
+  // The feature under the open popup goes along as a line.
+  live.jmv.view.popup = { selectedFeature: { layer: { title: 'Parcels', fields: [{ name: 'OWNER', alias: 'Owner' }] }, attributes: { OBJECTID: 7, OWNER: 'Smith', ACRES: 5 } } }
+  await mind.respond('ask claude who owns this')
+  assert.match(calls.filter(c => c.name === 'ask_assistant').pop().args.context, /\(Selected Parcels feature: Owner: Smith; ACRES: 5\.\)/)
+  live.jmv.view.popup = null
+  // A long question that only got a word search back goes to Claude instead.
+  answer = { content: [{ type: 'text', text: 'Thirty-one.' }], structuredContent: { answer: 'Thirty-one.' }, isError: false }
+  await mind.respond('forget context')
+  assert.match((await mind.respond('how many fire hydrants are within 300 meters of city hall')).text, /Thirty-one/)
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)

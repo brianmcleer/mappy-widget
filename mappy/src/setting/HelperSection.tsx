@@ -93,7 +93,7 @@ export default function HelperSection (props: Props): any {
         </SettingRow>
         <FullButton type='secondary' disabled={busy || !mcp?.url} onClick={checkServer}>{busy ? 'Checking...' : `Check that the server has ${name}`}</FullButton>
         {check && <Note tone={/^Ready/.test(check) ? 'ok' : busy ? 'info' : toneOf(check) === 'info' ? 'warn' : toneOf(check)}>{check}</Note>}
-        <Hint>Each answer is a paid call to the Claude API from the server; the server limits questions per person per hour and per day. The question, a line about where the map is and the data the tools look up go to Anthropic.</Hint>
+        <Hint>Each answer is a paid call to the Claude API from the server; the server limits questions per person per hour and per day. The question, a line about where the map is, a few values of the feature under an open popup and the data the tools look up go to Anthropic. The same question asked again within a few minutes is answered from the server's memory at no cost; the server's /health page shows today's questions and tokens.</Hint>
       </React.Fragment>}
 
       {mode === 'assistant' && <React.Fragment>

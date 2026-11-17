@@ -67,6 +67,7 @@
     "per_person_per_hour": 30,
     "per_day": 1000,
     "org_name": "the City",
-    "extra_instructions": ""
+    "extra_instructions": "",
+    "cache_minutes": 10
   }
 }

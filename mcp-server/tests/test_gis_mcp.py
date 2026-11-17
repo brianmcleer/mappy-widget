@@ -388,7 +388,7 @@ class GisMcpTest(unittest.TestCase):
             names = [t['name'] for t in self.rpc('tools/list').get_json()['result']['tools']]
             self.assertNotIn('ask_assistant', names)
             # Enabled but no key in the environment: still not listed; health says why.
-            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield'}
+            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield', 'retry_wait_seconds': 0}
             os.environ.pop('TEST_ANTHROPIC_KEY', None)
             app = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **a))).test_client()
             self.assertIn('no key', app.get('/health').get_json()['assistant']['status'])
@@ -418,7 +418,8 @@ class GisMcpTest(unittest.TestCase):
             first = fake_anthropic.STATE['calls'][n]
             self.assertEqual(first['headers'].get('X-Api-Key'), 'sk-test-key', 'the key is sent by the server')
             self.assertEqual(first['headers'].get('Anthropic-Version'), gis_mcp.ANTHROPIC_VERSION)
-            self.assertIn('Springfield', first['body']['system'])
+            self.assertIn('Springfield', first['body']['system'][0]['text'])
+            self.assertEqual(r['structuredContent']['usage'], {'input_tokens': 1000, 'output_tokens': 20})
             self.assertEqual(first['body']['messages'][0], {'role': 'user', 'content': 'hi'})
             self.assertIn('map center 39.06', first['body']['messages'][-1]['content'])
             self.assertTrue(all(t['name'] != 'ask_assistant' for t in first['body']['tools']))
@@ -438,6 +439,26 @@ class GisMcpTest(unittest.TestCase):
             r = app2.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'ask_assistant', 'arguments': {'question': 'loop forever'}}}),
                           headers={'Content-Type': 'application/json', 'Origin': ORIGIN, 'Authorization': 'Bearer ' + TOKEN}).get_json()['result']
             self.assertFalse(r['isError'], 'the last step is sent without tools, so it has to answer')
+            # Buttons for the map, follow-up suggestions, a retry after a busy moment, and a kept answer.
+            def ask(q, token):
+                return rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': q}}, token=token)
+            r = ask('show me city hall', 'map-token-0001')
+            self.assertFalse(r['isError'], r)
+            self.assertEqual(r['structuredContent']['map'], [{'type': 'place', 'latitude': 39.0672, 'longitude': -108.5645, 'label': 'City Hall'}, {'type': 'layer', 'layer': 'Zoning'}])
+            self.assertEqual(r['structuredContent']['tools_used'], [], 'map buttons are not data lookups')
+            r = ask('parks with followups', 'next-token-0002')
+            self.assertEqual(r['structuredContent']['answer'], 'There are **12** parks.')
+            self.assertEqual(r['content'][0]['text'], 'There are **12** parks.')
+            self.assertEqual(r['structuredContent']['followups'], ['Which is the largest?', 'Which have playgrounds?', 'Show them by district'])
+            before = len(fake_anthropic.STATE['calls'])
+            again = ask('parks with followups', 'next-token-0002')
+            self.assertTrue(again['structuredContent'].get('cached'))
+            self.assertEqual(len(fake_anthropic.STATE['calls']), before, 'the same question a moment later costs nothing')
+            r = ask('a flaky moment, no tools', 'retry-token-0003')
+            self.assertFalse(r['isError'], 'one busy answer is tried again')
+            today = app.get('/health').get_json()['assistant']['today']
+            self.assertGreaterEqual(today['questions'], 4)
+            self.assertGreater(today['cached_input_tokens'], 0)
             # A wrong key reads as a setup problem.
             os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')

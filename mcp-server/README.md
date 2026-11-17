@@ -82,7 +82,9 @@ Press **Connect and list tools**. Every tool is read-only, so all of them start 
 4. Recycle the app pool. `/health` shows `"assistant": {"status": "ready"}`, or what is missing.
 5. In Mappy's settings, **Where he gets help**: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude**.
 
-What goes to Anthropic: the question, one line about where the map is, up to three earlier turns, and the results of the tools Claude calls. Tokens are never sent. Signed-in users only by default (`require_token`), with limits per person per hour and per day. Each call is logged with its duration and the tool names, never the question. The outbound call goes to `api.anthropic.com` over HTTPS (the usual proxy settings, `HTTPS_PROXY`, apply).
+Answers can carry buttons for the map (Claude calls `map_show_place` or `map_show_layer`; nothing changes until the person clicks) and up to three follow-up questions. To keep the cost down, the instructions and tool list are marked cacheable (repeat questions pay a fraction of the input), the same question from the same person within `cache_minutes` is answered from memory, and a busy moment is tried once more before giving up. `/health` shows today's questions and tokens under `assistant.today`.
+
+What goes to Anthropic: the question, one line about where the map is (and a few values of the feature under an open popup), up to three earlier turns, and the results of the tools Claude calls. Tokens are never sent. Signed-in users only by default (`require_token`), with limits per person per hour and per day. Each call is logged with its duration and the tool names, never the question. The outbound call goes to `api.anthropic.com` over HTTPS (the usual proxy settings, `HTTPS_PROXY`, apply).
 
 ### Connect a desktop AI tool (optional)
 
@@ -154,6 +156,8 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.require_token` | true | Only signed-in people may ask |
 | `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
 | `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
+| `assistant.cache_minutes` | 10 | How long the same question from the same person is answered from memory (0 turns it off) |
+| `assistant.retry_wait_seconds` | 1.5 | Wait before the one retry after a busy answer |
 | `assistant.api_url` | Anthropic's | For a gateway in between |
 
 ## Esri's MCP servers (ready when they are)
