@@ -550,6 +550,9 @@ class GisMcpTest(unittest.TestCase):
             self.assertFalse(ask_on(anon, 'say hi, no tools', token=None, ip='10.0.0.1')['isError'])
             self.assertIn('a lot of questions', ask_on(anon, 'again, no tools', token=None, ip='10.0.0.1')['content'][0]['text'])
             self.assertFalse(ask_on(anon, 'say hi, no tools', token=None, ip='10.0.0.2')['isError'], 'another address has its own count')
+            self.assertTrue(ask_on(anon, 'spoofed, no tools', token=None, ip='1.2.3.4, 10.0.0.1')['isError'], 'a made-up first address does not reset the count')
+            big = anon.post('/mcp', data='x' * (500 * 1024), headers={'Content-Type': 'application/json', 'Origin': ORIGIN})
+            self.assertEqual(big.status_code, 413)
             # A model the key cannot use reads as a setup problem.
             wrong = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, model='no-such-model')))).test_client()
             self.assertIn('model "no-such-model" is not available', ask_on(wrong, 'hello there')['content'][0]['text'])

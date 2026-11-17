@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.11.0'
+VERSION = '1.11.1'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -1988,9 +1988,9 @@ class Assistant:
          'input_schema': {'type': 'object', 'properties': {'title': {'type': 'string'}, 'unit': {'type': 'string', 'description': 'What the numbers are (parcels, acres, feet). Optional.'},
                                                            'rows': {'type': 'array', 'maxItems': 12, 'items': {'type': 'object', 'properties': {'label': {'type': 'string'}, 'value': {'type': 'number'}}, 'required': ['label', 'value']}}},
                           'required': ['rows']}},
-        {'name': 'show_table', 'description': 'Show a small table in the chat with your answer (records you looked up). At most 6 columns and 15 rows. Use it instead of writing a table in the text.',
+        {'name': 'show_table', 'description': 'Show a small table in the chat with your answer (records you looked up). At most 6 columns and 15 rows. Use it instead of writing a table in the text. Use a chart or a table, not both.',
          'input_schema': {'type': 'object', 'properties': {'columns': {'type': 'array', 'maxItems': 6, 'items': {'type': 'string'}},
-                                                           'rows': {'type': 'array', 'maxItems': 15, 'items': {'type': 'array', 'items': {'type': ['string', 'number', 'null']}}}},
+                                                           'rows': {'type': 'array', 'maxItems': 15, 'description': 'Each row is a list of cell values, in column order.', 'items': {'type': 'array'}}},
                           'required': ['columns', 'rows']}}
     ]
     MAP_TOOL_NAMES = ('map_show_place', 'map_show_layer', 'map_suggest_command', 'show_chart', 'show_table')
@@ -2373,6 +2373,8 @@ def create_app(cfg):
 
     server = Server(cfg)
     app = Flask(__name__)
+    # A question with a small map picture is the largest thing this server takes.
+    app.config['MAX_CONTENT_LENGTH'] = 400 * 1024
     base = (os.environ.get('GIS_MCP_BASE_PATH') or cfg.get('base_path') or '').rstrip('/')
     allowed = set(cfg.get('allowed_origins') or [])
 
@@ -2459,7 +2461,9 @@ def create_app(cfg):
         except ValueError:
             return json_res({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}}, 400, origin)
         referer = (origin + '/') if origin else None
-        client = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip() or request.remote_addr or ''
+        # The address the web server saw. A proxy (IIS) adds the real one last in X-Forwarded-For;
+        # anything before it is whatever the sender wrote, so it is not trusted.
+        client = (request.headers.get('X-Forwarded-For') or '').split(',')[-1].strip() or request.remote_addr or ''
         if isinstance(body, list):
             if not body or len(body) > 20:
                 return json_res({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32600, 'message': 'Invalid batch'}}, 400, origin)
