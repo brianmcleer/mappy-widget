@@ -428,8 +428,8 @@ export default function Widget (props: Props): any {
 
   // The greeting, plus a line for the time of year (Halloween, GIS Day, Thanksgiving...).
   // Once per update, a line about what is new (returning people only; a first visit gets the plain greeting).
-  const NEWS_KEY = '2026-11-17a'
-  const NEWS = 'New since last time: tell me your name ("call me ...") and I will remember it in this browser, say "hug", "juggle" or "find treasure", and try petting me with the pointer. I also notice how your day is going, if you tell me.'
+  const NEWS_KEY = '2026-11-17b'
+  const NEWS = 'New since last time: you have a passport now. Things we do together on the map earn stamps (say "my stamps"). I learn your usual ("the usual"), you can give me a nickname ("can I call you Pip"), tell me your birthday, and say "our story" to see how far we have come. And "talk to a person" finds you one.'
   const greet = React.useCallback(() => {
     const extra = cfg.fun === false ? '' : [season().greeting, dayFeel().line].filter(Boolean).join(' ')
     let news = ''
@@ -442,7 +442,10 @@ export default function Widget (props: Props): any {
     let back = ''
     try { back = first ? '' : mind.welcome() } catch (e) { }
     const text = (back ? back + ' ' : '') + (cfg.greeting || (back ? 'What are we looking for?' : V.greet(name, appTitle))) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : '') + (first ? '\n\nNew here? Say "show me around" and I will walk you through the app.' : '')
-    say(text, first ? { text, suggest: ['Show me around', 'What is on the map', 'Help'] } : undefined)
+    // Someone he knows: what they ask most is one click away.
+    let regulars: string[] = []
+    try { regulars = first ? [] : mind.usual(3) } catch (e) { }
+    say(text, first ? { text, suggest: ['Show me around', 'What is on the map', 'Help'] } : regulars.length ? { text, suggest: regulars } : undefined)
   }, [cfg.greeting, name, appTitle, say, appId, mind])
 
   const toggleChat = React.useCallback(() => {

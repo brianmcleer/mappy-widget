@@ -156,6 +156,8 @@ export interface PrivacyFacts {
   locator?: boolean
   sharePicture?: boolean
   feed?: boolean
+  /** More things kept in the browser (stamps, the usual, a birthday), each a few words. */
+  extras?: string[]
 }
 
 /** What he keeps, where it lives and what leaves the browser, for this app as it is set up. */
@@ -164,6 +166,7 @@ export function privacyText (f: PrivacyFacts): string {
   if (f.knowsName) kept.push(`your first name (“${f.knowsName}”), because you told me`)
   kept.push(`a count of our questions${f.chats ? ` (${f.chats.toLocaleString()} so far)` : ''}`)
   if (f.savedViews) kept.push(`${f.savedViews} saved map view${f.savedViews === 1 ? '' : 's'}`)
+  for (const x of f.extras || []) kept.push(x)
   if (f.misses) kept.push(`${f.misses} question${f.misses === 1 ? '' : 's'} I could not answer`)
   const lines = [
     `**Kept in this browser only:** ${kept.join('; ')}. It is not sent anywhere, and “forget everything” erases it.`

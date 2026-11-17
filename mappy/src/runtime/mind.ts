@@ -69,6 +69,8 @@ import { completeText, addressFragment, withAddress, addressQuestions } from '..
 import type { CompleteSource } from '../brain/complete'
 import { suggestAddresses } from './geocoder'
 import { toLatLon as projectToLatLon, warmProjection, needsProjection } from './project'
+import { readKeepsakes, emptyKeepsakes, remember, stampLine, keepsake, keepsakeHello, keepsakeSummary, usual } from '../brain/keepsakes'
+import type { Keepsakes, Moment } from '../brain/keepsakes'
 import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, privacyText } from '../brain/care'
 import type { Contact, Miss } from '../brain/care'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
@@ -150,6 +152,9 @@ export class Mind {
   /** Real questions in a row he could not answer; at two he offers a person. */
   private stuckRun = 0
   private missMemory: Miss[] = []
+  private keepMemory: Keepsakes = emptyKeepsakes()
+  /** This turn was keepsake talk (the passport, our story): it earns nothing itself. */
+  private keepsakeTurn = false
   /** Guided tour: the widget docs still to visit, and the one being shown. */
   private tour: { stops: Doc[], at: number } | null = null
   private lastResults: any[] = []
@@ -396,6 +401,9 @@ export class Mind {
   async respond (input: string): Promise<Reply> {
     this.locationNote = false
     const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
+    this.keepsakeTurn = false
+    const startedAt = Date.now(); const layerBefore = this.lastLayer; let filtersBefore = 0
+    try { filtersBefore = this.ctx.live.filtered().length } catch (e) { }
     const reply = await this.respondInner(input)
     const handoffLabel = this.ctx.assistant?.label || this.ctx.serverAssistant?.label
     const real = !control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !parseCare(input) && !(handoffLabel && parseHandoff(input, handoffLabel))
@@ -407,6 +415,28 @@ export class Mind {
         this.keepBond(bond)
         const line = this.ctx.fun === false ? '' : milestone(bond.chats)
         if (line && !['confused', 'alert', 'sad', 'sorry'].includes(reply.mood || '')) reply.text = `${reply.text}\n\n${line}`
+      } catch (e) { }
+    }
+    // Keepsakes: stamps for things done together, and what this person asks most.
+    if (this.ctx.fun !== false && !/^__/.test(input) && !parseCare(input) && !this.keepsakeTurn) {
+      try {
+        const intent = parseIntent(input).name
+        const good = !['confused', 'alert', 'sorry'].includes(reply.mood || '')
+        const felt = (EMOTIONS as readonly string[]).includes(reply.mood || '')
+        const m: Moment = {}
+        if (real && good && !felt) { m.input = input; m.intent = intent }
+        if (good && intent === 'tour') m.intent = 'tour'
+        if (real && good && this.lastLayer && (this.lastLayer !== layerBefore || parseIntent(input).target)) m.layer = this.ctx.live.entries().find(e => e.path === this.lastLayer)?.title
+        if (real && good) { m.chart = !!reply.chart; m.table = !!reply.table; m.place = !!(this.lastPlace && this.lastPlace.at >= startedAt) }
+        try { m.filtered = this.ctx.live.filtered().length > filtersBefore } catch (e) { }
+        m.undo = /^undo\b/i.test(input.trim()) && good
+        m.thanks = intent === 'thanks'
+        m.fun = good && (intent === 'joke' || felt || /^(?:fun fact|tell me a (?:joke|riddle|fact)|riddle)/i.test(input.trim()))
+        m.helper = !!(this.ctx.serverAssistant && reply.sources?.[0]?.title === this.ctx.serverAssistant.label)
+        const { keep, earned } = remember(this.keepsakes(), m, this.bond())
+        this.keepKeepsakes(keep)
+        const line = stampLine(earned, Object.keys(keep.stamps).length)
+        if (line && good) reply.text = `${reply.text}\n\n${line}`
       } catch (e) { }
     }
     // Stuck: keep the question for the people who run the app, and after two in a row offer a person.
@@ -514,6 +544,8 @@ export class Mind {
     }
     // The small things people say to a friend ("how are you", "rough day", "call me Sam").
     if (!/^__/.test(input) && !this.awaitingPlace && !this.layerPick && !this.layerChoices && !this.addressChoices) {
+      const kept = this.keepsakeSay(input)
+      if (kept) return kept
       const felt = this.feelings(input)
       if (felt) return felt
     }
@@ -573,7 +605,46 @@ export class Mind {
   /** A line for the start of a visit, for someone he has met ("Good morning, Sam! Day 3 in a row."). */
   welcome (now = new Date()): string {
     if (this.ctx.fun === false) return ''
-    try { return welcomeBack(this.bond(), now) } catch (e) { return '' }
+    try {
+      const hello = keepsakeHello(this.keepsakes(), this.bond(), now)
+      if (hello.keep) this.keepKeepsakes(hello.keep)
+      const back = welcomeBack(this.bond(), now)
+      return [back, hello.line].filter(Boolean).join(' ')
+    } catch (e) { return '' }
+  }
+
+  // ------------------------------------------------------------ keepsakes: stamps, the usual, a birthday
+
+  keepsakes (): Keepsakes {
+    const store = this.ctx.store
+    if (!store) return this.keepMemory
+    try { return readKeepsakes(store.get('mappy-keepsakes')) } catch (e) { return this.keepMemory }
+  }
+
+  private keepKeepsakes (k: Keepsakes): void {
+    this.keepMemory = k
+    try { this.ctx.store?.set('mappy-keepsakes', JSON.stringify(k)) } catch (e) { }
+  }
+
+  /** What this person asks most, for chips under the greeting. */
+  usual (max = 3): string[] {
+    if (this.ctx.fun === false) return []
+    try { return usual(this.keepsakes(), max) } catch (e) { return [] }
+  }
+
+  private keepsakeSay (input: string): Reply | null {
+    if (this.ctx.fun === false) return null
+    let said: ReturnType<typeof keepsake> = null
+    try { said = keepsake(input, this.keepsakes(), this.bond(), this.ctx.name) } catch (e) { return null }
+    if (!said) return null
+    if (said.keep) this.keepKeepsakes(said.keep)
+    this.keepsakeTurn = true
+    const reply: Reply = { text: said.text, mood: said.mood as Reply['mood'] }
+    if (said.suggest?.length) reply.suggest = said.suggest
+    if (said.list?.length) reply.list = said.list.map(r => ({ label: r.label, detail: r.detail, glyph: r.glyph, sr: r.label === '???' ? 'Not earned yet' : 'Earned' }))
+    if (said.asks?.length) reply.actions = said.asks.slice(0, 4).map(q => ({ type: 'ask' as const, q, label: clip(q, 40) }))
+    this.lastReply = reply
+    return reply
   }
 
   // ------------------------------------------------------------ a person, privacy, what he missed
@@ -611,16 +682,16 @@ export class Mind {
     if (ask === 'privacy') {
       const bond = this.bond()
       return {
-        text: privacyText({ name: this.ctx.name, helper: this.helperKind(), helperLabel: this.ctx.serverAssistant?.label || this.ctx.assistant?.label, serverLabel: this.ctx.mcp?.label, knowsName: bond.name, chats: bond.chats, misses: this.misses().length, savedViews: Object.keys(this.views()).length, telemetry: !!this.ctx.telemetry, locator: !!this.ctx.geocoders?.length, sharePicture: !!this.ctx.serverAssistant?.sharePicture }),
+        text: privacyText({ name: this.ctx.name, helper: this.helperKind(), helperLabel: this.ctx.serverAssistant?.label || this.ctx.assistant?.label, serverLabel: this.ctx.mcp?.label, knowsName: bond.name, chats: bond.chats, misses: this.misses().length, extras: keepsakeSummary(this.keepsakes()), savedViews: Object.keys(this.views()).length, telemetry: !!this.ctx.telemetry, locator: !!this.ctx.geocoders?.length, sharePicture: !!this.ctx.serverAssistant?.sharePicture }),
         mood: 'explain', suggest: ['Forget everything', ...(c ? ['Talk to a person'] : [])]
       }
     }
     if (ask === 'forgetAll') {
       this.bondMemory = emptyBond(); try { this.ctx.store?.set('mappy-bond', null) } catch (e) { }
-      this.keepMisses([]); this.saveViews({})
+      this.keepMisses([]); this.saveViews({}); this.keepMemory = emptyKeepsakes(); try { this.ctx.store?.set('mappy-keepsakes', null) } catch (e) { }
       this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.tablePage = null; this.lastAnalysis = null; this.dataTask = null; this.layerPick = null
       this.lastInput = ''; this.stuckRun = 0; this.claudeTurns = []; this.claudeAt = 0; this.claudeFollowups = []; this.lastPlace = null; this.placeConversation = null
-      return { text: 'Done. I erased everything I kept in this browser: this conversation, your name, our question count, saved views and the questions I missed. The map itself is unchanged.', mood: 'acknowledge', effect: 'forgetAll' }
+      return { text: 'Done. I erased everything I kept in this browser: this conversation, your name, our question count, your stamps and usual requests, saved views and the questions I missed. The map itself is unchanged.', mood: 'acknowledge', effect: 'forgetAll' }
     }
     const list = this.misses()
     if (ask === 'clearMissed') { this.keepMisses([]); return { text: list.length ? 'Done. The list of questions I missed is empty.' : 'That list was already empty.', mood: 'acknowledge' } }
@@ -638,7 +709,7 @@ export class Mind {
   private feelings (input: string): Reply | null {
     if (this.ctx.fun === false) return null
     let felt: ReturnType<typeof feel> = null
-    try { felt = feel(input, this.bond(), this.ctx.name) } catch (e) { return null }
+    try { felt = feel(input, this.bond(), this.keepsakes().nick || this.ctx.name) } catch (e) { return null }
     if (!felt) return null
     if (felt.name !== undefined) { const b = { ...this.bond() }; if (felt.name) b.name = felt.name; else delete b.name; this.keepBond(b) }
     const reply: Reply = { text: felt.text, mood: felt.mood as Reply['mood'] }
@@ -2619,6 +2690,7 @@ export class Mind {
         { label: 'Filter the map', detail: 'Only show parcels over 5 acres · hide hydrants installed before 1990 · clear the filter · chart parcels by zoning' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
         { label: 'Look back', detail: "What's on the map · what did I change · undo · try again · what did I click (with a popup open) · copy that · export chat", action: { type: 'ask', q: 'What did I change' } },
+        ...(this.ctx.fun === false ? [] : [{ label: 'The two of us', detail: 'My stamps · the usual · our story · call me Sam · can I call you Pip · my birthday is March 3 · see you tomorrow', action: { type: 'ask' as const, q: 'My stamps' } }]),
         { label: 'People and privacy', detail: `${this.ctx.contact ? 'Talk to a person · ' : ''}what do you know about me · forget everything · what did you miss`, action: { type: 'ask', q: this.ctx.contact ? 'Talk to a person' : 'What do you know about me?' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
       ],

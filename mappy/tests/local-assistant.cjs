@@ -1448,7 +1448,7 @@ test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps
   mind.ctx.store = { get: k => kept[k] || null, set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } }
   live.jmv.view.viewpoint = { toJSON: () => ({ scale: 5000, targetGeometry: { x: 1, y: 2 } }) }
   assert.match((await mind.respond('save this view as home base')).text, /Saved this view as \*\*home base\*\*/)
-  assert.equal(Object.keys(kept).filter(k => k !== 'mappy-bond').length, 1)
+  assert.equal(Object.keys(kept).filter(k => /^mappy-views/.test(k)).length, 1)
   const gone = []
   live.jmv.view.goTo = async t => { gone.push(t) }
   sdkLoader = async () => [{ fromJSON: j => ({ ...j, fromJSON: true }) }]
@@ -1456,7 +1456,7 @@ test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps
   assert.equal(gone[gone.length - 1].fromJSON, true)
   assert.match((await mind.respond('my saved views')).list[0].label, /home base/)
   assert.match((await mind.respond('delete the home base view')).text, /Forgot the \*\*home base\*\* view/)
-  assert.equal(Object.keys(kept).filter(k => k !== 'mappy-bond').length, 0)
+  assert.equal(Object.keys(kept).filter(k => /^mappy-views/.test(k)).length, 0)
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
 
   // Zoom steps, pans, turns.
@@ -2006,6 +2006,80 @@ test('a person to ask, privacy in plain words, forget everything and the missed 
   assert.match(none.text, /not a person/); assert.equal(none.actions[0].url, 'https://example.org')
   await alone.respond('where is the moon base located')
   assert.ok(!((await alone.respond('how tall is the moon base tower')).actions || []).some(a => /^mailto:/.test(a.url || '')))
+})
+
+test('keepsakes: passport stamps, the usual, a birthday, a nickname and a promise to come back', async () => {
+  const K = require('../src/brain/keepsakes.ts')
+  // Birthdays: month and day only, in the ways people write them.
+  assert.equal(K.parseBirthday('March 3'), '03-03'); assert.equal(K.parseBirthday('3rd of march'), '03-03'); assert.equal(K.parseBirthday('12/25'), '12-25'); assert.equal(K.parseBirthday('Feb 30'), ''); assert.equal(K.parseBirthday('soon'), '')
+  assert.equal(K.cleanNick('pip'), 'Pip'); assert.equal(K.cleanNick('stupid'), ''); assert.equal(K.cleanNick('x'), '')
+  // A stored blob is read back safely: unknown stamps and odd values are dropped.
+  const odd = K.readKeepsakes(JSON.stringify({ stamps: { first: '2026-01-01', hacker: '2026-01-01', chart: 'yesterday' }, thanks: -4, birthday: '13-40', nick: '<b>', layers: { Parcels: 3 } }))
+  assert.deepEqual(odd.stamps, { first: '2026-01-01' }); assert.equal(odd.thanks, 0); assert.equal(odd.birthday, undefined); assert.equal(odd.nick, undefined); assert.equal(odd.layers.Parcels, 3)
+  // Stamps are earned once, in passport order.
+  const bond = { chats: 1, days: 1, streak: 1, met: '2026-11-17', last: '2026-11-17' }
+  const noon = new Date(2026, 10, 17, 12)
+  const a = K.remember(K.emptyKeepsakes(), { input: 'turn on parcels', intent: 'layerOn', layer: 'Parcels' }, bond, noon)
+  assert.deepEqual(a.earned.map(s => s.id), ['first', 'layer'])
+  assert.deepEqual(K.remember(a.keep, { input: 'turn on parcels', intent: 'layerOn', layer: 'Parcels' }, bond, noon).earned, [])
+  assert.deepEqual(K.remember(a.keep, { input: 'count parcels' , intent: 'count' }, bond, new Date(2026, 10, 21, 23)).earned.map(s => s.id), ['count', 'owl', 'weekend'])
+  assert.deepEqual(K.remember(a.keep, {}, { ...bond, streak: 7, chats: 100 }, noon).earned.map(s => s.id), ['regular', 'devoted', 'curious', 'century'])
+  // A greeting only he could give: a birthday (once), and a kept promise.
+  const bday = K.keepsakeHello({ ...K.emptyKeepsakes(), birthday: '11-17' }, { ...bond, name: 'Sam' }, noon)
+  assert.match(bday.line, /Happy birthday, Sam/); assert.equal(K.keepsakeHello(bday.keep, bond, noon).line, '')
+  const kept1 = K.keepsake('see you tomorrow', K.emptyKeepsakes(), bond, 'Mappy', noon)
+  assert.deepEqual(kept1.keep.promise, { said: '2026-11-17', due: '2026-11-18' })
+  assert.equal(K.keepsakeHello(kept1.keep, bond, noon).line, '')
+  const back = K.keepsakeHello(kept1.keep, bond, new Date(2026, 10, 18, 9))
+  assert.match(back.line, /You said you would be back today/); assert.equal(back.keep.promise, undefined)
+  assert.match(K.keepsakeHello(kept1.keep, bond, new Date(2026, 10, 25, 9)).line, /I kept your spot/)
+  assert.deepEqual(K.keepsake('see you monday', K.emptyKeepsakes(), bond, 'Mappy', noon).keep.promise.due, '2026-11-23')
+  // Real requests are left alone.
+  for (const q of ['turn on parcels', 'show stamps layer', 'find usual in parcels', 'my birthday layer', 'see you', 'call me Sam', 'who are you', 'what is my favorite color', 'zoom to passport office']) assert.equal(K.keepsake(q, K.emptyKeepsakes(), bond), null, q)
+
+  // In the chat.
+  const { live, layer } = fixture()
+  const kept = {}
+  const store = { get: k => (k in kept ? kept[k] : null), set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } }
+  const mind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', store })
+  const first = await mind.respond('turn on parcels')
+  assert.match(first.text, /New stamps in your passport: 📄 \*\*First Fold\*\*, 🗂️ \*\*Layer Peeker\*\*/); assert.match(first.text, /my stamps/)
+  assert.doesNotMatch((await mind.respond('turn on parcels')).text, /stamp/)
+  assert.match((await mind.respond('count parcels by owner')).text, /Chart Maker|Table Turner/)
+  // A miss earns nothing and is not a "usual".
+  assert.doesNotMatch((await mind.respond('where is the moon base located')).text, /stamp/)
+  const book = await mind.respond('my stamps')
+  assert.doesNotMatch(book.text, /New stamp/)
+  assert.match(book.text, /of 23\*\* stamps/); assert.equal(book.list.length, 23); assert.equal(book.list[0].label, 'First Fold'); assert.equal(book.list[22].label, '???')
+  // The usual: asked twice, offered as a button, and under the greeting.
+  assert.deepEqual(mind.usual(), ['turn on parcels'])
+  const usual = await mind.respond('the usual')
+  assert.equal(usual.actions[0].q, 'turn on parcels')
+  assert.match((await mind.respond("what's my favorite layer")).text, /\*\*Parcels\*\*/)
+  // A nickname: he answers to it.
+  assert.match((await mind.respond('can I call you Pip?')).text, /Pip/)
+  assert.equal((await mind.respond('hey pip, how are you')).mood === 'confused', false)
+  assert.match((await mind.respond('what do I call you')).text, /you call me \*\*Pip\*\*/)
+  // Thanks are counted, and the fifth earns a stamp.
+  let thanks
+  for (let i = 0; i < 5; i++) thanks = await mind.respond('thanks')
+  assert.match(thanks.text, /Kind Words/)
+  assert.match((await mind.respond('how many times have I thanked you')).text, /^5 times/)
+  // A birthday, kept as month and day; our story pulls it together; privacy lists it.
+  assert.match((await mind.respond('my birthday is March 3, 1990')).text, /March 3\. I wrote it in the margin/)
+  assert.equal(JSON.parse(kept['mappy-keepsakes']).birthday, '03-03')
+  const story = await mind.respond('our story')
+  assert.match(story.text, /We met on/); assert.match(story.text, /favorite layer is \*\*Parcels\*\*/); assert.match(story.text, /you call me Pip/)
+  const privacy = await mind.respond('what do you know about me')
+  assert.match(privacy.text, /passport stamps/); assert.match(privacy.text, /your birthday \(month and day\)/)
+  // Forget everything takes the keepsakes too.
+  await mind.respond('forget everything')
+  assert.equal(kept['mappy-keepsakes'], undefined); assert.deepEqual(mind.usual(), [])
+  // Fun turned off: no stamps, no keepsake talk.
+  const plainMind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', fun: false })
+  layer.visible = false
+  assert.doesNotMatch((await plainMind.respond('turn on parcels')).text, /stamp/)
+  assert.doesNotMatch((await plainMind.respond('my stamps')).text, /passport/)
 })
 
 test('census and place-in-numbers questions answer from the saved facts', async () => {

@@ -79,6 +79,7 @@ await step('rates an answer', async () => {
 await step('a question in Spanish is answered in Spanish', async () => { const got = await say('¿cuántos parques hay en la ciudad?', /parques/, 15000); assert.doesNotMatch(got, /I read that as/) })
 await step('keeps private numbers in the browser', async () => { await say('ask Claude about card 4111 1111 1111 1111', /did not send it/) })
 await step('hands off to a person and is plain about privacy', async () => { await say('talk to a person', /Mapleton map desk/); await say('what do you know about me', /Kept in this browser only/) })
+await step('keeps a passport and learns the usual', async () => { await say('my stamps', /Your passport has \*?\*?\d+ of 23/); await say('our story', /We met on/) })
 await step('undo works', async () => { await say('turn on fire hydrants'); assert.equal(await layerOn('hydrants'), true); await say('undo'); assert.equal(await layerOn('hydrants'), false) })
 await step('no errors in the page', async () => assert.deepEqual(problems, []))
 
