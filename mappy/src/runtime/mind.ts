@@ -433,10 +433,12 @@ export class Mind {
         m.thanks = intent === 'thanks'
         m.fun = good && (intent === 'joke' || felt || /^(?:fun fact|tell me a (?:joke|riddle|fact)|riddle)/i.test(input.trim()))
         m.helper = !!(this.ctx.serverAssistant && reply.sources?.[0]?.title === this.ctx.serverAssistant.label)
-        const { keep, earned } = remember(this.keepsakes(), m, this.bond())
+        m.down = felt && ['hug', 'sad'].includes(reply.mood || '') && /\b(?:rough|bad|hard|long|terrible|awful|worst|sad|down|tired|exhausted|stressed|lonely|upset|crying)\b/i.test(input)
+        const { keep, earned, levelUp } = remember(this.keepsakes(), m, this.bond())
         this.keepKeepsakes(keep)
         const line = stampLine(earned, Object.keys(keep.stamps).length)
         if (line && good) reply.text = `${reply.text}\n\n${line}`
+        if (levelUp && good) reply.text = `${reply.text}\n\n${levelUp}`
       } catch (e) { }
     }
     // Stuck: keep the question for the people who run the app, and after two in a row offer a person.
@@ -635,13 +637,14 @@ export class Mind {
   private keepsakeSay (input: string): Reply | null {
     if (this.ctx.fun === false) return null
     let said: ReturnType<typeof keepsake> = null
-    try { said = keepsake(input, this.keepsakes(), this.bond(), this.ctx.name) } catch (e) { return null }
+    try { said = keepsake(input, this.keepsakes(), this.bond(), this.ctx.name, new Date(), this.ctx.place?.name || this.ctx.appTitle) } catch (e) { return null }
     if (!said) return null
     if (said.keep) this.keepKeepsakes(said.keep)
     this.keepsakeTurn = true
     const reply: Reply = { text: said.text, mood: said.mood as Reply['mood'] }
     if (said.suggest?.length) reply.suggest = said.suggest
     if (said.list?.length) reply.list = said.list.map(r => ({ label: r.label, detail: r.detail, glyph: r.glyph, sr: r.label === '???' ? 'Not earned yet' : 'Earned' }))
+    if (said.card) reply.keepsake = said.card
     if (said.asks?.length) reply.actions = said.asks.slice(0, 4).map(q => ({ type: 'ask' as const, q, label: clip(q, 40) }))
     this.lastReply = reply
     return reply
@@ -2690,7 +2693,7 @@ export class Mind {
         { label: 'Filter the map', detail: 'Only show parcels over 5 acres · hide hydrants installed before 1990 · clear the filter · chart parcels by zoning' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
         { label: 'Look back', detail: "What's on the map · what did I change · undo · try again · what did I click (with a popup open) · copy that · export chat", action: { type: 'ask', q: 'What did I change' } },
-        ...(this.ctx.fun === false ? [] : [{ label: 'The two of us', detail: 'My stamps · the usual · our story · call me Sam · can I call you Pip · my birthday is March 3 · see you tomorrow', action: { type: 'ask' as const, q: 'My stamps' } }]),
+        ...(this.ctx.fun === false ? [] : [{ label: 'The two of us', detail: 'My stamps · write me a postcard · how close are we · the usual · our story · call me Sam · can I call you Pip · my birthday is March 3 · see you tomorrow', action: { type: 'ask' as const, q: 'My stamps' } }]),
         { label: 'People and privacy', detail: `${this.ctx.contact ? 'Talk to a person · ' : ''}what do you know about me · forget everything · what did you miss`, action: { type: 'ask', q: this.ctx.contact ? 'Talk to a person' : 'What do you know about me?' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
       ],

@@ -17,6 +17,7 @@ import type { MappyAction } from '../../brain/types'
 import type { Placement } from '../placement'
 import { __t } from '../i18n-t'
 import { tableCsv } from '../../brain/export'
+import Keepsake from './Keepsake'
 
 export interface ChatMsg {
   id: number
@@ -371,6 +372,7 @@ export default function ChatBubble (props: Props): any {
           <div key={m.id} className={'mappy-msg ' + (m.from === 'user' ? 'mappy-user' : 'mappy-bot')}>
             <p><span className='mappy-sr'>{m.from === 'user' ? __t('you') : props.name}: </span>{renderText(m)}</p>
             {m.from === 'mappy' && !typingNow(m) && m.text && <button type='button' className='mappy-copy' onClick={(e: any) => copy(m, e.currentTarget)} aria-label='Copy this answer' title='Copy'>{copied === m.id ? '✓' : '⧉'}</button>}
+            {!typingNow(m) && m.reply?.keepsake && <Keepsake card={m.reply.keepsake} noDownloads={props.noDownloads} onSave={download} />}
             {!typingNow(m) && m.reply?.chart && m.reply.chart.rows.length > 0 && (() => {
               const c = m.reply!.chart!
               const max = Math.max(...c.rows.map(r => Math.abs(r.value)), 1)

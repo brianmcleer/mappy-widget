@@ -25,6 +25,8 @@ export interface Reply {
     // feelings (brain/feelings.ts)
     | 'sorry' | 'sad' | 'shy' | 'proud' | 'surprised' | 'laugh' | 'hug' | 'grateful' | 'cheer' | 'sleepy' | 'curious'
     | 'calling' | 'camera' | 'route' | 'pindrop' | 'measure' | 'chart' | 'idea' | 'layers' | 'treasure' | 'boat' | 'kite' | 'juggle' | 'coffee'
+  /** A keepsake picture: the passport page or a postcard. */
+  keepsake?: import('./keepsakes').KeepsakeCard
   /** A small bar chart of the table (labels and numbers), drawn by the chat. */
   chart?: { title?: string, rows: Array<{ label: string, value: number }>, unit?: string }
   /** A small muted line under the answer ("AI answer. Check anything important."). */

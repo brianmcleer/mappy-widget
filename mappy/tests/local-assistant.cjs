@@ -2050,7 +2050,7 @@ test('keepsakes: passport stamps, the usual, a birthday, a nickname and a promis
   assert.doesNotMatch((await mind.respond('where is the moon base located')).text, /stamp/)
   const book = await mind.respond('my stamps')
   assert.doesNotMatch(book.text, /New stamp/)
-  assert.match(book.text, /of 23\*\* stamps/); assert.equal(book.list.length, 23); assert.equal(book.list[0].label, 'First Fold'); assert.equal(book.list[22].label, '???')
+  assert.match(book.text, /of 23\*\* stamps/); assert.equal(book.keepsake.kind, 'passport'); assert.equal(book.keepsake.stamps.length, 23); assert.match(book.keepsake.stamps[0].day, /^[A-Z][a-z]{2} \d+, \d{4}$/); assert.equal(book.keepsake.stamps[22].day, undefined)
   // The usual: asked twice, offered as a button, and under the greeting.
   assert.deepEqual(mind.usual(), ['turn on parcels'])
   const usual = await mind.respond('the usual')
@@ -2072,6 +2072,23 @@ test('keepsakes: passport stamps, the usual, a birthday, a nickname and a promis
   assert.match(story.text, /We met on/); assert.match(story.text, /favorite layer is \*\*Parcels\*\*/); assert.match(story.text, /you call me Pip/)
   const privacy = await mind.respond('what do you know about me')
   assert.match(privacy.text, /passport stamps/); assert.match(privacy.text, /your birthday \(month and day\)/)
+  // How close you are, in hearts; a new level is said once.
+  assert.equal(K.closeness(K.emptyKeepsakes(), { chats: 0, days: 0, streak: 0 }).name, 'New Fold')
+  assert.equal(K.closeness({ ...K.emptyKeepsakes(), stamps: { first: '2026-01-01', layer: '2026-01-01' } }, { chats: 5, days: 1, streak: 1 }).name, 'Pen Pals')
+  const up = K.remember(K.emptyKeepsakes(), { input: 'list layers' }, { chats: 110, days: 2, streak: 1 }, noon)
+  assert.match(up.levelUp, /♥♥♥♡♡ We just became \*\*Trail Buddies\*\*/); assert.equal(K.remember(up.keep, { input: 'list layers' }, { chats: 111, days: 2, streak: 1 }, noon).levelUp, '')
+  assert.match((await mind.respond('how close are we')).text, /♥+♡* \*\*/)
+  // A postcard: a picture with their name in it, safely.
+  const card = await mind.respond('write me a postcard')
+  assert.equal(card.keepsake.kind, 'postcard'); assert.equal(card.keepsake.from, 'Pip')
+  const svg = K.postcardSvg({ ...card.keepsake, to: '<Sam & "Co">' })
+  assert.match(svg, /^<svg xmlns/); assert.match(svg, /Dear &lt;Sam &amp; &quot;Co&quot;&gt;,/); assert.doesNotMatch(svg, /<script|<Sam/)
+  // A hard day is remembered for one kind word next time, then let go.
+  await mind.respond('rough day')
+  assert.equal(JSON.parse(kept['mappy-keepsakes']).rough.length, 10)
+  const tomorrow = new Date(Date.now() + 86400000)
+  assert.match(mind.welcome(tomorrow), /kinder than last time|a little lighter today/)
+  assert.equal(JSON.parse(kept['mappy-keepsakes']).rough, undefined)
   // Forget everything takes the keepsakes too.
   await mind.respond('forget everything')
   assert.equal(kept['mappy-keepsakes'], undefined); assert.deepEqual(mind.usual(), [])

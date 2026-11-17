@@ -262,6 +262,21 @@ const CSS = `
 .mappy-ratebtn{border:0;background:transparent;cursor:pointer;font-size:.85rem;line-height:1;padding:3px 5px;border-radius:6px;min-width:24px;min-height:24px;opacity:.65;transition:opacity .12s ease,transform .12s ease,background-color .12s ease}
 .mappy-ratebtn:hover:not(:disabled){opacity:1;background:var(--mappy-hover);transform:scale(1.15)}
 .mappy-ratebtn:disabled{opacity:.35;cursor:default}
+.mappy-passport{margin:8px 0 4px;padding:8px 8px 10px;border-radius:8px;background:#fbf4e1;border:1px solid #d8c79c;color:#3b2f20;box-shadow:inset 0 0 0 3px #fbf4e1,inset 0 0 0 4px #e9dcb8}
+.mappy-passport-head{display:flex;justify-content:space-between;font-size:.68rem;letter-spacing:.14em;font-weight:700;color:#8a7a55;padding:0 4px 6px}
+.mappy-stamps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px 5px}
+.mappy-stamp{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;aspect-ratio:1;padding:6px 5px;border-radius:50%;border:2px solid currentColor;outline:1px solid currentColor;outline-offset:-5px;line-height:1.1;animation:mappy-stamp-in .35s cubic-bezier(.2,1.6,.4,1) both}
+.mappy-stamp-glyph{font-size:1.25rem;line-height:1.1}
+.mappy-stamp-name{font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-top:2px}
+.mappy-stamp-day{font-size:.54rem;opacity:.85;margin-top:1px}
+.mappy-stamp-blank{color:#b9aa82;border-style:dashed;outline:none;animation:none}
+.mappy-stamp-blank .mappy-stamp-glyph{font-weight:700;opacity:.7}
+.mappy-stamp-blank .mappy-stamp-name{text-transform:none;font-weight:500;letter-spacing:0;color:#7d6f4c}
+@keyframes mappy-stamp-in{from{transform:scale(1.5);opacity:0}}
+.mappy-postcard{margin:8px 0 4px}
+.mappy-postcard img{display:block;width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(60,40,10,.22);transform:rotate(-1deg)}
+.mappy-postcard .mappy-btn{margin-top:8px}
+@media (prefers-reduced-motion:reduce){.mappy-stamp{animation:none}}
 .mappy-chart{margin:6px 0 2px;font-size:.8rem}
 .mappy-chart-title{font-weight:600;margin-bottom:4px;opacity:.85}
 .mappy-bar-row{display:grid;grid-template-columns:minmax(60px,34%) 1fr auto;gap:6px;align-items:center;margin:2px 0}
