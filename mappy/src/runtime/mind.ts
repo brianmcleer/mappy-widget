@@ -73,7 +73,9 @@ export interface MindContext {
   /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
   assistant?: AssistantPort | null
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
-  serverAssistant?: { label: string } | null
+  serverAssistant?: { label: string, shareSelection?: boolean } | null
+  /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
+  waiting?: (note: string) => void
   /** Where the person is (the device's location), when they allow it. */
   myLocation?: () => Promise<[number, number] | null>
   /** Jokes, riddles and games. Undefined means on. */
@@ -550,8 +552,9 @@ export class Mind {
     } catch (e) { this.mcpFailedAt = Date.now(); return quiet ? null : { text: `I could not reach ${port.label}, so ${sa.label} cannot answer right now.`, mood: 'alert' } }
     const tool = this.askTool
     if (!tool) return quiet ? null : { text: `${sa.label} is not turned on for ${port.label} yet. The GIS team can turn it on on the server.`, mood: 'confused' }
-    const ctx = [this.handoffContextLine(), this.selectedLine(), extra].filter(Boolean).join(' ')
+    const ctx = [this.handoffContextLine(), sa.shareSelection === false ? '' : this.selectedLine(), extra].filter(Boolean).join(' ')
     this.track('claude')
+    try { this.ctx.waiting?.(`${sa.label} is checking the GIS data...`) } catch (e) { }
     let raw: any
     try {
       raw = await port.call(tool.name, { question: clip(question, 1500), ...(ctx ? { context: ctx } : {}), ...(this.claudeTurns.length ? { history: this.claudeTurns.slice(-3) } : {}) }, 110000)
@@ -2361,9 +2364,10 @@ export class Mind {
   help (): Reply {
     const hasMap = this.ctx.live.ready
     return {
-      text: `I use ${this.ctx.appTitle}'s tools, help and map metadata to answer locally. No AI account or model needed. Use exact layer and field names for analysis. Join up to five commands with "then"; follow up with "zoom to it" or "how many in view". Say "undo" to reverse my layer visibility and opacity changes.`,
+      text: `I use ${this.ctx.appTitle}'s tools, help and map metadata to answer locally.${this.ctx.serverAssistant ? ` When I am stuck, ${this.ctx.serverAssistant.label} answers here with the GIS data.` : ' No AI account or model needed.'} Use exact layer and field names for analysis. Join up to five commands with "then"; follow up with "zoom to it" or "how many in view". Say "undo" to reverse my layer visibility and opacity changes.`,
       mood: 'wave',
       list: [
+        ...(this.ctx.serverAssistant ? [{ label: `Ask ${this.ctx.serverAssistant.label}`, detail: `Harder questions go to ${this.ctx.serverAssistant.label}, who answers here with the GIS data · ask ${this.ctx.serverAssistant.label} which zones have the most parcels` }] : this.ctx.assistant ? [{ label: `Ask ${this.ctx.assistant.label}`, detail: `What I cannot answer opens in ${this.ctx.assistant.label} with your question written · ask ${this.ctx.assistant.label} ...` }] : []),
         { label: 'Get questions for my data', detail: 'Choose a layer and get questions based on its actual fields.', action: { type: 'ask', q: 'Explore data' } },
         { label: 'Take the tour', detail: 'Show me around · next · stop tour', action: { type: 'ask', q: 'Show me around' } },
         { label: 'Explore the app', detail: 'List tools · open print · list pages · list bookmarks', action: { type: 'ask', q: 'List tools' } },

@@ -68,6 +68,9 @@
     "per_day": 1000,
     "org_name": "the City",
     "extra_instructions": "",
-    "cache_minutes": 10
+    "cache_minutes": 10,
+    "max_tokens_per_day": 0,
+    "redact_fields": [],
+    "log_questions": false
   }
 }

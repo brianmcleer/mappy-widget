@@ -459,6 +459,46 @@ class GisMcpTest(unittest.TestCase):
             today = app.get('/health').get_json()['assistant']['today']
             self.assertGreaterEqual(today['questions'], 4)
             self.assertGreater(today['cached_input_tokens'], 0)
+            # Fields held back from the API: dropped from the data, and the summary sentence left out.
+            srv_obj = gis_mcp.Server(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, redact_fields=['Owner', 'mail addr']))))
+            clean, did = srv_obj.assistant._redact({'rows': [{'Owner': 'Smith', 'OWNER_NAME': 'Smith J', 'Mail_Addr 1': 'PO Box', 'Acres': 5, 'nested': {'owner2': 'x', 'Zone': 'R-4'}}]})
+            self.assertTrue(did)
+            self.assertEqual(clean, {'rows': [{'Acres': 5, 'nested': {'Zone': 'R-4'}}]})
+            self.assertEqual(srv_obj.assistant._redact({'a': 1}), ({'a': 1}, True))
+            self.assertEqual(gis_mcp.Server(dict(self.cfg, _no_startup_refresh=True)).assistant._redact({'Owner': 'x'}), ({'Owner': 'x'}, False))
+            # A daily token budget stops new questions once it is spent.
+            capped = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, max_tokens_per_day=100, per_person_per_hour=50)))).test_client()
+            def capped_ask(q):
+                return capped.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'ask_assistant', 'arguments': {'question': q}}}),
+                                   headers={'Content-Type': 'application/json', 'Origin': ORIGIN, 'Authorization': 'Bearer ' + TOKEN}).get_json()['result']
+            self.assertFalse(capped_ask('say hi, no tools')['isError'])
+            over = capped_ask('one more, no tools')
+            self.assertTrue(over['isError'])
+            self.assertIn('as many questions as it can today', over['content'][0]['text'])
+            # The command line: the Claude Desktop config, and one question to test the key.
+            import contextlib
+            import io
+            import tempfile
+            with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+                json.dump({'name': 'City GIS', 'public_url': 'https://gis.example.org/gis-mcp', 'log_dir': os.path.join(HERE, '_logs'),
+                           'assistant': dict(a, cache_minutes=0)}, f)
+            argv = sys.argv
+            try:
+                out = io.StringIO()
+                sys.argv = ['gis_mcp.py', '--config', f.name, '--desktop-config']
+                with contextlib.redirect_stdout(out):
+                    gis_mcp.main()
+                self.assertEqual(json.loads(out.getvalue()), {'mcpServers': {'city-gis': {'command': 'npx', 'args': ['-y', 'mcp-remote', 'https://gis.example.org/gis-mcp/mcp']}}})
+                out = io.StringIO()
+                sys.argv = ['gis_mcp.py', '--config', f.name, '--ask', 'parks with followups']
+                with contextlib.redirect_stdout(out):
+                    gis_mcp.main()
+                self.assertIn('There are **12** parks.', out.getvalue())
+                self.assertIn('Follow-ups: Which is the largest?', out.getvalue())
+                self.assertIn('Tokens: 1000 in, 20 out', out.getvalue())
+            finally:
+                sys.argv = argv
+                os.unlink(f.name)
             # A wrong key reads as a setup problem.
             os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')

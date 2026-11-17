@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.8.0'
+VERSION = '1.9.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -102,6 +102,9 @@ DEFAULTS = {
         'per_person_per_hour': 30,
         'per_day': 1000,
         'cache_minutes': 10,
+        'max_tokens_per_day': 0,
+        'redact_fields': [],
+        'log_questions': False,
         'retry_wait_seconds': 1.5,
         'org_name': '',
         'extra_instructions': ''
@@ -1921,6 +1924,23 @@ class Assistant:
          'input_schema': {'type': 'object', 'properties': {'layer': {'type': 'string', 'description': 'Layer name.'}}, 'required': ['layer']}}
     ]
 
+    def _redact(self, data):
+        """Tool data with the configured fields left out (owner names, phone numbers...), so they never
+        reach the API. Matches field names and labels, ignoring case and spaces or underscores."""
+        pats = [re.sub(r'[\s_]+', '', str(p)).lower() for p in (self.a.get('redact_fields') or []) if str(p).strip()]
+        if not pats:
+            return data, False
+        def hidden(key):
+            k = re.sub(r'[\s_]+', '', str(key)).lower()
+            return any(p in k for p in pats)
+        def walk(v):
+            if isinstance(v, dict):
+                return {k: walk(x) for k, x in v.items() if not hidden(k)}
+            if isinstance(v, list):
+                return [walk(x) for x in v]
+            return v
+        return walk(data), True
+
     def _map_call(self, name, args, shown):
         if len(shown) >= 4:
             return 'Enough buttons already.', True
@@ -1961,6 +1981,10 @@ class Assistant:
             if day != today:
                 day, used = today, 0
             if used >= int(self.a.get('per_day') or 1000):
+                raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
+            # A spending guard: stop for the day once this many tokens (in and out) were used.
+            budget = int(self.a.get('max_tokens_per_day') or 0)
+            if budget and self.tokens['day'] == today and self.tokens['input'] + self.tokens['output'] >= budget:
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
             recent = [t for t in self.hits.get(who, []) if now - t < 3600]
             if len(recent) >= int(self.a.get('per_person_per_hour') or 30):
@@ -2082,6 +2106,8 @@ class Assistant:
                     followups = [x for x in followups if len(x) > 3][:3]
                     answer = answer[:m.start()].strip() or answer
                 log.info('assistant ok %.0fms steps=%d tools=%s in=%d out=%d', (time.time() - started) * 1000, step, ','.join(used) or '-', usage['input_tokens'], usage['output_tokens'])
+                if self.a.get('log_questions'):
+                    log.info('assistant asked by %s: %s', who[:8], question)
                 data = {'answer': answer, 'assistant': self.label, 'model': out.get('model') or body['model'], 'tools_used': used, 'followups': followups, 'map': shown, 'usage': usage}
                 if cache_key:
                     with self.lock:
@@ -2100,7 +2126,9 @@ class Assistant:
                 used.append(str(name))
                 try:
                     text, data = self.tools.call(name, c.get('input') or {}, token, referer)
-                    content, error = (text + '\n' + json.dumps(data, ensure_ascii=False))[:12000], False
+                    data, redacted = self._redact(data)
+                    # With fields held back, the summary sentence is left out too: it can name them.
+                    content, error = (('' if redacted else text + '\n') + json.dumps(data, ensure_ascii=False))[:12000], False
                 except ToolError as e:
                     content, error = e.said, True
                 except RpcError as e:
@@ -2367,6 +2395,8 @@ def main():
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--stdio', action='store_true', help='Speak MCP over stdin/stdout (desktop clients).')
     p.add_argument('--check', action='store_true', help='Load the config, list the layers found, and exit.')
+    p.add_argument('--ask', metavar='QUESTION', help='Ask Claude one question from the command line (tests the API key and tools), then exit.')
+    p.add_argument('--desktop-config', action='store_true', help='Print the Claude Desktop config that connects it to this server, then exit.')
     a = p.parse_args()
     cfg = load_config(a.config)
     setup_logging(cfg, here)
@@ -2379,6 +2409,29 @@ def main():
         for n in s.layers.notes:
             print('Note: ' + n)
         print('Tools: ' + ', '.join(t['name'] for t in s.tools.definitions()))
+        return
+    if a.desktop_config:
+        url = (cfg.get('public_url') or 'https://YOUR-SERVER/gis-mcp').rstrip('/') + '/mcp'
+        print(json.dumps({'mcpServers': {re.sub(r'[^a-z0-9]+', '-', (cfg.get('name') or 'gis').lower()).strip('-') or 'gis': {'command': 'npx', 'args': ['-y', 'mcp-remote', url]}}}, indent=2))
+        return
+    if a.ask:
+        s = Server(cfg)
+        print('Claude on this server: %s' % s.assistant.status())
+        if not s.assistant.enabled:
+            print('Set "assistant": {"enabled": true} in the config and the %s environment variable, then run this again.' % (s.assistant.a.get('api_key_env') or 'ANTHROPIC_API_KEY'))
+            sys.exit(1)
+        s.layers.refresh(os.environ.get('GIS_MCP_TOKEN') or cfg.get('discovery_token') or None, force=True)
+        s.assistant.a = dict(s.assistant.a, require_token=False)
+        try:
+            text, data = s.assistant.ask({'question': a.ask}, os.environ.get('GIS_MCP_TOKEN') or None, None)
+        except ToolError as e:
+            print('Problem: %s' % e.said)
+            sys.exit(1)
+        print(text)
+        print('Tools used: %s' % (', '.join(data.get('tools_used') or []) or 'none'))
+        print('Buttons: %s' % (json.dumps(data.get('map')) if data.get('map') else 'none'))
+        print('Follow-ups: %s' % (' | '.join(data.get('followups') or []) or 'none'))
+        print('Tokens: %s in, %s out' % (data['usage']['input_tokens'], data['usage']['output_tokens']))
         return
     if a.stdio:
         run_stdio(cfg)

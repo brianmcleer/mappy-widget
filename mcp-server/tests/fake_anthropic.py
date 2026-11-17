@@ -42,7 +42,7 @@ def messages():
         return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use',
                         'content': [{'type': 'tool_use', 'id': 'tu_loop', 'name': 'list_layers', 'input': {}}]})
     if not body.get('tools') or 'no tools' in text:
-        return jsonify({'id': 'm0', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn',
+        return jsonify({'id': 'm0', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn', 'usage': USAGE,
                         'content': [{'type': 'text', 'text': 'Hello from the fake.'}]})
     names = [t['name'] for t in body['tools']]
     assert 'ask_assistant' not in names, 'the assistant must not be offered itself'

@@ -91,6 +91,10 @@ export default function HelperSection (props: Props): any {
           <TextInput size='sm' style={full} key={'al' + (a.label || '')} defaultValue={a.label || ''} placeholder={DEFAULT_ASSISTANT_LABEL} aria-label='Assistant name in the chat'
             onAcceptValue={(v: string) => save({ label: String(v || '').trim() })} />
         </SettingRow>
+        <SettingRow tag='label' label='Send the clicked feature'>
+          <Switch checked={a.shareSelection !== false} onChange={(e: any) => save({ shareSelection: e.target.checked })} aria-label='Send the clicked feature' />
+        </SettingRow>
+        <Hint>With a popup open, the feature's layer and up to six of its values go along, so "who owns this" works. Turn off to send only where the map is.</Hint>
         <FullButton type='secondary' disabled={busy || !mcp?.url} onClick={checkServer}>{busy ? 'Checking...' : `Check that the server has ${name}`}</FullButton>
         {check && <Note tone={/^Ready/.test(check) ? 'ok' : busy ? 'info' : toneOf(check) === 'info' ? 'warn' : toneOf(check)}>{check}</Note>}
         <Hint>Each answer is a paid call to the Claude API from the server; the server limits questions per person per hour and per day. The question, a line about where the map is, a few values of the feature under an open popup and the data the tools look up go to Anthropic. The same question asked again within a few minutes is answered from the server's memory at no cost; the server's /health page shows today's questions and tokens.</Hint>

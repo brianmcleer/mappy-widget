@@ -80,7 +80,8 @@ Press **Connect and list tools**. Every tool is read-only, so all of them start 
    "assistant": { "enabled": true, "org_name": "the City" }
    ```
 4. Recycle the app pool. `/health` shows `"assistant": {"status": "ready"}`, or what is missing.
-5. In Mappy's settings, **Where he gets help**: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude**.
+5. Test it from the server, in Command Prompt (regular), in the gis-mcp folder, with the key set in that window (`set ANTHROPIC_API_KEY=sk-ant-...`): `.venv\Scripts\python.exe gis_mcp.py --config config.json --ask "how many fire hydrants are there"`. It prints the answer, the tools used and the tokens spent.
+6. In Mappy's settings, **Where he gets help**: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude**.
 
 Answers can carry buttons for the map (Claude calls `map_show_place` or `map_show_layer`; nothing changes until the person clicks) and up to three follow-up questions. To keep the cost down, the instructions and tool list are marked cacheable (repeat questions pay a fraction of the input), the same question from the same person within `cache_minutes` is answered from memory, and a busy moment is tried once more before giving up. `/health` shows today's questions and tokens under `assistant.today`.
 
@@ -101,7 +102,7 @@ For people who work in the Claude desktop app: it can use these tools directly, 
 }
 ```
 
-Restart Claude Desktop. Needs Node.js. For layers that need a sign-in, add `"--header", "Authorization: Bearer ${GIS_TOKEN}"` to `args` and `"env": { "GIS_TOKEN": "<ArcGIS token>" }`, or run the server locally over stdio (below).
+`python gis_mcp.py --config config.json --desktop-config` prints this with your server's address filled in. Restart Claude Desktop. Needs Node.js. For layers that need a sign-in, add `"--header", "Authorization: Bearer ${GIS_TOKEN}"` to `args` and `"env": { "GIS_TOKEN": "<ArcGIS token>" }`, or run the server locally over stdio (below).
 
 Assistants do best with `describe_layer` first (field names, types and allowed values), then `query_layer` ("permits issued in the last 30 days", "average acres by zoning", "hydrants installed before 1990, sorted by install date").
 
@@ -156,6 +157,9 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.require_token` | true | Only signed-in people may ask |
 | `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
 | `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
+| `assistant.max_tokens_per_day` | 0 (no cap) | A spending guard: no new questions once this many tokens (in and out) were used today |
+| `assistant.redact_fields` | none | Field names or labels ("owner", "phone") left out of the data Claude sees, so they never reach the API. Matching ignores case, spaces and underscores |
+| `assistant.log_questions` | false | Write each question to the log (with a short hash of who asked) |
 | `assistant.cache_minutes` | 10 | How long the same question from the same person is answered from memory (0 turns it off) |
 | `assistant.retry_wait_seconds` | 1.5 | Wait before the one retry after a busy answer |
 | `assistant.api_url` | Anthropic's | For a gateway in between |

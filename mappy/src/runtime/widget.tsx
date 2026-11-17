@@ -235,7 +235,8 @@ export default function Widget (props: Props): any {
     beacon: beaconRef.current,
     mcp,
     assistant,
-    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude' } : null,
+    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false } : null,
+    waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,
     place: {
@@ -287,6 +288,9 @@ export default function Widget (props: Props): any {
   const [open, setOpen] = React.useState(false)
   const [mood, setMoodState] = React.useState<Mood>('idle')
   const [busy, setBusy] = React.useState(false)
+  const [waitNote, setWaitNote] = React.useState('')
+  const waitNoteRef = React.useRef(setWaitNote)
+  waitNoteRef.current = setWaitNote
   const busyRef = React.useRef(false)
   // The conversation survives a reload of the page (this tab only): the last 40 messages, words and
   // buttons only; map results and tables are not kept.
@@ -480,6 +484,7 @@ export default function Widget (props: Props): any {
       clearTimeout(gears)
       busyRef.current = false
       setBusy(false)
+      setWaitNote('')
     }
   }, [mind, say])
 
@@ -859,6 +864,7 @@ export default function Widget (props: Props): any {
       task={mind.task()}
       messages={messages}
       busy={busy}
+      waitNote={busy ? waitNote : ''}
       chips={chips}
       complete={(p: string, signal?: AbortSignal) => mind.completeAsync(p, signal)}
       vars={vars}

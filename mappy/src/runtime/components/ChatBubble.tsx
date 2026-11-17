@@ -33,6 +33,8 @@ interface Props {
   task?: TaskSummary | null
   messages: ChatMsg[]
   busy: boolean
+  /** What he is waiting on ("Claude is checking the GIS data..."), shown beside the typing dots. */
+  waitNote?: string
   chips: string[]
   vars: { [k: string]: string }
   placement: Placement | null
@@ -106,10 +108,12 @@ export default function ChatBubble (props: Props): any {
   const [slow, setSlow] = React.useState('')
   React.useEffect(() => {
     if (!busy) { setSlow(''); return }
+    // Waiting on someone he named (Claude on the server): say who, right away, and keep saying it.
+    if (props.waitNote) { setSlow(props.waitNote); const c = setTimeout(() => setSlow(props.waitNote + ' This one takes a few steps.'), 15000); return () => clearTimeout(c) }
     const a = setTimeout(() => setSlow('Still checking...'), 3000)
     const b = setTimeout(() => setSlow('Still checking. The map service is slow right now.'), 12000)
     return () => { clearTimeout(a); clearTimeout(b) }
-  }, [busy])
+  }, [busy, props.waitNote])
   const [draft, setDraft] = React.useState('')
   const [history, setHistory] = React.useState<string[]>([])
   const [hIdx, setHIdx] = React.useState(-1)
