@@ -71,6 +71,11 @@
     "cache_minutes": 10,
     "max_tokens_per_day": 0,
     "redact_fields": [],
-    "log_questions": false
+    "log_questions": false,
+    "anonymous_per_hour": 5,
+    "allow_images": true,
+    "price_per_mtok_in": 0,
+    "price_per_mtok_out": 0,
+    "price_per_mtok_cached": 0
   }
 }

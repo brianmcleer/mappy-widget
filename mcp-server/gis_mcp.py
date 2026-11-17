@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.10.0'
+VERSION = '1.11.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -103,6 +103,12 @@ DEFAULTS = {
         'per_day': 1000,
         'cache_minutes': 10,
         'max_tokens_per_day': 0,
+        'anonymous_per_hour': 5,
+        'allow_images': True,
+        'usage_file': 'assistant-usage.json',
+        'price_per_mtok_in': 0,
+        'price_per_mtok_out': 0,
+        'price_per_mtok_cached': 0,
         'redact_fields': [],
         'log_questions': False,
         'retry_wait_seconds': 1.5,
@@ -1877,9 +1883,23 @@ class Assistant:
         self.layers = layers
         self.lock = threading.Lock()
         self.hits = {}
-        self.day = ('', 0)
-        self.tokens = {'day': '', 'input': 0, 'output': 0, 'cached': 0}
         self.answers = {}
+        # Questions and tokens per day, kept in a small file beside the logs so the daily limits
+        # and the spending guard survive an app pool recycle.
+        self.ledger = {}
+        self.ledger_path = ''
+        name = self.a.get('usage_file')
+        if name:
+            folder = cfg.get('log_dir') or 'logs'
+            if not os.path.isabs(folder):
+                folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), folder)
+            self.ledger_path = name if os.path.isabs(name) else os.path.join(folder, name)
+            try:
+                with open(self.ledger_path, 'r', encoding='utf-8') as f:
+                    raw = json.load(f)
+                self.ledger = {d: {k: int(v.get(k) or 0) for k in ('questions', 'input', 'output', 'cached')} for d, v in raw.items() if re.match(r'^\d{4}-\d{2}-\d{2}$', str(d)) and isinstance(v, dict)}
+            except (OSError, ValueError):
+                self.ledger = {}
 
     @property
     def key(self):
@@ -1898,22 +1918,58 @@ class Assistant:
             return 'off'
         return 'ready' if self.key else 'no key (set %s)' % (self.a.get('api_key_env') or 'ANTHROPIC_API_KEY')
 
+    def _day(self):
+        """Today's row in the ledger (call with the lock held)."""
+        day = time.strftime('%Y-%m-%d')
+        return self.ledger.setdefault(day, {'questions': 0, 'input': 0, 'output': 0, 'cached': 0})
+
+    def _save(self):
+        """Write the ledger (call with the lock held). The last 120 days are kept."""
+        if not self.ledger_path:
+            return
+        try:
+            for old in sorted(self.ledger)[:-120]:
+                del self.ledger[old]
+            os.makedirs(os.path.dirname(self.ledger_path), exist_ok=True)
+            tmp = self.ledger_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self.ledger, f)
+            os.replace(tmp, self.ledger_path)
+        except OSError:
+            log.warning('Could not write %s', self.ledger_path)
+
+    def _cost(self, row):
+        """An estimate in dollars when prices per million tokens are set in the config; else None."""
+        pi, po, pc = (float(self.a.get(k) or 0) for k in ('price_per_mtok_in', 'price_per_mtok_out', 'price_per_mtok_cached'))
+        if not (pi or po):
+            return None
+        return round((row['input'] * pi + row['output'] * po + row['cached'] * pc) / 1e6, 4)
+
+    def _summary(self, rows):
+        out = {'questions': sum(r['questions'] for r in rows), 'input_tokens': sum(r['input'] for r in rows),
+               'output_tokens': sum(r['output'] for r in rows), 'cached_input_tokens': sum(r['cached'] for r in rows)}
+        cost = self._cost({'input': out['input_tokens'], 'output': out['output_tokens'], 'cached': out['cached_input_tokens']})
+        if cost is not None:
+            out['estimated_cost'] = cost
+        return out
+
     def today(self):
         """Questions and tokens so far today, for /health (a quick look at what it costs)."""
-        day = time.strftime('%Y-%m-%d')
         with self.lock:
-            asked = self.day[1] if self.day[0] == day else 0
-            t = self.tokens if self.tokens['day'] == day else {'input': 0, 'output': 0, 'cached': 0}
-            return {'questions': asked, 'input_tokens': t['input'], 'output_tokens': t['output'], 'cached_input_tokens': t['cached']}
+            return self._summary([dict(self._day())])
+
+    def this_month(self):
+        month = time.strftime('%Y-%m')
+        with self.lock:
+            return self._summary([dict(v) for d, v in self.ledger.items() if d.startswith(month)])
 
     def _spent(self, usage):
-        day = time.strftime('%Y-%m-%d')
         with self.lock:
-            if self.tokens['day'] != day:
-                self.tokens = {'day': day, 'input': 0, 'output': 0, 'cached': 0}
-            self.tokens['input'] += int(usage.get('input_tokens') or 0) + int(usage.get('cache_creation_input_tokens') or 0)
-            self.tokens['cached'] += int(usage.get('cache_read_input_tokens') or 0)
-            self.tokens['output'] += int(usage.get('output_tokens') or 0)
+            row = self._day()
+            row['input'] += int(usage.get('input_tokens') or 0) + int(usage.get('cache_creation_input_tokens') or 0)
+            row['cached'] += int(usage.get('cache_read_input_tokens') or 0)
+            row['output'] += int(usage.get('output_tokens') or 0)
+            self._save()
 
     # Things Claude can ask the map app to offer. They change nothing: the app shows a button.
     MAP_TOOLS = [
@@ -2009,31 +2065,31 @@ class Assistant:
             'inputSchema': {'type': 'object', 'properties': {
                 'question': {'type': 'string', 'description': 'The question, as the person asked it.'},
                 'context': {'type': 'string', 'description': 'Where the map is: the place being looked at, the map center, the layers that are on (optional).'},
+                'image': {'type': 'string', 'description': 'A small picture of the map as the person sees it, as a data:image/jpeg;base64 address (optional).'},
                 'history': {'type': 'array', 'maxItems': 4, 'description': 'Earlier turns, oldest first (optional).', 'items': {'type': 'object', 'properties': {
                     'q': {'type': 'string'}, 'a': {'type': 'string'}}}}},
                 'required': ['question']},
             'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True, 'title': 'Ask %s' % self.label}}
 
-    def _allow(self, who):
-        """Per person per hour, and per day for the whole server."""
+    def _allow(self, who, anonymous=False):
+        """Per person per hour (fewer for people who are not signed in), and per day for the whole server."""
         now = time.time()
-        today = time.strftime('%Y-%m-%d')
         with self.lock:
-            day, used = self.day
-            if day != today:
-                day, used = today, 0
-            if used >= int(self.a.get('per_day') or 1000):
+            row = self._day()
+            if row['questions'] >= int(self.a.get('per_day') or 1000):
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
             # A spending guard: stop for the day once this many tokens (in and out) were used.
             budget = int(self.a.get('max_tokens_per_day') or 0)
-            if budget and self.tokens['day'] == today and self.tokens['input'] + self.tokens['output'] >= budget:
+            if budget and row['input'] + row['output'] >= budget:
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
             recent = [t for t in self.hits.get(who, []) if now - t < 3600]
-            if len(recent) >= int(self.a.get('per_person_per_hour') or 30):
+            limit = int(self.a.get('anonymous_per_hour') or 5) if anonymous else int(self.a.get('per_person_per_hour') or 30)
+            if len(recent) >= limit:
                 raise ToolError('That is a lot of questions in an hour. Please wait a few minutes and ask again.')
             recent.append(now)
             self.hits[who] = recent
-            self.day = (day, used + 1)
+            row['questions'] += 1
+            self._save()
             if len(self.hits) > 5000:
                 self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 3600}
 
@@ -2082,6 +2138,8 @@ class Assistant:
             log.warning('assistant API HTTP %s %s', e.code, detail)
             if e.code in (401, 403):
                 raise ToolError('%s is not set up correctly on the server (the API key was refused).' % self.label)
+            if e.code == 404 or detail == 'not_found_error':
+                raise ToolError('%s is not set up correctly on the server (the model "%s" is not available to this key; check assistant.model).' % (self.label, clean_text(self.a.get('model') or '', 60)))
             if e.code in (429, 529) or e.code >= 500:
                 err = ToolError('%s is busy right now. Please try again in a minute.' % self.label)
                 err.retry = True
@@ -2091,7 +2149,7 @@ class Assistant:
             log.warning('assistant API unreachable: %s', e)
             raise ToolError('The server could not reach %s. Please try again later.' % self.label)
 
-    def ask(self, args, token, referer):
+    def ask(self, args, token, referer, client=None):
         if not self.enabled:
             raise ToolError('%s is not turned on for this server.' % self.label)
         if self.a.get('require_token', True) and not token:
@@ -2099,23 +2157,32 @@ class Assistant:
         question = clean_text(args.get('question'), 1500)
         if not question:
             raise ToolError('Say what to ask %s.' % self.label)
-        who = Upstream._identity(token) if token else 'anon:' + (referer or '')
+        # People who are not signed in are told apart by their address (hashed), with a lower limit.
+        who = Upstream._identity(token) if token else 'anon:' + Upstream._identity(str(client or referer or 'local'))
         context = clean_text(args.get('context') or '', 1500)
+        # A picture of the person's map (a small JPEG or PNG the app took), when the app sends one.
+        image = None
+        pic = args.get('image')
+        if self.a.get('allow_images', True) and isinstance(pic, str) and len(pic) <= 240000:
+            m = re.match(r'^data:image/(jpeg|png);base64,([A-Za-z0-9+/=]{200,})$', pic)
+            if m:
+                image = {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/' + m.group(1), 'data': m.group(2)}}
         # The same question from the same person a moment ago: the answer is kept for a few minutes.
         keep = max(0.0, float(self.a.get('cache_minutes') or 0)) * 60
-        cache_key = None if args.get('history') or not keep else (who, question.lower(), context)
+        cache_key = None if args.get('history') or image or not keep else (who, question.lower(), context)
         if cache_key:
             with self.lock:
                 hit = self.answers.get(cache_key)
             if hit and time.time() - hit[0] < keep:
                 return hit[1], dict(hit[2], cached=True)
-        self._allow(who)
+        self._allow(who, anonymous=not token)
         messages = []
         for turn in (args.get('history') or [])[-4:]:
             if isinstance(turn, dict) and clean_text(turn.get('q'), 1) and clean_text(turn.get('a'), 1):
                 messages.append({'role': 'user', 'content': clean_text(turn.get('q'), 600)})
                 messages.append({'role': 'assistant', 'content': clean_text(turn.get('a'), 1500)})
-        messages.append({'role': 'user', 'content': question + (('\n\n' + context) if context else '')})
+        asked = question + (('\n\n' + context) if context else '')
+        messages.append({'role': 'user', 'content': [image, {'type': 'text', 'text': asked + '\n\n(The picture is the map as the person sees it now.)'}] if image else asked})
         tools = [{'name': t['name'], 'description': t.get('description', '')[:1000], 'input_schema': t.get('inputSchema') or {'type': 'object', 'properties': {}}}
                  for t in self.tools.definitions()] + [dict(t) for t in self.MAP_TOOLS]
         # The instructions and tool list are the same for every question: mark them cacheable, so
@@ -2154,7 +2221,7 @@ class Assistant:
                 log.info('assistant ok %.0fms steps=%d tools=%s in=%d out=%d', (time.time() - started) * 1000, step, ','.join(used) or '-', usage['input_tokens'], usage['output_tokens'])
                 if self.a.get('log_questions'):
                     log.info('assistant asked by %s: %s', who[:8], question)
-                data = {'answer': answer, 'assistant': self.label, 'model': out.get('model') or body['model'], 'tools_used': used, 'followups': followups, 'map': shown, 'usage': usage}
+                data = {'answer': answer, 'assistant': self.label, 'model': out.get('model') or body['model'], 'tools_used': used, 'followups': followups, 'map': shown, 'usage': usage, 'saw_map': bool(image)}
                 data.update(extras)
                 if cache_key:
                     with self.lock:
@@ -2227,7 +2294,7 @@ class Server:
         own = {t['name'] for t in self.tools.definitions()}
         return [t for lst in lists for t in lst if t['name'] not in own]
 
-    def handle(self, msg, token=None, referer=None):
+    def handle(self, msg, token=None, referer=None, client=None):
         """One JSON-RPC message; returns the response dict, or None for notifications."""
         if not isinstance(msg, dict) or msg.get('jsonrpc') != '2.0' or not isinstance(msg.get('method'), str):
             return {'jsonrpc': '2.0', 'id': msg.get('id') if isinstance(msg, dict) else None, 'error': {'code': -32600, 'message': 'Invalid request'}}
@@ -2235,7 +2302,7 @@ class Server:
         params = msg.get('params') or {}
         is_note = 'id' not in msg
         try:
-            result = self.dispatch(method, params, token, referer)
+            result = self.dispatch(method, params, token, referer, client)
         except RpcError as e:
             return None if is_note else {'jsonrpc': '2.0', 'id': msg.get('id'), 'error': {'code': e.code, 'message': e.message}}
         except Exception as e:  # never leak a stack trace to the client
@@ -2243,7 +2310,7 @@ class Server:
             return None if is_note else {'jsonrpc': '2.0', 'id': msg.get('id'), 'error': {'code': -32603, 'message': 'Internal error'}}
         return None if is_note else {'jsonrpc': '2.0', 'id': msg.get('id'), 'result': result}
 
-    def dispatch(self, method, params, token, referer):
+    def dispatch(self, method, params, token, referer, client=None):
         if method == 'initialize':
             asked = params.get('protocolVersion')
             version = asked if asked in SUPPORTED_PROTOCOLS else LATEST_PROTOCOL
@@ -2266,7 +2333,7 @@ class Server:
                     raise RpcError(-32602, 'Arguments must be an object.')
                 self.layers.refresh(token, referer=referer)
                 try:
-                    text, data = self.assistant.ask(args, token, referer)
+                    text, data = self.assistant.ask(args, token, referer, client)
                     return {'content': [{'type': 'text', 'text': text}], 'structuredContent': data, 'isError': False}
                 except ToolError as e:
                     log.info('assistant failed %.0fms: %s', (time.time() - started) * 1000, e)
@@ -2356,7 +2423,7 @@ def create_app(cfg):
     @app.route(base + '/health', methods=['GET'])
     def health():
         return json_res({'ok': True, 'version': VERSION, 'layers': len(server.layers.by_name), 'notes': server.layers.notes[:20],
-                         'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model'), 'today': server.assistant.today()},
+                         'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model'), 'today': server.assistant.today(), 'this_month': server.assistant.this_month()},
                          'upstream': [{'name': u.name, 'label': u.label, 'prefix': u.prefix, 'auth': u.auth, 'status': u.status, 'server': u.server_title} for u in server.upstreams]})
 
     @app.route(base + '/mcp', methods=['OPTIONS'])
@@ -2392,12 +2459,13 @@ def create_app(cfg):
         except ValueError:
             return json_res({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}}, 400, origin)
         referer = (origin + '/') if origin else None
+        client = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip() or request.remote_addr or ''
         if isinstance(body, list):
             if not body or len(body) > 20:
                 return json_res({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32600, 'message': 'Invalid batch'}}, 400, origin)
-            out = [r for r in (server.handle(m, token, referer) for m in body) if r is not None]
+            out = [r for r in (server.handle(m, token, referer, client) for m in body) if r is not None]
             return json_res(out, 200, origin) if out else with_cors(Response(status=202), origin)
-        reply = server.handle(body, token, referer)
+        reply = server.handle(body, token, referer, client)
         if reply is None:
             return with_cors(Response(status=202), origin)
         return json_res(reply, 200, origin)
@@ -2443,6 +2511,7 @@ def main():
     p.add_argument('--stdio', action='store_true', help='Speak MCP over stdin/stdout (desktop clients).')
     p.add_argument('--check', action='store_true', help='Load the config, list the layers found, and exit.')
     p.add_argument('--ask', metavar='QUESTION', help='Ask Claude one question from the command line (tests the API key and tools), then exit.')
+    p.add_argument('--eval', metavar='FILE', help='Ask Claude every question in a text file (one per line) and write the answers, tools, seconds and tokens to a CSV, then exit.')
     p.add_argument('--desktop-config', action='store_true', help='Print the Claude Desktop config that connects it to this server, then exit.')
     a = p.parse_args()
     cfg = load_config(a.config)
@@ -2461,6 +2530,39 @@ def main():
         url = (cfg.get('public_url') or 'https://YOUR-SERVER/gis-mcp').rstrip('/') + '/mcp'
         print(json.dumps({'mcpServers': {re.sub(r'[^a-z0-9]+', '-', (cfg.get('name') or 'gis').lower()).strip('-') or 'gis': {'command': 'npx', 'args': ['-y', 'mcp-remote', url]}}}, indent=2))
         return
+    if a.eval:
+        import csv
+        s = Server(cfg)
+        if not s.assistant.enabled:
+            print('Claude on this server: %s' % s.assistant.status())
+            sys.exit(1)
+        with open(a.eval, 'r', encoding='utf-8-sig') as f:
+            questions = [q.strip() for q in f if q.strip() and not q.strip().startswith('#')]
+        tok = os.environ.get('GIS_MCP_TOKEN') or cfg.get('discovery_token') or None
+        s.layers.refresh(tok, force=True)
+        s.assistant.a = dict(s.assistant.a, require_token=False, cache_minutes=0, per_person_per_hour=100000, anonymous_per_hour=100000)
+        out_path = os.path.splitext(a.eval)[0] + '-answers-' + time.strftime('%Y%m%d-%H%M') + '.csv'
+        total_in = total_out = 0
+        took = []
+        with open(out_path, 'w', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f)
+            w.writerow(['Question', 'Answer', 'Tools used', 'Buttons', 'Follow-ups', 'Seconds', 'Tokens in', 'Tokens out', 'Problem'])
+            for i, q in enumerate(questions, 1):
+                t0 = time.time()
+                try:
+                    text, data = s.assistant.ask({'question': q}, tok, None, 'eval')
+                    sec = time.time() - t0
+                    total_in += data['usage']['input_tokens']
+                    total_out += data['usage']['output_tokens']
+                    took.append(sec)
+                    w.writerow([q, text, ', '.join(data.get('tools_used') or []), json.dumps(data.get('map') or []), ' | '.join(data.get('followups') or []),
+                                '%.1f' % sec, data['usage']['input_tokens'], data['usage']['output_tokens'], ''])
+                    print('%d/%d ok %.1fs  %s' % (i, len(questions), sec, q[:70]))
+                except ToolError as e:
+                    w.writerow([q, '', '', '', '', '%.1f' % (time.time() - t0), '', '', e.said])
+                    print('%d/%d PROBLEM  %s: %s' % (i, len(questions), q[:50], e.said))
+        print('%d of %d answered, %.1fs on average, %d tokens in, %d out. Saved %s' % (len(took), len(questions), (sum(took) / len(took)) if took else 0, total_in, total_out, out_path))
+        return
     if a.ask:
         s = Server(cfg)
         print('Claude on this server: %s' % s.assistant.status())
@@ -2470,7 +2572,7 @@ def main():
         s.layers.refresh(os.environ.get('GIS_MCP_TOKEN') or cfg.get('discovery_token') or None, force=True)
         s.assistant.a = dict(s.assistant.a, require_token=False)
         try:
-            text, data = s.assistant.ask({'question': a.ask}, os.environ.get('GIS_MCP_TOKEN') or None, None)
+            text, data = s.assistant.ask({'question': a.ask}, os.environ.get('GIS_MCP_TOKEN') or None, None, 'cli')
         except ToolError as e:
             print('Problem: %s' % e.said)
             sys.exit(1)

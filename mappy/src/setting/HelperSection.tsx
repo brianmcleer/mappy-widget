@@ -95,6 +95,10 @@ export default function HelperSection (props: Props): any {
           <Switch checked={a.shareSelection !== false} onChange={(e: any) => save({ shareSelection: e.target.checked })} aria-label='Send the clicked feature' />
         </SettingRow>
         <Hint>With a popup open, the feature's layer and up to six of its values go along, so "who owns this" works. Turn off to send only where the map is.</Hint>
+        <SettingRow tag='label' label='Send a picture of the map'>
+          <Switch checked={a.sharePicture === true} onChange={(e: any) => save({ sharePicture: e.target.checked })} aria-label='Send a picture of the map' />
+        </SettingRow>
+        <Hint>Off unless you turn it on. For questions about what is on screen ("what am I looking at", "which of these is biggest"), a small picture of the map goes to Claude with the question. Whatever is drawn on the map is in the picture, and a picture costs more than text.</Hint>
         <FullButton type='secondary' disabled={busy || !mcp?.url} onClick={checkServer}>{busy ? 'Checking...' : `Check that the server has ${name}`}</FullButton>
         {check && <Note tone={/^Ready/.test(check) ? 'ok' : busy ? 'info' : toneOf(check) === 'info' ? 'warn' : toneOf(check)}>{check}</Note>}
         <Hint>Each answer is a paid call to the Claude API from the server; the server limits questions per person per hour and per day. The question, a line about where the map is, a few values of the feature under an open popup and the data the tools look up go to Anthropic. The same question asked again within a few minutes is answered from the server's memory at no cost; the server's /health page shows today's questions and tokens.</Hint>

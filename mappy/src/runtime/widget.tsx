@@ -235,7 +235,7 @@ export default function Widget (props: Props): any {
     beacon: beaconRef.current,
     mcp,
     assistant,
-    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false } : null,
+    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false, sharePicture: plain<any>(cfg.assistant)?.sharePicture === true } : null,
     waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,

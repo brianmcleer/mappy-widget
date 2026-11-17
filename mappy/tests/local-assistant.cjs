@@ -1757,6 +1757,34 @@ test('Claude through the GIS server answers inside the chat, with history and li
   assert.deepEqual(c2.chart, { title: 'Parcels by zoning', rows: [{ label: 'R-4', value: 120 }, { label: 'R-8', value: 80 }], unit: 'parcels' })
   assert.deepEqual(c2.table, { columns: ['Zone', 'Count'], rows: [['R-4', '120'], ['R-8', '']] })
   assert.deepEqual(c2.actions, [{ type: 'ask', q: 'turn on parcels', label: 'Show the parcels' }])
+  // A picture of the map goes along only when the builder turned it on, and only for questions about the screen.
+  live.jmv.view.width = 800; live.jmv.view.height = 600
+  const shots = []
+  live.jmv.view.takeScreenshot = async o => { shots.push(o); return { dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(o.width > 500 ? 200000 : 5000) } }
+  answer = { content: [{ type: 'text', text: 'Mostly houses.' }], structuredContent: { answer: 'Mostly houses.', saw_map: true }, isError: false }
+  await mind.respond('ask claude what am I looking at on the map')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').pop().args.image, undefined, 'off by default')
+  const eyes = new Mind({ ...base, mcp: port, serverAssistant: { label: 'Claude', sharePicture: true } })
+  const seen = await eyes.respond('ask claude what am I looking at on the map')
+  const sent = calls.filter(c => c.name === 'ask_assistant').pop().args
+  assert.match(sent.image, /^data:image\/jpeg;base64,A{5000}$/, 'the smaller size that fits')
+  assert.deepEqual(shots.map(o => [o.width, o.height]), [[640, 480], [440, 330]])
+  assert.match(seen.sources[0].detail, /with a picture of the map/)
+  await eyes.respond('ask claude how many parks does the city have')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').pop().args.image, undefined, 'not for questions that are not about the screen')
+  delete live.jmv.view.takeScreenshot
+  // His own table answers offer Claude; the chip sends his answer and a few rows along.
+  live.entries()[0] && (live.jmv.view.map.layers[0].visible = true)
+  const counted = await mind.respond('count parcels by owner')
+  assert.ok(counted.table, 'a grouped count is a table: ' + counted.text)
+  {
+    assert.ok(counted.suggest.includes('Ask Claude about this'))
+    await mind.respond('Ask Claude about this')
+    const ctx2 = calls.filter(c => c.name === 'ask_assistant').pop().args
+    assert.equal(ctx2.question, 'count parcels by owner')
+    assert.match(ctx2.context, /The map helper had answered: "/)
+    assert.match(ctx2.context, /Its table, /)
+  }
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)

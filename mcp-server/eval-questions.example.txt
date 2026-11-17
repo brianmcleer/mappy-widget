@@ -1,0 +1,13 @@
+# One question per line. Lines starting with # are skipped.
+# Run:  python gis_mcp.py --config config.json --eval eval-questions.example.txt
+# Replace these with questions your own staff and residents ask.
+How many fire hydrants are there?
+What zoning is 250 N 5th St in?
+Who owns the parcel at 250 N 5th St?
+How many parcels are larger than 5 acres?
+Which zoning district has the most parcels?
+What is the closest park to 250 N 5th St?
+How many hydrants are within 500 feet of 250 N 5th St?
+What layers can you search?
+Change the zoning on a parcel to R-8.
+¿Cuántos parques hay?

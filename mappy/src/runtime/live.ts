@@ -1093,6 +1093,25 @@ export class LiveMap {
   }
 
   /** The basemap's title, when the map has one. */
+  /**
+   * A small JPEG of the map as it is on screen, as a data: address under `maxChars` long, or ''
+   * when the view cannot take one. Tried at two sizes so it fits in one request.
+   */
+  async screenshot (maxChars = 180000): Promise<string> {
+    const view: any = this.view
+    if (!view?.takeScreenshot) return ''
+    for (const [width, quality] of [[640, 60], [440, 45], [320, 35]]) {
+      try {
+        const w = Math.max(1, Number(view.width) || width)
+        const h = Math.max(1, Number(view.height) || width)
+        const shot = await view.takeScreenshot({ format: 'jpg', quality, width, height: Math.round(width * h / w) })
+        const url = String(shot?.dataUrl || '')
+        if (/^data:image\/jpeg;base64,/.test(url) && url.length <= maxChars) return url
+      } catch (e) { return '' }
+    }
+    return ''
+  }
+
   basemapTitle (): string { try { return String(this.view?.map?.basemap?.title || '') } catch (e) { return '' } }
 
   whereAmI (): string {

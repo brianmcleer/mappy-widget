@@ -19,6 +19,12 @@ def messages():
         return jsonify({'type': 'error', 'error': {'type': 'authentication_error', 'message': 'invalid x-api-key'}}), 401
     first = body['messages'][-1]
     text = first['content'] if isinstance(first['content'], str) else ''
+    if body.get('model') == 'no-such-model':
+        return jsonify({'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: no-such-model'}}), 404
+    if isinstance(first['content'], list) and first['content'] and first['content'][0].get('type') == 'image':
+        src = first['content'][0]['source']
+        return jsonify({'id': 'mi', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn', 'usage': USAGE,
+                        'content': [{'type': 'text', 'text': 'I can see the map picture (%s, %d characters).' % (src['media_type'], len(src['data']))}]})
     if 'busy' in text:
         return jsonify({'type': 'error', 'error': {'type': 'overloaded_error'}}), 529
     if 'flaky' in text:

@@ -23,6 +23,9 @@ import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
 import { handoffUrl, parseHandoff, assistantJob, contextLine } from '../brain/handoff'
 
+/** Questions about what is on screen right now, where a picture of the map helps. */
+const ABOUT_THE_SCREEN = /\b(?:on (?:the|this|my) (?:map|screen)|(?:this|the) (?:map|view|picture|area|screen)\b|what am i (?:looking at|seeing)|what do you see|can you see|look at (?:this|the map|these)|in view|shown here|these|those)\b/i
+
 /** The GIS server's tool that hands a question to Claude on the server (gis_mcp.py ask_assistant). */
 const ASK_TOOL = 'ask_assistant'
 import type { AssistantPort, HandoffContext } from '../brain/handoff'
@@ -73,7 +76,7 @@ export interface MindContext {
   /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
   assistant?: AssistantPort | null
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
-  serverAssistant?: { label: string, shareSelection?: boolean } | null
+  serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean } | null
   /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
   waiting?: (note: string) => void
   /** Where the person is (the device's location), when they allow it. */
@@ -362,6 +365,11 @@ export class Mind {
     const handoffLabel = this.ctx.assistant?.label || this.ctx.serverAssistant?.label
     if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(handoffLabel && parseHandoff(input, handoffLabel))) this.lastInput = input
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
+    // His own data answers (a table or a chart) offer Claude for the "why" and "what does this mean".
+    const sa = this.ctx.serverAssistant
+    if (sa && !control && (reply.table || reply.chart) && reply.sources?.[0]?.title !== sa.label && reply.mood !== 'confused' && !(reply.suggest || []).some(x => new RegExp(`^ask ${sa.label}`, 'i').test(x))) {
+      reply.suggest = [...(reply.suggest || []).slice(0, 4), `Ask ${sa.label} about this`]
+    }
     // A server hiccup: one chip runs the same request again.
     if (reply.mood === 'alert' && this.lastInput && !control && !(reply.suggest || []).some(x => /try again/i.test(x))) reply.suggest = ['Try again', ...(reply.suggest || [])].slice(0, 5)
     return reply
@@ -506,7 +514,10 @@ export class Mind {
     const question = asked.question || this.lastInput
     if (!question) return { text: `Ask me anything after "ask ${sa.label}" and ${sa.label} will answer here, with the GIS data.`, mood: 'think' }
     // "ask Claude about this": what he just said goes along, so Claude knows what "this" is.
-    const said = !asked.question && this.lastReply?.text ? `(The map helper had answered: "${clip(this.lastReply.text.replace(/\s+/g, ' '), 400)}")` : ''
+    let said = !asked.question && this.lastReply?.text ? `(The map helper had answered: "${clip(this.lastReply.text.replace(/\s+/g, ' '), 400)}")` : ''
+    // His table goes along too (a few rows), so Claude can explain the numbers.
+    const table = !asked.question ? this.lastReply?.table : undefined
+    if (said && table?.rows?.length) said += ` (Its table, ${table.columns.join(' | ')}: ${clip(table.rows.slice(0, 8).map(r => r.join(' | ')).join('; '), 500)})`
     return this.askServerClaude(question, false, said)
   }
 
@@ -554,10 +565,14 @@ export class Mind {
     if (!tool) return quiet ? null : { text: `${sa.label} is not turned on for ${port.label} yet. The GIS team can turn it on on the server.`, mood: 'confused' }
     const ctx = [this.handoffContextLine(), sa.shareSelection === false ? '' : this.selectedLine(), extra].filter(Boolean).join(' ')
     this.track('claude')
-    try { this.ctx.waiting?.(`${sa.label} is checking the GIS data...`) } catch (e) { }
+    // A question about what is on screen ("what am I looking at", "which of these is biggest")
+    // takes a small picture of the map along, when the builder turned that on.
+    let image = ''
+    if (sa.sharePicture && ABOUT_THE_SCREEN.test(question)) { try { image = await this.ctx.live.screenshot() } catch (e) { image = '' } }
+    try { this.ctx.waiting?.(image ? `${sa.label} is looking at the map...` : `${sa.label} is checking the GIS data...`) } catch (e) { }
     let raw: any
     try {
-      raw = await port.call(tool.name, { question: clip(question, 1500), ...(ctx ? { context: ctx } : {}), ...(this.claudeTurns.length ? { history: this.claudeTurns.slice(-3) } : {}) }, 110000)
+      raw = await port.call(tool.name, { question: clip(question, 1500), ...(ctx ? { context: ctx } : {}), ...(image ? { image } : {}), ...(this.claudeTurns.length ? { history: this.claudeTurns.slice(-3) } : {}) }, 110000)
     } catch (e) {
       this.ctx.beacon?.error(e, 'claude')
       return quiet ? null : { text: e instanceof Error ? e.message : `${sa.label} did not answer.`, mood: 'alert' }
@@ -594,7 +609,7 @@ export class Mind {
     const reply: Reply = {
       text: answer,
       mood: 'explain',
-      sources: [{ title: sa.label, detail: used.length ? `using ${port.label}: ${Array.from(new Set(used)).map(n => n.replace(/_/g, ' ')).join(', ')}` : `through ${port.label}` }]
+      sources: [{ title: sa.label, detail: (used.length ? `using ${port.label}: ${Array.from(new Set(used)).map(n => n.replace(/_/g, ' ')).join(', ')}` : `through ${port.label}`) + (data.saw_map ? ', with a picture of the map' : '') }]
     }
     if (actions.length) reply.actions = actions
     if (followups.length) reply.suggest = followups

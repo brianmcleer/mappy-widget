@@ -85,6 +85,12 @@ Press **Connect and list tools**. Every tool is read-only, so all of them start 
 
 Answers can carry buttons for the map (Claude calls `map_show_place`, `map_show_layer` or `map_suggest_command`; nothing changes until the person clicks), a small chart (`show_chart`) or table (`show_table`), and up to three follow-up questions. Claude answers in the language of the question. To keep the cost down, the instructions and tool list are marked cacheable (repeat questions pay a fraction of the input), the same question from the same person within `cache_minutes` is answered from memory, and a busy moment is tried once more before giving up. `/health` shows today's questions and tokens under `assistant.today`.
 
+Before going live, review real answers: put the questions people ask in a text file, one per line (see `eval-questions.example.txt`), and run `python gis_mcp.py --config config.json --eval questions.txt`. It writes every answer, the tools used, the seconds and the tokens to a CSV next to the file.
+
+Daily questions and tokens are saved in `logs/assistant-usage.json`, so the limits hold across restarts. `/health` shows `today` and `this_month`; set the `price_per_mtok_*` keys to your plan's prices to see an estimated cost there. With `require_token` off (a public app), people are told apart by address and get `anonymous_per_hour` questions each.
+
+If Mappy's "Send a picture of the map" is on, a small JPEG of the map (under 180 KB) comes with questions about what is on screen and goes to Claude as an image; set `allow_images` to false to refuse pictures on the server.
+
 What goes to Anthropic: the question, one line about where the map is (and a few values of the feature under an open popup), up to three earlier turns, and the results of the tools Claude calls. Tokens are never sent. Signed-in users only by default (`require_token`), with limits per person per hour and per day. Each call is logged with its duration and the tool names, never the question. The outbound call goes to `api.anthropic.com` over HTTPS (the usual proxy settings, `HTTPS_PROXY`, apply).
 
 ### Connect a desktop AI tool (optional)
@@ -157,6 +163,10 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.require_token` | true | Only signed-in people may ask |
 | `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
 | `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
+| `assistant.anonymous_per_hour` | 5 | Questions per hour for someone who is not signed in (only when `require_token` is false) |
+| `assistant.allow_images` | true | Accept a picture of the map with a question |
+| `assistant.usage_file` | assistant-usage.json | Where daily questions and tokens are saved, in the log folder (empty: not saved) |
+| `assistant.price_per_mtok_in`, `_out`, `_cached` | 0 | Your prices per million tokens, for the cost estimate in `/health` |
 | `assistant.max_tokens_per_day` | 0 (no cap) | A spending guard: no new questions once this many tokens (in and out) were used today |
 | `assistant.redact_fields` | none | Field names or labels ("owner", "phone") left out of the data Claude sees, so they never reach the API. Matching ignores case, spaces and underscores |
 | `assistant.log_questions` | false | Write each question to the log (with a short hash of who asked) |

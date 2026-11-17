@@ -9,6 +9,7 @@ and talks to the MCP endpoint the way a browser client does.
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -388,7 +389,7 @@ class GisMcpTest(unittest.TestCase):
             names = [t['name'] for t in self.rpc('tools/list').get_json()['result']['tools']]
             self.assertNotIn('ask_assistant', names)
             # Enabled but no key in the environment: still not listed; health says why.
-            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield', 'retry_wait_seconds': 0}
+            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield', 'retry_wait_seconds': 0, 'usage_file': ''}
             os.environ.pop('TEST_ANTHROPIC_KEY', None)
             app = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **a))).test_client()
             self.assertIn('no key', app.get('/health').get_json()['assistant']['status'])
@@ -482,7 +483,6 @@ class GisMcpTest(unittest.TestCase):
             # The command line: the Claude Desktop config, and one question to test the key.
             import contextlib
             import io
-            import tempfile
             with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
                 json.dump({'name': 'City GIS', 'public_url': 'https://gis.example.org/gis-mcp', 'log_dir': os.path.join(HERE, '_logs'),
                            'assistant': dict(a, cache_minutes=0)}, f)
@@ -500,9 +500,59 @@ class GisMcpTest(unittest.TestCase):
                 self.assertIn('There are **12** parks.', out.getvalue())
                 self.assertIn('Follow-ups: Which is the largest?', out.getvalue())
                 self.assertIn('Tokens: 1000 in, 20 out', out.getvalue())
+                # A list of questions, answered into a CSV for review before going live.
+                qfile = os.path.join(tempfile.mkdtemp(), 'questions.txt')
+                with open(qfile, 'w', encoding='utf-8') as qf:
+                    qf.write('# test questions\nparks with followups\n\nare you busy\n')
+                out = io.StringIO()
+                sys.argv = ['gis_mcp.py', '--config', f.name, '--eval', qfile]
+                with contextlib.redirect_stdout(out):
+                    gis_mcp.main()
+                self.assertIn('1 of 2 answered', out.getvalue())
+                report = [n for n in os.listdir(os.path.dirname(qfile)) if n.endswith('.csv')]
+                self.assertEqual(len(report), 1)
+                with open(os.path.join(os.path.dirname(qfile), report[0]), encoding='utf-8-sig') as rf:
+                    body = rf.read()
+                self.assertIn('There are **12** parks.', body)
+                self.assertIn('busy right now', body)
             finally:
                 sys.argv = argv
                 os.unlink(f.name)
+            # A picture of the map goes to Claude as an image; anything that is not a small JPEG or PNG is dropped.
+            pic = 'data:image/jpeg;base64,' + 'A' * 400
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'what am I looking at', 'image': pic}}, token='pic-token-0005')
+            self.assertEqual(r['structuredContent']['answer'], 'I can see the map picture (image/jpeg, 400 characters).')
+            self.assertTrue(r['structuredContent']['saw_map'])
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'say hi, no tools', 'image': 'data:text/html;base64,' + 'A' * 400}}, token='pic-token-0006')
+            self.assertFalse(r['structuredContent']['saw_map'])
+            # The ledger is saved: limits and the spending guard survive a restart.
+            ledger = os.path.join(tempfile.mkdtemp(), 'usage.json')
+            saved = dict(a, usage_file=ledger, max_tokens_per_day=100, per_person_per_hour=50, price_per_mtok_in=3, price_per_mtok_out=15)
+            def fresh():
+                return gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **saved))).test_client()
+            def ask_on(client, q, token=TOKEN, ip=None):
+                h = {'Content-Type': 'application/json', 'Origin': ORIGIN}
+                if token:
+                    h['Authorization'] = 'Bearer ' + token
+                if ip:
+                    h['X-Forwarded-For'] = ip
+                return client.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'ask_assistant', 'arguments': {'question': q}}}), headers=h).get_json()['result']
+            one = fresh()
+            self.assertFalse(ask_on(one, 'say hi, no tools')['isError'])
+            two = fresh()
+            health = two.get('/health').get_json()['assistant']
+            self.assertEqual(health['today']['questions'], 1, 'read back from the file')
+            self.assertEqual(health['today']['estimated_cost'], round((100 * 3 + 20 * 15) / 1e6, 4))
+            self.assertEqual(health['this_month']['questions'], 1)
+            self.assertTrue(ask_on(two, 'another, no tools')['isError'], 'the spending guard holds after a restart')
+            # People who are not signed in: told apart by address, with a lower limit.
+            anon = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, require_token=False, anonymous_per_hour=1, cache_minutes=0)))).test_client()
+            self.assertFalse(ask_on(anon, 'say hi, no tools', token=None, ip='10.0.0.1')['isError'])
+            self.assertIn('a lot of questions', ask_on(anon, 'again, no tools', token=None, ip='10.0.0.1')['content'][0]['text'])
+            self.assertFalse(ask_on(anon, 'say hi, no tools', token=None, ip='10.0.0.2')['isError'], 'another address has its own count')
+            # A model the key cannot use reads as a setup problem.
+            wrong = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, model='no-such-model')))).test_client()
+            self.assertIn('model "no-such-model" is not available', ask_on(wrong, 'hello there')['content'][0]['text'])
             # A wrong key reads as a setup problem.
             os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')
