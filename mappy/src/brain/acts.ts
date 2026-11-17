@@ -4,9 +4,11 @@
 */
 
 /** Acts the chat can ask for by mood. */
-export const ACT_MOODS = ['processing', 'writing', 'checking', 'alert', 'explain', 'knock', 'print', 'trash', 'mail', 'save', 'artsy', 'techy', 'wizardy', 'airplane', 'bike', 'congratulate', 'goodbye'] as const
+export const ACT_MOODS = ['processing', 'writing', 'checking', 'alert', 'explain', 'knock', 'print', 'trash', 'mail', 'save', 'artsy', 'techy', 'wizardy', 'airplane', 'bike', 'congratulate', 'goodbye',
+  // the second pack: map life
+  'calling', 'camera', 'route', 'pindrop', 'measure', 'chart', 'idea', 'layers', 'treasure', 'boat', 'kite', 'juggle', 'coffee'] as const
 /** Acts he does on his own between tasks. */
-export const IDLE_ACTS = ['fingertap', 'headscratch', 'browraise', 'sway', 'atom', 'stack', 'airplane', 'glasses', 'headphones', 'bike', 'artsy', 'techy', 'wizardy'] as const
+export const IDLE_ACTS = ['fingertap', 'headscratch', 'browraise', 'sway', 'atom', 'stack', 'airplane', 'glasses', 'headphones', 'bike', 'artsy', 'techy', 'wizardy', 'treasure', 'boat', 'kite', 'telescope', 'juggle', 'coffee', 'umbrella'] as const
 export type ActName = typeof ACT_MOODS[number] | typeof IDLE_ACTS[number]
 
 /** Things people can ask him to do, in words ("get artsy", "fold into a paper airplane"). */
@@ -17,6 +19,12 @@ export const ACT_ASKS: Array<[RegExp, ActName, string]> = [
   [/^(?:fold into a |become a |turn into a |make a |be a )?paper (?:air)?plane$|^fly$|^take off$/, 'airplane', 'Clear for takeoff! ✈️ I am a map and a vehicle.'],
   [/^(?:ride|get on) (?:your|a|the) bike$|^bike ride$|^go for a ride$/, 'bike', 'Ring ring! 🚲 Bike lanes layer, here I come.'],
   [/^(?:do a trick|do something cool|show me a trick|entertain me|show off|do your thing)$/, 'airplane', 'Watch this. ✈️'],
+  [/^(?:find (?:the |some |buried )?treasure|dig for treasure|x marks the spot|treasure hunt)$/, 'treasure', 'X marks the spot! 🏴‍☠️ Every map has one.'],
+  [/^(?:fold into a |become a |turn into a |make a |be a )?(?:paper )?boat$|^(?:set sail|go sailing|sail away)$/, 'boat', 'Anchors aweigh! ⛵ I float better than I look.'],
+  [/^(?:fly a kite|go fly a kite|kite)$/, 'kite', 'Up it goes! 🪁 Paper flying paper.'],
+  [/^(?:juggle|juggle (?:some )?pins|can you juggle)$/, 'juggle', 'Three pins, no drops. 📍📍📍 Do not try this with real ones.'],
+  [/^(?:coffee break|have a coffee|take a break|coffee time|coffee)$/, 'coffee', 'Ahh. ☕ Careful, I am paper.'],
+  [/^(?:take a (?:picture|photo|selfie)|say cheese|cheese)$/, 'camera', 'Cheese! 📸 Got my good side. All of them.'],
   [/^(?:print|print this|print the map)$/, 'print', 'Printing! 🖨️ Just kidding, I only do the dance. The Print tool does the printing.'],
   [/^(?:empty the trash|take out the trash|trash it)$/, 'trash', 'Into the bin! 🗑️ And back out. I am recyclable.']
 ]

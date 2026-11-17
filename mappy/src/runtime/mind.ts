@@ -1263,7 +1263,7 @@ export class Mind {
     const url = `https://www.google.com/maps/dir/?api=1&origin=${from.at[0].toFixed(6)},${from.at[1].toFixed(6)}&destination=${to.at[0].toFixed(6)},${to.at[1].toFixed(6)}&travelmode=${mode}`
     return {
       text: `**${to.label}** is about **${said}** from ${from.label} in a straight line.${shown ? ' Both are pinned on the map.' : ''} I cannot plan a route myself, but a maps app can take it from here.`,
-      mood: 'pleased',
+      mood: 'route',
       actions: [{ type: 'url', url, label: `Turn-by-turn directions (${mode})` }],
       suggest: [`What's at ${to.label}?`, `Closest parking to ${to.label}`]
     }
@@ -2092,7 +2092,7 @@ export class Mind {
           const c = this.ctx.live.view?.center
           if (!c) return { text: 'I cannot read the map center right now.', mood: 'confused' }
           await this.ctx.live.pin(c)
-          return { text: 'Pinned the middle of the map. Say "clear the pins" to remove it.', mood: 'acknowledge', suggest: ['What is here?', 'Clear the pins'] }
+          return { text: 'Pinned the middle of the map. Say "clear the pins" to remove it.', mood: 'pindrop', suggest: ['What is here?', 'Clear the pins'] }
         })
         case 'locateMe': return this.needMap(async () => {
           const at = this.ctx.myLocation ? await this.ctx.myLocation() : null
@@ -2201,7 +2201,7 @@ export class Mind {
         case 'listViews': return this.listViews()
         case 'deleteView': return this.deleteView(it.target!)
         case 'whereami': return this.needMap(async () => ({ text: this.ctx.live.whereAmI() || V.noMap(), mood: 'talk' }))
-        case 'listLayers': return this.listLayers(it.value === 'visible')
+        case 'listLayers': return withAct(await this.listLayers(it.value === 'visible'), 'layers')
         case 'layerDiagnosis': return this.needMap(async () => /^(?:it|that|this|the layer|layer|that layer|this layer|my layer)$/i.test(it.target || '') ? (this.lastLayer ? this.diagnoseLayer(this.lastLayer) : this.mapBlank()) : this.diagnoseLayer(it.target!))
         case 'listTables': {
           const tables = this.ctx.live.entries().filter(e => e.isTable)
@@ -2317,7 +2317,7 @@ export class Mind {
         case 'resize': return { text: it.value === 'smaller' ? 'Shrinking!' : 'Growing!', mood: 'excited', effect: it.value === 'smaller' ? 'smaller' : 'bigger' }
         case 'moveCorner': return { text: 'Scooting over.', mood: 'acknowledge', effect: it.value === 'left' ? 'left' : it.value === 'right' ? 'right' : 'otherCorner' }
         case 'pause': return it.value === 'on' ? { text: 'Holding still. Say "animate again" when you want me moving.', mood: 'acknowledge', effect: 'pause' } : { text: 'Wheee, I can move again!', mood: 'excited', effect: 'resume' }
-        case 'open': return withAct(await this.open(it.target!, raw), it.target === 'print' ? 'print' : it.target === 'share' ? 'mail' : null)
+        case 'open': return withAct(await this.open(it.target!, raw), it.target === 'print' ? 'print' : it.target === 'share' ? 'mail' : /measure/i.test(it.target || '') ? 'measure' : null)
         case 'howto': {
           const t = it.target || ''
           if (/^(?:turn (?:on|off)|show|hide|toggle|enable|disable|add|remove)\s+(?:a|the|some|any)?\s*layers?(?: on| off)?$|^(?:use|work|see) (?:the )?layers?(?: list)?$/i.test(t)) {
@@ -2608,7 +2608,7 @@ export class Mind {
     const pool = this.ctx.index.docs.filter(d => (d.kind === 'widget' || d.kind === 'faq' || d.kind === 'guide' || d.kind === 'doc' || d.kind === 'layer') && d.text && d.text.length > 20)
     if (!pool.length) return null
     const d = pick(pool)
-    return { text: `${V.tipLead()} ${describeDoc(d)}`, actions: d.actions?.slice(0, 2), mood: 'wave' }
+    return { text: `${V.tipLead()} ${describeDoc(d)}`, actions: d.actions?.slice(0, 2), mood: 'idea' }
   }
 
   /** "Show me around": the app's tools one at a time, pointing at each one that is on screen. */

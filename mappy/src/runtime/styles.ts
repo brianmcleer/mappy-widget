@@ -233,7 +233,10 @@ const CSS = `
 .mappy-iconbtn:hover{background:var(--mappy-hover)}
 .mappy-bubble :focus-visible{outline:2px solid var(--mappy-focus);outline-offset:1px}
 .mappy-log{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;padding:10px 12px;display:flex;flex-direction:column;gap:10px;min-height:48px}
-.mappy-msg{max-width:100%;overflow-wrap:anywhere}
+.mappy-msg{max-width:100%;overflow-wrap:anywhere;animation:mappy-msgin .24s cubic-bezier(.2,.8,.3,1) both}
+@keyframes mappy-msgin{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+.mappy-msg.mappy-user{animation-name:mappy-msgin-user}
+@keyframes mappy-msgin-user{from{opacity:0;transform:translateX(10px) scale(.98)}to{opacity:1;transform:none}}
 .mappy-msg.mappy-user{align-self:flex-end;background:var(--mappy-user-bg);color:var(--mappy-user-fg);padding:4px 10px;border-radius:12px 12px 2px 12px;max-width:85%;border:1px solid var(--mappy-line)}
 .mappy-msg p{margin:0 0 4px}
 .mappy-msg a{color:var(--mappy-link);text-decoration:underline}
@@ -249,7 +252,10 @@ const CSS = `
 .mappy-row small{display:block;color:var(--mappy-muted)}
 .mappy-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;flex:0 0 auto}
 .mappy-chip{border:1px solid var(--mappy-chip-border);background:transparent;color:inherit;border-radius:999px;padding:2px 12px;min-height:28px;font-size:.8125rem;cursor:pointer;font-family:inherit}
+.mappy-chip{transition:transform .12s ease,background-color .12s ease,box-shadow .12s ease}
 .mappy-chip:hover{background:var(--mappy-hover)}
+.mappy-chip:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.14)}
+.mappy-chip:active:not(:disabled){transform:translateY(0) scale(.96);box-shadow:none}
 .mappy-chart{margin:6px 0 2px;font-size:.8rem}
 .mappy-chart-title{font-weight:600;margin-bottom:4px;opacity:.85}
 .mappy-bar-row{display:grid;grid-template-columns:minmax(60px,34%) 1fr auto;gap:6px;align-items:center;margin:2px 0}

@@ -22,7 +22,7 @@ export type Mood = 'idle' | 'wave' | 'talk' | 'think' | 'search' | 'happy' | 'pl
   | typeof ACT_MOODS[number]
 
 /** The face an act borrows: a trophy raise smiles like a celebration, an alert looks alert. */
-const ACT_FACE: { [m: string]: string } = { congratulate: 'celebrate', alert: 'attention', goodbye: 'wave', processing: 'think', checking: 'idle', explain: 'talk', knock: 'attention', print: 'pleased', trash: 'excited', mail: 'pleased', save: 'pleased', artsy: 'happy', techy: 'idle', wizardy: 'excited', airplane: 'excited', bike: 'happy', writing: 'idle' }
+const ACT_FACE: { [m: string]: string } = { congratulate: 'celebrate', alert: 'attention', goodbye: 'wave', processing: 'think', checking: 'idle', explain: 'talk', knock: 'attention', print: 'pleased', trash: 'excited', mail: 'pleased', save: 'pleased', artsy: 'happy', techy: 'idle', wizardy: 'excited', airplane: 'excited', bike: 'happy', writing: 'idle', calling: 'listen', camera: 'idle', route: 'pleased', pindrop: 'happy', measure: 'idle', chart: 'pleased', idea: 'happy', layers: 'pleased', treasure: 'excited', boat: 'excited', kite: 'happy', juggle: 'happy', coffee: 'pleased' }
 export type PointDir = 'left' | 'right' | 'up' | 'down'
 
 interface Props {
@@ -135,6 +135,8 @@ export default function MappyCharacter (props: Props): any {
       // Little moments between tasks, with a few for the weather he is dressed for.
       // His own little life between tasks (the Clippy pack lives in Acts.tsx), plus a skit for the weather he is dressed for.
       const acts = ['peek', 'fingertap', 'dance', 'browraise', 'stretch', 'atom', 'wink', 'headscratch', 'lookaround', 'stack', 'refold', 'glasses', 'heart', 'sway', 'hum', 'airplane', 'compass', 'headphones', 'yawn', 'artsy', 'wizardy', 'techy', 'bike']
+      // The second pack, woven in so two big acts never come back to back.
+      for (const [at, name] of [[2, 'telescope'], [6, 'kite'], [10, 'coffee'], [14, 'treasure'], [18, 'juggle'], [22, 'boat'], [26, 'umbrella']] as Array<[number, string]>) acts.splice(at, 0, name)
       const weather = WEATHER_SKIT[hatNow()]
       if (weather) acts.splice(3, 0, weather)
       const next_ = acts[skitIndex.current++ % acts.length]
@@ -200,6 +202,9 @@ export default function MappyCharacter (props: Props): any {
   const mouth = skit === 'yawn' && mood === 'idle' ? 'M46 61 Q50 58 54 61 Q56 68 50 70 Q44 68 46 61 Z' : skit === 'hum' && mood === 'idle' ? 'M44 63 Q50 66 56 63 Q50 68 44 63' : MOUTH[face] || MOUTH.idle
   const arm = props.pointDir ? ARM[props.pointDir] : null
 
+  // Gradient ids are per character, so two on a page (the app and the settings preview) do not share them.
+  const gid = 'mg-' + String(props.id || 'm').replace(/[^\w-]/g, '') + '-'
+
   const setRefs = (el: any) => {
     ref.current = el
     if (typeof props.buttonRef === 'function') props.buttonRef(el)
@@ -216,7 +221,7 @@ export default function MappyCharacter (props: Props): any {
   const act = (ACT_MOODS as readonly string[]).includes(mood) ? mood : (mood === 'idle' && !props.expanded && (IDLE_ACTS as readonly string[]).includes(skit) ? skit : '')
   if (act) cls.push(`mappy-act-${act}`)
   // An act with a hat of its own (beret, antenna, wizard hat) takes the seasonal one off for a moment.
-  const hat = ['artsy', 'techy', 'wizardy', 'airplane', 'stack'].includes(act) ? null : hatOfDay
+  const hat = ['artsy', 'techy', 'wizardy', 'airplane', 'stack', 'boat', 'umbrella', 'idea', 'juggle'].includes(act) ? null : hatOfDay
 
   return (
     <button
@@ -239,7 +244,13 @@ export default function MappyCharacter (props: Props): any {
       onContextMenu={props.onContextMenu}
     >
       <svg viewBox='0 0 100 110' width='100%' height='100%' aria-hidden='true' focusable='false'>
-        <ellipse className='mappy-shadow' cx='50' cy='104' rx='28' ry='4' />
+        <defs>
+          <linearGradient id={gid + 'a'} x1='0' x2='1' y1='0' y2='0'><stop offset='0' stopColor='#f7ecd0' /><stop offset='1' stopColor='#e8d7ab' /></linearGradient>
+          <linearGradient id={gid + 'b'} x1='0' x2='1' y1='0' y2='1'><stop offset='0' stopColor='#fffaea' /><stop offset='1' stopColor='#f6eacb' /></linearGradient>
+          <linearGradient id={gid + 'c'} x1='0' x2='1' y1='0' y2='0'><stop offset='0' stopColor='#f2e3bb' /><stop offset='1' stopColor='#e2cf9f' /></linearGradient>
+          <radialGradient id={gid + 's'}><stop offset='0' stopColor='#000' stopOpacity='.34' /><stop offset='.6' stopColor='#000' stopOpacity='.14' /><stop offset='1' stopColor='#000' stopOpacity='0' /></radialGradient>
+        </defs>
+        <ellipse className='mappy-shadow' cx='50' cy='104' rx='31' ry='5' style={{ fill: `url(#${gid}s)`, opacity: 1 }} />
         <g className='mappy-leaner' style={{ transform: `rotate(${lean.toFixed(2)}deg)` }}>
         <g className='mappy-body'>
           {arm && (
@@ -249,9 +260,14 @@ export default function MappyCharacter (props: Props): any {
               <line x1='6' y1='-4.5' x2='6' y2='4.5' stroke='#c9b27f' strokeWidth='0.8' />
             </g>
           )}
-          <polygon points='12,18 38,13 38,92 12,96' fill='#f1e3bd' stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
-          <polygon points='38,13 62,18 62,96 38,92' fill='#fbf2d8' stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
-          <polygon points='62,18 88,13 88,92 62,96' fill='#eddcb2' stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
+          <polygon points='12,18 38,13 38,92 12,96' fill={`url(#${gid}a)`} stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
+          <polygon points='38,13 62,18 62,96 38,92' fill={`url(#${gid}b)`} stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
+          <polygon points='62,18 88,13 88,92 62,96' fill={`url(#${gid}c)`} stroke='#7a5c2e' strokeWidth='1.6' strokeLinejoin='round' />
+          {/* Light along the folds: a soft crease shadow on the far side, a highlight on the near side. */}
+          <polygon points='38,13 41.5,13.7 41.5,92.6 38,92' fill='#7a5c2e' opacity='.09' />
+          <polygon points='62,18 65.5,17.300 65.5,95.300 62,96' fill='#7a5c2e' opacity='.11' />
+          <path d='M36.800 13.300 L36.800 92.200 M60.800 17.800 L60.800 95.700' stroke='#fff' strokeWidth='1' opacity='.55' />
+          <path d='M13.200 19.200 L37 14.600' stroke='#fff' strokeWidth='1' opacity='.6' strokeLinecap='round' />
           <g stroke='#c9b27f' strokeWidth='0.6' opacity='0.6'>
             <line x1='12' y1='40' x2='88' y2='38' />
             <line x1='12' y1='72' x2='88' y2='70' />

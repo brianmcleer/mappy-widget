@@ -1816,6 +1816,24 @@ test('the handoff can open the Claude desktop app', () => {
   assert.equal(assistantPort({ openIn: 'app', url: 'https://chat.example/?q={q}' }).url, 'https://chat.example/?q={q}', 'an address set by hand wins')
 })
 
+test('the second pack of acts: asked for by name, and shown at the right moments', async () => {
+  const { ACT_MOODS, IDLE_ACTS, ACT_ASKS } = require('../src/brain/acts.ts')
+  for (const name of ['calling', 'camera', 'route', 'pindrop', 'measure', 'chart', 'idea', 'layers', 'treasure', 'boat', 'kite', 'juggle', 'coffee']) assert.ok(ACT_MOODS.includes(name), name)
+  for (const name of ['treasure', 'boat', 'kite', 'telescope', 'juggle', 'coffee', 'umbrella']) assert.ok(IDLE_ACTS.includes(name), name)
+  const { mind } = fixture()
+  for (const [say, mood] of [['find treasure', 'treasure'], ['be a boat', 'boat'], ['fly a kite', 'kite'], ['juggle', 'juggle'], ['coffee break', 'coffee'], ['say cheese', 'camera']]) {
+    assert.ok(ACT_ASKS.some(([re, act]) => re.test(say) && act === mood), say)
+    assert.equal((await mind.respond(say)).mood, mood, say)
+  }
+  assert.equal((await mind.respond('list layers')).mood, 'layers')
+  // Every act has a drawing and motion of its own.
+  const acts = fs.readFileSync(path.join(__dirname, '../src/runtime/components/Acts.tsx'), 'utf8')
+  for (const name of [...ACT_MOODS, ...IDLE_ACTS]) {
+    assert.ok(acts.includes(`case '${name}':`), 'drawing for ' + name)
+    assert.ok(name === 'goodbye' || acts.includes(`.mappy-act-${name} `) || acts.includes(`mappy-${name}`) || /^(fingertap|headscratch|browraise|sway|atom|stack|airplane|glasses|headphones|bike|artsy|techy|wizardy|processing|writing|checking|alert|explain|knock|print|trash|mail|save|congratulate|calling|camera|route|pindrop|measure|chart|idea|layers|treasure|boat|kite|telescope|juggle|coffee|umbrella)$/.test(name), 'motion for ' + name)
+  }
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

@@ -67,6 +67,8 @@ const SIZES = { small: 72, medium: 96, large: 128 }
 const MOOD_MS: { [m: string]: number } = {
   talk: 1600, wave: 2600, happy: 1500, pleased: 1500, acknowledge: 1200, celebrate: 1400, confused: 1400, attention: 2300, point: 2800, love: 2800, excited: 2300, dance: 3600, roll: 1300, dizzy: 2600, party: 5200,
   // the Clippy pack: long enough for the act to finish (processing stays until the answer comes)
+  // the second pack (calling and camera stay until the answer comes)
+  route: 3400, pindrop: 2600, measure: 2600, chart: 2600, idea: 2800, layers: 2400, treasure: 4600, boat: 4400, kite: 4600, juggle: 3800, coffee: 4600,
   writing: 3600, checking: 3000, alert: 2200, explain: 3600, knock: 2600, print: 2800, trash: 3400, mail: 2600, save: 2800, artsy: 3600, techy: 3400, wizardy: 3800, airplane: 4400, bike: 3800, congratulate: 3200, goodbye: 1800
 }
 const LAYER_LIST = /(^|[-_])(map-?layers|layer-?list|layerlist|layers-?custom|toc)([-_]|$)/i
@@ -467,7 +469,8 @@ export default function Widget (props: Props): any {
       if (reply.effect === 'export') exportChat()
       if (reply.effect === 'quietTips') { setTipsOff(true); store('mappy-tips-off:' + appId, '1'); setBulb(null) }
       say(reply.text, reply)
-      setMood((reply.mood as Mood) || 'talk')
+      // A chart in the answer: bars rise beside him (unless he has something more pressing to act out).
+      setMood(reply.chart && !['confused', 'alert', 'attention'].includes(reply.mood || '') ? 'chart' : (reply.mood as Mood) || 'talk')
       handlePoint(reply.pointAt)
       if (reply.mood === 'sleep') setTimeout(() => closeChat(true), 1400)
       if (reply.mood === 'goodbye') setTimeout(() => closeChat(true), 1500)
@@ -841,7 +844,7 @@ export default function Widget (props: Props): any {
   const miniChar = desktop && !hidden && (
     <MappyCharacter
       id={uid + '-mini'}
-      mood={busy ? (mood === 'search' ? 'search' : 'think') : mood}
+      mood={busy ? (waitNote ? (/looking at the map/.test(waitNote) ? 'camera' : 'calling') : mood === 'search' ? 'search' : 'think') : mood}
       px={34}
       label={__t('characterLabel', { name })}
       expanded
@@ -891,7 +894,7 @@ export default function Widget (props: Props): any {
     <div style={{ position: 'relative', width: size, height: size * 1.1 }}>
       <MappyCharacter
         id={uid + '-char'}
-        mood={busy ? (mood === 'search' ? 'search' : 'think') : mood}
+        mood={busy ? (waitNote ? (/looking at the map/.test(waitNote) ? 'camera' : 'calling') : mood === 'search' ? 'search' : 'think') : mood}
         px={size}
         label={__t('characterLabel', { name })}
         expanded={open}
