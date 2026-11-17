@@ -74,13 +74,13 @@ export function play (name: SoundName): void {
 /** The sound that goes with a mood change, if any. */
 export function soundFor (mood: string): SoundName | null {
   switch (mood) {
-    case 'wave': return 'pop'
+    case 'wave': case 'hug': case 'laugh': case 'layers': return 'pop'
     case 'knock': case 'attention': return 'knock'
-    case 'celebrate': case 'congratulate': case 'party': return 'tada'
+    case 'celebrate': case 'congratulate': case 'party': case 'cheer': case 'treasure': case 'proud': return 'tada'
     case 'alert': return 'alert'
-    case 'dizzy': case 'roll': return 'boing'
-    case 'pleased': case 'checking': return 'ding'
-    case 'processing': return 'tick'
+    case 'dizzy': case 'roll': case 'surprised': case 'pindrop': case 'juggle': return 'boing'
+    case 'pleased': case 'checking': case 'idea': case 'chart': case 'camera': case 'grateful': return 'ding'
+    case 'processing': case 'calling': return 'tick'
     default: return null
   }
 }

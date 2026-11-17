@@ -1802,6 +1802,20 @@ test('Claude through the GIS server answers inside the chat, with history and li
   assert.match((await rater.respond(toRate.rate.up)).text, /Already noted/)
   assert.equal(calls.filter(c => c.name === 'assistant_feedback').length, 1)
   assert.equal(z.rate, undefined, 'no thumbs when the server does not take ratings')
+  // The app's own help and layer names go along; a card or Social Security number never does.
+  const helper = new Mind({ ...base, index: new MappyIndex([{ id: 'faq:1', kind: 'faq', title: 'How do I print to PDF', text: 'Open the Print tool, choose Letter landscape, then Export.', keys: 'print pdf export', src: 'admin' }, { id: 'w:1', kind: 'widget', title: 'Print', text: 'Prints the map.', keys: 'print', src: 'live' }]), mcp: port, serverAssistant: { label: 'Claude' } })
+  answer = { content: [{ type: 'text', text: 'Use Print.' }], structuredContent: { answer: 'Use Print.' }, isError: false }
+  await helper.respond('ask claude how do i print to pdf')
+  const helpCtx = calls.filter(c => c.name === 'ask_assistant').pop().args.context
+  assert.match(helpCtx, /From this app's own help: How do I print to PDF: Open the Print tool, choose Letter landscape, then Export\./)
+  assert.match(helpCtx, /\(Tools in this app: Print\.\)/)
+  assert.match(helpCtx, /\(Layers in this map: Parcels\.\)/)
+  n = calls.filter(c => c.name === 'ask_assistant').length
+  assert.match((await helper.respond('ask claude who has the card 4111 1111 1111 1111')).text, /did not send it/)
+  assert.match((await helper.respond('ask claude about ssn 123-45-6789')).text, /did not send it/)
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n)
+  await helper.respond('ask claude about parcel 2945-143-08-002 and permit 20261117000123')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n + 1, 'parcel and permit numbers are not private numbers')
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)

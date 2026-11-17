@@ -379,7 +379,7 @@ export default function ChatBubble (props: Props): any {
                     <div className='mappy-bar-row' key={i}>
                       <span className='mappy-bar-label' title={r.label}>{r.label}</span>
                       <span className='mappy-bar-track'><span className='mappy-bar' style={{ width: `${Math.max(1, Math.abs(r.value) / max * 100)}%` }} /></span>
-                      <span className='mappy-bar-value'>{r.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}{c.unit || ''}</span>
+                      <span className='mappy-bar-value'>{r.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}{c.unit ? (/^[\s%°]/.test(c.unit) ? c.unit : ' ' + c.unit) : ''}</span>
                     </div>
                   ))}
                 </div>

@@ -23,6 +23,20 @@ import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
 import { handoffUrl, parseHandoff, assistantJob, contextLine } from '../brain/handoff'
 
+/** A card number or a US Social Security number typed into a question. */
+function looksPrivate (text: string): boolean {
+  if (/\b\d{3}-\d{2}-\d{4}\b/.test(text)) return true
+  for (const m of text.match(/\b(?:\d[ -]?){13,19}\b/g) || []) {
+    const digits = m.replace(/\D/g, '')
+    if (digits.length < 13 || digits.length > 19) continue
+    // The Luhn check that every payment card number passes.
+    let sum = 0
+    for (let i = 0; i < digits.length; i++) { let d = Number(digits[digits.length - 1 - i]); if (i % 2) { d *= 2; if (d > 9) d -= 9 } sum += d }
+    if (sum % 10 === 0) return true
+  }
+  return false
+}
+
 /** Moods that are feelings, not answers: "try again" never re-runs what led to them. */
 const EMOTIONS = ['sorry', 'sad', 'shy', 'proud', 'surprised', 'laugh', 'hug', 'grateful', 'cheer', 'sleepy', 'curious']
 
@@ -641,7 +655,9 @@ export class Mind {
     } catch (e) { this.mcpFailedAt = Date.now(); return quiet ? null : { text: `I could not reach ${port.label}, so ${sa.label} cannot answer right now.`, mood: 'alert' } }
     const tool = this.askTool
     if (!tool) return quiet ? null : { text: `${sa.label} is not turned on for ${port.label} yet. The GIS team can turn it on on the server.`, mood: 'confused' }
-    const ctx = [this.handoffContextLine(), sa.shareSelection === false ? '' : this.selectedLine(), extra].filter(Boolean).join(' ')
+    // Something that looks like a card or Social Security number never leaves the browser.
+    if (looksPrivate(question)) return { text: `That looks like it has a private number in it (a card or Social Security number), so I did not send it to ${sa.label}. Ask again without it.`, mood: 'alert' }
+    const ctx = clip([this.handoffContextLine(), sa.shareSelection === false ? '' : this.selectedLine(), extra, this.helpFor(question)].filter(Boolean).join(' '), 2400)
     this.track('claude')
     // A question about what is on screen ("what am I looking at", "which of these is biggest")
     // takes a small picture of the map along, when the builder turned that on.
@@ -728,11 +744,27 @@ export class Mind {
     } catch (e) { return '' }
   }
 
+  /**
+   * What the app's own help says about a question: the closest things Mappy knows (the builder's
+   * answers and notes, tool help, the glossary), so Claude can answer "how do I print to PDF here"
+   * from this app's words instead of guessing. Layer and field records are left out; Claude has
+   * the GIS tools for those.
+   */
+  private helpFor (question: string): string {
+    try {
+      const hits = this.ctx.index.search(question, { limit: 6 } as any).filter(h => !['layer', 'table', 'field', 'bookmark'].includes(h.doc.kind as string) && h.doc.text).slice(0, 3)
+      if (!hits.length) return ''
+      return `(From this app's own help: ${hits.map(h => `${clip(h.doc.title, 60)}: ${clip(h.doc.text.replace(/\s+/g, ' '), 260)}`).join(' | ')})`
+    } catch (e) { return '' }
+  }
+
   /** The line about the map for a question going to Claude, and the app's own tools, so it can point at them. */
   private handoffContextLine (): string {
     try {
       const tools = Array.from(new Set(this.ctx.index.docs.filter(d => d.kind === 'widget').map(d => d.title.trim()).filter(Boolean))).slice(0, 14)
-      return [contextLine(this.handoffContext()), tools.length ? `(Tools in this app: ${tools.map(t => clip(t, 30)).join(', ')}.)` : ''].filter(Boolean).join(' ')
+      const live = this.ctx.live
+      const layers = Array.from(new Set(live.entries().filter(e => !e.isGroup).map(e => e.title.trim()).filter(Boolean))).slice(0, 24)
+      return [contextLine(this.handoffContext()), tools.length ? `(Tools in this app: ${tools.map(t => clip(t, 30)).join(', ')}.)` : '', layers.length ? `(Layers in this map: ${layers.map(t => clip(t, 34)).join(', ')}.)` : ''].filter(Boolean).join(' ')
     } catch (e) { return '' }
   }
 

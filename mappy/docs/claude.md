@@ -22,12 +22,13 @@ What an answer can carry:
 What is sent to Anthropic:
 
 - The question, and up to three earlier turns.
-- One line about the map: the place being looked at, the map center, the layers that are on, the tools in the app.
+- One line about the map: the place being looked at, the map center, the layers that are on, the tools and layers in the app.
+- The closest lines from the app's own help (the builder's answers and notes, tool help), so Claude can answer how-to questions about the app.
 - With a popup open: the feature's layer and up to six of its values (turn off with **Send the clicked feature**).
 - The data Claude's tools look up. Fields you list in `assistant.redact_fields` are left out.
 - A small picture of the map, only if **Send a picture of the map** is on, and only for questions about what is on screen.
 
-What is never sent: ArcGIS tokens, the API key, anything from a person who has not asked a question.
+What is never sent: ArcGIS tokens, the API key, anything from a person who has not asked a question, and any question that has a card number or a Social Security number in it.
 
 Controls on the server (`config.json`, under `assistant`):
 
