@@ -69,6 +69,8 @@ import { completeText, addressFragment, withAddress, addressQuestions } from '..
 import type { CompleteSource } from '../brain/complete'
 import { suggestAddresses } from './geocoder'
 import { toLatLon as projectToLatLon, warmProjection, needsProjection } from './project'
+import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, privacyText } from '../brain/care'
+import type { Contact, Miss } from '../brain/care'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
 import { fieldLabel, keyLabel } from '../brain/fields'
@@ -95,6 +97,10 @@ export interface MindContext {
   mcp?: McpPort | null
   /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
   assistant?: AssistantPort | null
+  /** A real person or team to hand off to, from settings: offered on request and when he is stuck twice in a row. */
+  contact?: Contact | null
+  /** Anonymous usage counts are on (settings), so the privacy answer can say so. */
+  telemetry?: boolean
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
   serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean, note?: string } | null
   /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
@@ -141,6 +147,9 @@ export class Mind {
   private redoLabel: { label: string, commands: string } | null = null
   /** The last thing the user typed that was not a chip or control word, for "try again". */
   private lastInput = ''
+  /** Real questions in a row he could not answer; at two he offers a person. */
+  private stuckRun = 0
+  private missMemory: Miss[] = []
   /** Guided tour: the widget docs still to visit, and the one being shown. */
   private tour: { stops: Doc[], at: number } | null = null
   private lastResults: any[] = []
@@ -389,7 +398,7 @@ export class Mind {
     const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
     const reply = await this.respondInner(input)
     const handoffLabel = this.ctx.assistant?.label || this.ctx.serverAssistant?.label
-    const real = !control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(handoffLabel && parseHandoff(input, handoffLabel))
+    const real = !control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !parseCare(input) && !(handoffLabel && parseHandoff(input, handoffLabel))
     if (real && !(EMOTIONS as readonly string[]).includes(reply.mood || '')) this.lastInput = input
     // One more question together; round numbers get a line of their own.
     if (real) {
@@ -399,6 +408,19 @@ export class Mind {
         const line = this.ctx.fun === false ? '' : milestone(bond.chats)
         if (line && !['confused', 'alert', 'sad', 'sorry'].includes(reply.mood || '')) reply.text = `${reply.text}\n\n${line}`
       } catch (e) { }
+    }
+    // Stuck: keep the question for the people who run the app, and after two in a row offer a person.
+    if (real) {
+      const stuck = reply.mood === 'confused'
+      this.stuckRun = stuck ? this.stuckRun + 1 : 0
+      if (stuck) {
+        this.keepMisses(addMiss(this.misses(), input))
+        const c = this.ctx.contact
+        if (c && this.stuckRun >= 2 && !(reply.actions || []).some(a => a.type === 'url' && /^(?:mailto|tel):/i.test(a.url || ''))) {
+          reply.text = `${reply.text}\n\n${stuckLine(c)}`
+          reply.actions = [...(reply.actions || []).slice(0, 2), ...contactActions(c, { app: this.ctx.appTitle, question: input, said: reply.text.split('\n')[0], where: this.whereLine() }).slice(0, 2)]
+        }
+      }
     }
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
     // His own data answers (a table or a chart) offer Claude for the "why" and "what does this mean".
@@ -506,6 +528,8 @@ export class Mind {
     const text = read.text || input
     const fb = input.match(/^__claudefb:(up|down):(\d+)$/)
     if (fb) return this.rateClaude(fb[1] === 'up', Number(fb[2]))
+    const cared = this.care(input)
+    if (cared) { this.lastReply = cared; return cared }
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
@@ -550,6 +574,65 @@ export class Mind {
   welcome (now = new Date()): string {
     if (this.ctx.fun === false) return ''
     try { return welcomeBack(this.bond(), now) } catch (e) { return '' }
+  }
+
+  // ------------------------------------------------------------ a person, privacy, what he missed
+
+  misses (): Miss[] {
+    const store = this.ctx.store
+    if (!store) return this.missMemory
+    try { return readMisses(store.get('mappy-missed')) } catch (e) { return this.missMemory }
+  }
+
+  private keepMisses (list: Miss[]): void {
+    this.missMemory = list
+    try { this.ctx.store?.set('mappy-missed', list.length ? JSON.stringify(list) : null) } catch (e) { }
+  }
+
+  /** One line about where the map is, for an email to a person (the app, a place, the layers on). */
+  private whereLine (): string {
+    try { return contextLine(this.handoffContext()) } catch (e) { return this.ctx.appTitle || '' }
+  }
+
+  private helperKind (): string { return this.ctx.serverAssistant ? 'claude' : this.ctx.assistant ? 'assistant' : this.ctx.mcp ? 'mcp' : 'local' }
+
+  /** "Talk to a person", "what do you know about me", "forget everything", "what did you miss". */
+  private care (input: string): Reply | null {
+    const ask = parseCare(input)
+    if (!ask) return null
+    const c = this.ctx.contact || null
+    if (ask === 'person') {
+      const question = this.lastInput && !parseCare(this.lastInput) ? this.lastInput : ''
+      if (c) return { text: contactText(c, question), mood: 'explain', actions: contactActions(c, { app: this.ctx.appTitle, question, said: question && this.lastReply ? this.lastReply.text.split('\n')[0] : '', where: this.whereLine() }), suggest: ['What can you do?'] }
+      const site = this.ctx.place?.website
+      const org = this.ctx.place?.org || 'the organization'
+      return { text: `I am a map helper, not a person, and this app has no contact set up for me to hand you to.${site ? ` ${org.charAt(0).toUpperCase() + org.slice(1)}'s website is the best place to find one.` : ` The people at ${org} who run this app are the ones to ask.`}`, mood: 'sorry', actions: site && /^https:\/\//i.test(site) ? [{ type: 'url', url: site, label: 'Open the website' }] : undefined, suggest: ['What can you do?'] }
+    }
+    if (ask === 'privacy') {
+      const bond = this.bond()
+      return {
+        text: privacyText({ name: this.ctx.name, helper: this.helperKind(), helperLabel: this.ctx.serverAssistant?.label || this.ctx.assistant?.label, serverLabel: this.ctx.mcp?.label, knowsName: bond.name, chats: bond.chats, misses: this.misses().length, savedViews: Object.keys(this.views()).length, telemetry: !!this.ctx.telemetry, locator: !!this.ctx.geocoders?.length, sharePicture: !!this.ctx.serverAssistant?.sharePicture }),
+        mood: 'explain', suggest: ['Forget everything', ...(c ? ['Talk to a person'] : [])]
+      }
+    }
+    if (ask === 'forgetAll') {
+      this.bondMemory = emptyBond(); try { this.ctx.store?.set('mappy-bond', null) } catch (e) { }
+      this.keepMisses([]); this.saveViews({})
+      this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.tablePage = null; this.lastAnalysis = null; this.dataTask = null; this.layerPick = null
+      this.lastInput = ''; this.stuckRun = 0; this.claudeTurns = []; this.claudeAt = 0; this.claudeFollowups = []; this.lastPlace = null; this.placeConversation = null
+      return { text: 'Done. I erased everything I kept in this browser: this conversation, your name, our question count, saved views and the questions I missed. The map itself is unchanged.', mood: 'acknowledge', effect: 'forgetAll' }
+    }
+    const list = this.misses()
+    if (ask === 'clearMissed') { this.keepMisses([]); return { text: list.length ? 'Done. The list of questions I missed is empty.' : 'That list was already empty.', mood: 'acknowledge' } }
+    if (!list.length) return { text: 'Nothing on my list. I have answered everything asked in this browser so far.', mood: 'proud' }
+    const mail = c ? missesMail(c, list, this.ctx.appTitle) : ''
+    return {
+      text: `Here ${list.length === 1 ? 'is the question' : `are the last ${Math.min(list.length, 10)} questions`} I could not answer in this browser. ${c ? `Sending them to ${c.name} helps the app builder teach me.` : 'The app builder can teach me these in my settings, under Questions and answers.'}`,
+      mood: 'think',
+      list: list.slice(0, 10).map(m => ({ label: m.q, detail: `${new Date(m.at).toISOString().slice(0, 10)}${m.n > 1 ? `, asked ${m.n} times` : ''}`, action: { type: 'ask' as const, q: m.q } })),
+      actions: mail ? [{ type: 'url', url: mail, label: `Email these to ${c!.name}`.slice(0, 40) }] : undefined,
+      suggest: ['Clear missed questions']
+    }
   }
 
   private feelings (input: string): Reply | null {
@@ -2176,7 +2259,7 @@ export class Mind {
           return { text, mood: 'acknowledge', suggest: label ? ['Redo'] : [] }
         }
         case 'forget': this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.tablePage = null; this.lastAnalysis = null; this.dataTask = null; this.layerPick = null; return { text: 'Conversation context cleared. What would you like to explore?', mood: 'wave' }
-        case 'diagnostics': return this.diagnostics()
+        case 'diagnostics': { const d = this.diagnostics(); const n = this.misses().length; return { ...d, text: `${d.text} ${this.ctx.contact ? `A person to ask: ${this.ctx.contact.name}.` : 'No person to ask is set.'} ${n ? `${n} question${n === 1 ? '' : 's'} missed in this browser (say "what did you miss").` : 'No missed questions in this browser.'}` } }
         case 'coordinates': return this.needMap(async () => {
           const latitude = Number(it.target); const longitude = Number(it.value)
           if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return { text: 'Use latitude, longitude: latitude -90 to 90 and longitude -180 to 180.', mood: 'confused' }
@@ -2536,6 +2619,7 @@ export class Mind {
         { label: 'Filter the map', detail: 'Only show parcels over 5 acres · hide hydrants installed before 1990 · clear the filter · chart parcels by zoning' },
         ...(this.ctx.mcp || this.ctx.live.parcelLayers().length ? [{ label: 'Ask about a place', detail: 'Who owns 250 N 5th St · what zone is it in · when is trash pickup · closest hydrant · how far is it from City Hall', action: { type: 'ask' as const, q: 'Tell me about my address' } }] : []),
         { label: 'Look back', detail: "What's on the map · what did I change · undo · try again · what did I click (with a popup open) · copy that · export chat", action: { type: 'ask', q: 'What did I change' } },
+        { label: 'People and privacy', detail: `${this.ctx.contact ? 'Talk to a person · ' : ''}what do you know about me · forget everything · what did you miss`, action: { type: 'ask', q: this.ctx.contact ? 'Talk to a person' : 'What do you know about me?' } },
         { label: 'Check what I know', detail: 'Live map connection and knowledge sources', action: { type: 'ask', q: 'diagnostics' } }
       ],
       suggest: [

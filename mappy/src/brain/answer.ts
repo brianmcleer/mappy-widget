@@ -37,7 +37,7 @@ export interface Reply {
   /** Element Mappy should point at while saying this (a widget, the layer list, the map). */
   pointAt?: HTMLElement | null
   /** Something the widget itself should do: pause or resume motion, speak, resize or move Mappy. */
-  effect?: 'pause' | 'resume' | 'speak' | 'smaller' | 'bigger' | 'left' | 'right' | 'otherCorner' | 'copy' | 'export' | 'quietTips'
+  effect?: 'pause' | 'resume' | 'speak' | 'smaller' | 'bigger' | 'left' | 'right' | 'otherCorner' | 'copy' | 'export' | 'quietTips' | 'forgetAll'
 }
 
 /** One clickable row in a reply. `glyph` is decorative; `sr` is what a screen reader hears instead. */

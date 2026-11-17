@@ -196,7 +196,7 @@ export async function goView (sectionId: string, viewId: string, model: AppModel
 
 export function openUrl (url: string): void {
   try {
-    if (/^mailto:/i.test(url) || /^claude:\/\/claude\.ai\//i.test(url)) { window.location.href = url; return }
+    if (/^(?:mailto|tel):/i.test(url) || /^claude:\/\/claude\.ai\//i.test(url)) { window.location.href = url; return }
     window.open(url, '_blank', 'noopener')
   } catch (e) { }
 }

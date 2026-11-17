@@ -26,7 +26,7 @@ hosts that add their own).
 
 ## Test it
 
-The browser test opens the built page, talks to Mappy and checks the map and the chat (19 checks,
+The browser test opens the built page, talks to Mappy and checks the map and the chat (20 checks,
 desktop and phone width).
 
 1. `npm i -D playwright`

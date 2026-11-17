@@ -94,6 +94,11 @@ export interface Config {
   censusKey?: string
   /** Facts from the app's own map layers ("The map has 2,314 fire hydrants"), worked out at runtime. Undefined means on. */
   mapFacts?: boolean
+  /**
+   * A real person or team to hand off to: name, email, phone, url (https), hours. Offered when
+   * someone asks for a person and after two questions in a row he could not answer. See brain/care.ts.
+   */
+  contact?: any
   /** Usage telemetry through the shared Beacon module. Explicit opt-in only. */
   telemetry?: boolean
 }

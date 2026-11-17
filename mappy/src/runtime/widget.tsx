@@ -30,6 +30,7 @@ import { buildMapFacts } from './mapFacts'
 import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
+import { cleanContact } from '../brain/care'
 import { parseIntent } from '../brain/intents'
 import { V, pick } from '../brain/voice'
 import { season, dayFeel } from '../brain/fun'
@@ -240,6 +241,8 @@ export default function Widget (props: Props): any {
     mcp,
     assistant,
     serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false, sharePicture: plain<any>(cfg.assistant)?.sharePicture === true, note: plain<any>(cfg.assistant)?.note === undefined ? 'AI answer from the GIS data. Check anything important before relying on it.' : String(plain<any>(cfg.assistant)?.note || '') } : null,
+    contact: cleanContact(plain<any>(cfg.contact)),
+    telemetry: cfg.telemetry === true,
     waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,
@@ -304,7 +307,7 @@ export default function Widget (props: Props): any {
     try {
       const saved = JSON.parse(store(chatKey, undefined, true) || '[]')
       if (!Array.isArray(saved) || !saved.length) return []
-      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), note: typeof m.reply.note === 'string' ? m.reply.note.slice(0, 200) : undefined, suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^(?:https:\/\/|claude:\/\/claude\.ai\/)/.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
+      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), note: typeof m.reply.note === 'string' ? m.reply.note.slice(0, 200) : undefined, suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^(?:https:\/\/|claude:\/\/claude\.ai\/|mailto:|tel:)/.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
       return list.length ? [...list, { id: msgSeq++, from: 'mappy', text: 'Welcome back! That was our chat before the page reloaded. What next?', ephemeral: true }] : []
     } catch (e) { return [] }
   })
@@ -472,6 +475,7 @@ export default function Widget (props: Props): any {
       // "Copy that": the last answer before this one. "Export chat": the whole conversation as text.
       if (reply.effect === 'copy') { const prev = [...messagesRef.current].reverse().find(m => m.from === 'mappy'); if (prev) copyText(prev.text) }
       if (reply.effect === 'export') exportChat()
+      if (reply.effect === 'forgetAll') { setMessages([]); store(chatKey, null, true); store('mappy-tips-off:' + appId, null); setTipsOff(false) }
       if (reply.effect === 'quietTips') { setTipsOff(true); store('mappy-tips-off:' + appId, '1'); setBulb(null) }
       say(reply.text, reply)
       // A chart in the answer: bars rise beside him (unless he has something more pressing to act out).

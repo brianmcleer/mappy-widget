@@ -56,6 +56,7 @@ const mind = new Mind({
   mcp: port as any,
   serverAssistant: { label: 'Claude (demo)', shareSelection: true, note: DEMO_NOTE },
   waiting: (note: string) => waitingNote(note),
+  contact: { name: 'the Mapleton map desk', email: 'mapdesk@mapleton.example', hours: 'weekdays, 8 to 5 (a made-up desk for this demo)' },
   place: { org: 'the Town', name: 'Mapleton', website: '', facts: ['Mapleton has twelve blocks, three parks and one very proud paper map.', 'Every street in Mapleton is named for a tree, and every avenue for a number.'] },
   store
 } as any)

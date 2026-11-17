@@ -1950,6 +1950,64 @@ test('"clear the filter" clears the map filter even when a data answer is on the
   assert.equal(live.filtered().length, 0, r.text)
 })
 
+test('a person to ask, privacy in plain words, forget everything and the missed list', async () => {
+  const { parseCare, cleanContact, addMiss, worthKeeping } = require('../src/brain/care.ts')
+  for (const q of ['talk to a person', 'can I speak to a human?', 'I need to talk to someone', 'contact support', 'who do I contact', 'report a problem with this map', 'the data is wrong', 'email the gis team', 'feedback']) assert.equal(parseCare(q), 'person', q)
+  for (const q of ['privacy', 'what do you know about me', 'do you save my questions', 'is this private?', 'are you tracking me', 'where does my data go', 'who can see my chat']) assert.equal(parseCare(q), 'privacy', q)
+  for (const q of ['forget everything', 'delete my data', 'erase everything']) assert.equal(parseCare(q), 'forgetAll', q)
+  for (const q of ['what did you miss', 'missed questions', 'what stumped you']) assert.equal(parseCare(q), 'missed', q)
+  // Real requests are never mistaken for these.
+  for (const q of ['turn on parcels', 'who owns 250 Main St', 'find Smith in parcels', 'contact layer', 'who owns this', 'this is wrong layer', 'zoom to the support center', 'count people by status', 'call me Sam', 'forget my name', 'clear the filter', 'what do you know', 'who do I contact about a pothole']) assert.equal(parseCare(q), null, q)
+  // Settings are checked: a bad email or an http page is left out, and nothing usable means no contact.
+  assert.equal(cleanContact({ name: 'GIS', email: 'not an email', url: 'http://x.org' }), null)
+  assert.deepEqual(cleanContact({ name: ' the GIS team ', email: 'gis@example.org', phone: '555-555-0100 x12', url: 'javascript:alert(1)', hours: 'weekdays 8 to 5' }), { name: 'the GIS team', email: 'gis@example.org', phone: '555-555-0100 x12', hours: 'weekdays 8 to 5' })
+  // Private-looking text never goes on the missed list; a repeat counts up.
+  assert.equal(worthKeeping('my ssn is 123-45-6789 what now'), false)
+  assert.equal(worthKeeping('email me at sam@example.org'), false)
+  assert.equal(addMiss(addMiss([], 'where is the moon base', 1), 'Where is the moon base?', 2)[0].n, 2)
+
+  const { live } = fixture()
+  const kept = {}
+  const store = { get: k => (k in kept ? kept[k] : null), set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } }
+  const base = { live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', store }
+  const mind = new Mind({ ...base, contact: cleanContact({ name: 'the GIS team', email: 'gis@example.org', phone: '555-555-0100', hours: 'weekdays 8 to 5' }) })
+  // Asked for: who, when and how, with the last question written into the email.
+  await mind.respond('list layers')
+  const person = await mind.respond('talk to a person')
+  assert.match(person.text, /the GIS team/); assert.match(person.text, /weekdays 8 to 5/)
+  assert.match(person.actions[0].url, /^mailto:gis@example\.org\?subject=Question%20about%20Test%20map&body=/)
+  assert.match(decodeURIComponent(person.actions[0].url), /My question: list layers/)
+  assert.equal(person.actions[1].url, 'tel:5555550100')
+  // Stuck once: no person yet. Stuck twice in a row: the person is offered, and both are remembered.
+  const one = await mind.respond('where is the moon base located')
+  assert.equal(one.mood, 'confused'); assert.ok(!(one.actions || []).some(a => /^mailto:/.test(a.url || '')))
+  const two = await mind.respond('how tall is the moon base tower')
+  assert.match(two.text, /the GIS team\*\* can help/); assert.ok(two.actions.some(a => /^mailto:/.test(a.url || '')))
+  assert.equal(JSON.parse(kept['mappy-missed']).length, 2)
+  // A good answer resets the count.
+  await mind.respond('list layers')
+  assert.ok(!((await mind.respond('where is the moon base located')).actions || []).some(a => /^mailto:/.test(a.url || '')))
+  // The missed list, with a button that mails it.
+  const missed = await mind.respond('what did you miss')
+  assert.equal(missed.list.length, 2); assert.match(missed.list[0].detail, /asked 2 times/)
+  assert.match(decodeURIComponent(missed.actions[0].url), /moon base tower/)
+  // Privacy: what is kept here, what leaves, and no claim of AI for a local helper.
+  await mind.respond('call me Sam')
+  const privacy = await mind.respond('what do you know about me')
+  assert.match(privacy.text, /Kept in this browser only/); assert.match(privacy.text, /“Sam”/); assert.match(privacy.text, /Usage tracking:\*\* off/); assert.match(privacy.text, /do not use AI/)
+  // Forget everything: the browser is clean and the widget is told to clear the chat.
+  const gone = await mind.respond('forget everything')
+  assert.equal(gone.effect, 'forgetAll')
+  assert.equal(kept['mappy-missed'], undefined); assert.equal(kept['mappy-bond'], undefined)
+  assert.match((await mind.respond('what did you miss')).text, /Nothing on my list/)
+  // No contact set up: honest about it, and never a made-up address.
+  const alone = new Mind({ ...base, store: undefined, place: { org: 'the County', name: '', website: 'https://example.org', facts: [] } })
+  const none = await alone.respond('talk to a human')
+  assert.match(none.text, /not a person/); assert.equal(none.actions[0].url, 'https://example.org')
+  await alone.respond('where is the moon base located')
+  assert.ok(!((await alone.respond('how tall is the moon base tower')).actions || []).some(a => /^mailto:/.test(a.url || '')))
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

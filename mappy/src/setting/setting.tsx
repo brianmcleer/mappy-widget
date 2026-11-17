@@ -23,6 +23,7 @@ import { ESRI_DOCS_READ } from '../brain/esriDocs'
 import { __setIntl, __t } from './i18n-t'
 import LanguageSection from './LanguageSection'
 import PlaceSection from './PlaceSection'
+import ContactSection from './ContactSection'
 import PreviewSection from './PreviewSection'
 import FeedSection from './FeedSection'
 import McpSection from './McpSection'
@@ -285,6 +286,7 @@ export default function Setting (props: SettingProps): any {
 
       <LanguageSection stored={config.languagePack} onChange={(pack: any) => set('languagePack', pack)} />
 
+      <ContactSection contact={plain<any>(config.contact)} set={set} />
       <HelperSection helper={config.helper} assistant={config.assistant} mcp={config.mcp} appTitle={String(appConfig?.attributes?.title || '')} set={set} />
 
       <McpSection value={config.mcp} active={['mcp', 'claude'].includes(helperMode(config.helper, plain<any>(config.mcp)))} onChange={(v: any) => set('mcp', v)} />
