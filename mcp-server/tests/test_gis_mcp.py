@@ -518,6 +518,11 @@ class GisMcpTest(unittest.TestCase):
                     body = rf.read()
                 self.assertIn('There are **12** parks.', body)
                 self.assertIn('busy right now', body)
+                out = io.StringIO()
+                sys.argv = ['gis_mcp.py', '--config', f.name, '--usage']
+                with contextlib.redirect_stdout(out):
+                    gis_mcp.main()
+                self.assertIn('No questions recorded yet', out.getvalue())
             finally:
                 sys.argv = argv
                 os.unlink(f.name)
@@ -579,6 +584,28 @@ class GisMcpTest(unittest.TestCase):
                 self.assertIn('ran out of time', late.exception.said)
             finally:
                 gis_mcp.time.time = real_time
+            # Ratings: one line in a CSV, formulas made harmless; and Claude is for the map apps only.
+            fb_dir = tempfile.mkdtemp()
+            rated = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, log_dir=fb_dir, assistant=dict(gis_mcp.DEFAULTS['assistant'], **a))).test_client()
+            def call_on(client, name, args, origin=ORIGIN, token=TOKEN):
+                h = {'Content-Type': 'application/json'}
+                if origin:
+                    h['Origin'] = origin
+                if token:
+                    h['Authorization'] = 'Bearer ' + token
+                return client.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}}), headers=h).get_json()['result']
+            ok = call_on(rated, 'assistant_feedback', {'question': '=HYPERLINK("x")', 'answer': 'There are 12.', 'helpful': False, 'comment': 'wrong layer'})
+            self.assertFalse(ok['isError'], ok)
+            self.assertTrue(call_on(rated, 'assistant_feedback', {'question': 'q'})['isError'], 'needs helpful')
+            self.assertTrue(call_on(rated, 'assistant_feedback', {'question': 'q', 'helpful': True}, token=None)['isError'], 'signed in only')
+            with open(os.path.join(fb_dir, 'assistant-feedback.csv'), encoding='utf-8-sig') as ff:
+                lines = ff.read().strip().splitlines()
+            self.assertEqual(lines[0], 'When,Who,Helpful,Question,Answer,Comment')
+            self.assertIn(",no,\"'=HYPERLINK(\"\"x\"\")\",There are 12.,wrong layer", lines[1])
+            listed = lambda origin: [t['name'] for t in rated.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}), headers=dict({'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN}, **({'Origin': origin} if origin else {}))).get_json()['result']['tools']]
+            self.assertIn('assistant_feedback', listed(ORIGIN))
+            self.assertNotIn('ask_assistant', listed(None), 'a desktop assistant connecting here does not get Claude on the City key')
+            self.assertIn('inside the map apps only', call_on(rated, 'ask_assistant', {'question': 'hello there'}, origin=None)['content'][0]['text'])
             # A wrong key reads as a setup problem.
             os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')

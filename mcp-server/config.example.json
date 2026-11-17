@@ -78,6 +78,8 @@
     "price_per_mtok_out": 0,
     "price_per_mtok_cached": 0,
     "total_seconds": 95,
-    "ca_bundle": ""
+    "ca_bundle": "",
+    "apps_only": true,
+    "feedback": true
   }
 }

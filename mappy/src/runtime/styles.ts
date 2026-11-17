@@ -257,6 +257,11 @@ const CSS = `
 .mappy-chip:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.14)}
 .mappy-chip:active:not(:disabled){transform:translateY(0) scale(.96);box-shadow:none}
 .mappy-note{font-size:.72rem;line-height:1.35;color:var(--mappy-muted);margin:4px 0 2px;padding-left:8px;border-left:2px solid var(--mappy-line)}
+.mappy-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mappy-rate{display:inline-flex;gap:2px;margin-left:auto}
+.mappy-ratebtn{border:0;background:transparent;cursor:pointer;font-size:.85rem;line-height:1;padding:3px 5px;border-radius:6px;min-width:24px;min-height:24px;opacity:.65;transition:opacity .12s ease,transform .12s ease,background-color .12s ease}
+.mappy-ratebtn:hover:not(:disabled){opacity:1;background:var(--mappy-hover);transform:scale(1.15)}
+.mappy-ratebtn:disabled{opacity:.35;cursor:default}
 .mappy-chart{margin:6px 0 2px;font-size:.8rem}
 .mappy-chart-title{font-weight:600;margin-bottom:4px;opacity:.85}
 .mappy-bar-row{display:grid;grid-template-columns:minmax(60px,34%) 1fr auto;gap:6px;align-items:center;margin:2px 0}

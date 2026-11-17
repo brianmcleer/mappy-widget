@@ -87,6 +87,8 @@ Answers can carry buttons for the map (Claude calls `map_show_place`, `map_show_
 
 What the server needs on the network: outbound HTTPS (port 443) to `api.anthropic.com`. Behind a proxy, set `HTTPS_PROXY` for the app pool. If the network inspects HTTPS and the connection is "not trusted", save the organization's root certificate as a PEM file and point `assistant.ca_bundle` at it. A whole answer is kept under `total_seconds` (95) so it fits inside IIS's two-minute request limit; when time or steps run short, Claude is told to answer with what it has.
 
+After going live, two things tell you how it is doing: `python gis_mcp.py --config config.json --usage` prints questions, tokens and estimated cost by day and month, and `logs/assistant-feedback.csv` holds the thumbs up and down people gave (the question and the answer they rated, and a short hash of who).
+
 Before going live, review real answers: put the questions people ask in a text file, one per line (see `eval-questions.example.txt`), and run `python gis_mcp.py --config config.json --eval questions.txt`. It writes every answer, the tools used, the seconds and the tokens to a CSV next to the file.
 
 Daily questions and tokens are saved in `logs/assistant-usage.json`, so the limits hold across restarts. `/health` shows `today` and `this_month`; set the `price_per_mtok_*` keys to your plan's prices to see an estimated cost there. With `require_token` off (a public app), people are told apart by address and get `anonymous_per_hour` questions each.
@@ -167,6 +169,8 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.require_token` | true | Only signed-in people may ask |
 | `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
 | `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
+| `assistant.apps_only` | true | Only the map apps (requests with an allowed Origin) get `ask_assistant`. Desktop assistants connecting to this server bring their own model |
+| `assistant.feedback` | true | Take thumbs up and down on answers (`assistant_feedback`), saved to `logs/assistant-feedback.csv` |
 | `assistant.anonymous_per_hour` | 5 | Questions per hour for someone who is not signed in (only when `require_token` is false) |
 | `assistant.allow_images` | true | Accept a picture of the map with a question |
 | `assistant.usage_file` | assistant-usage.json | Where daily questions and tokens are saved, in the log folder (empty: not saved) |

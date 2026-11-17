@@ -31,6 +31,7 @@ const ABOUT_THE_SCREEN = /\b(?:on (?:the|this|my) (?:map|screen)|(?:this|the) (?
 
 /** The GIS server's tool that hands a question to Claude on the server (gis_mcp.py ask_assistant). */
 const ASK_TOOL = 'ask_assistant'
+const FEEDBACK_TOOL = 'assistant_feedback'
 import type { AssistantPort, HandoffContext } from '../brain/handoff'
 import { feel, readBond, bumpBond, milestone, welcomeBack, emptyBond } from '../brain/feelings'
 import type { Bond } from '../brain/feelings'
@@ -163,6 +164,10 @@ export class Mind {
   private askTool: McpTool | null = null
   /** Recent questions Claude answered here, sent along so follow-ups make sense. */
   private claudeTurns: Array<{ q: string, a: string }> = []
+  /** The server takes ratings (assistant_feedback), and the answers that can still be rated. */
+  private rateTool = false
+  private rated = new Map<number, { q: string, a: string, done?: boolean }>()
+  private rateSeq = 0
   /** When Claude last answered, and the follow-ups it suggested: the conversation stays with Claude for a few minutes. */
   private claudeAt = 0
   /** What he remembers about the two of you when the browser cannot keep it (tests, private windows). */
@@ -485,6 +490,8 @@ export class Mind {
     // The reading is the request with typos fixed, polite words dropped, numbers in words as
     // digits ("fifty percent" to 50%) and other phrasings made plain; it equals the input otherwise.
     const text = read.text || input
+    const fb = input.match(/^__claudefb:(up|down):(\d+)$/)
+    if (fb) return this.rateClaude(fb[1] === 'up', Number(fb[2]))
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
@@ -557,6 +564,23 @@ export class Mind {
       if (picked?.title) out.selected = picked.title
     } catch (e) { }
     return out
+  }
+
+  /** A thumbs up or down on one of Claude's answers goes to the server's feedback file. */
+  private async rateClaude (helpful: boolean, id: number): Promise<Reply> {
+    const sa = this.ctx.serverAssistant
+    const port = this.ctx.mcp
+    const turn = this.rated.get(id)
+    if (!sa || !port || !turn) return { text: 'That answer is too far back to rate now, but thank you.', mood: 'acknowledge' }
+    if (turn.done) return { text: 'Already noted. Thank you!', mood: 'pleased' }
+    try {
+      const raw = await port.call(FEEDBACK_TOOL, { question: turn.q, answer: turn.a, helpful })
+      if (raw?.isError) return { text: String(raw?.content?.[0]?.text || 'The rating could not be saved.'), mood: 'confused' }
+    } catch (e) { return { text: 'I could not reach the server to save that. Thank you anyway.', mood: 'alert' } }
+    turn.done = true
+    return helpful
+      ? { text: pick(['Thank you! Noted for the GIS team.', 'Glad it helped. I passed that along.']), mood: 'grateful' }
+      : { text: `Thank you for telling me. I noted it for the GIS team so ${sa.label} can do better. Want to ask it another way?`, mood: 'sorry' }
   }
 
   /** "ask Claude ..." when Claude answers inside the chat through the GIS server. */
@@ -669,6 +693,13 @@ export class Mind {
     if (followups.length) reply.suggest = followups
     // Say plainly that this one came from an AI.
     if (sa.note) reply.note = clip(sa.note, 200)
+    // Thumbs under the answer, when the server keeps ratings.
+    if (this.rateTool) {
+      const id = ++this.rateSeq
+      this.rated.set(id, { q: clip(question, 400), a: clip(answer, 800) })
+      if (this.rated.size > 12) this.rated.delete(Array.from(this.rated.keys())[0])
+      reply.rate = { up: `__claudefb:up:${id}`, down: `__claudefb:down:${id}` }
+    }
     // A chart or a small table Claude built from what it looked up.
     const chartRows = (Array.isArray(data.chart?.rows) ? data.chart.rows : []).filter((r: any) => r && typeof r.label === 'string' && Number.isFinite(r.value)).slice(0, 12)
       .map((r: any) => ({ label: clip(r.label, 40), value: Number(r.value) }))
@@ -752,7 +783,8 @@ export class Mind {
     if (port !== this.ctx.mcp || prefs !== JSON.stringify(port.prefs || [])) throw new Error('The server settings changed. Please ask again.')
     const usable = usableTools(tools, port.prefs)
     this.askTool = usable.find(t => t.name === ASK_TOOL) || null
-    this.mcpTools = usable.filter(t => t.name !== ASK_TOOL)
+    this.rateTool = tools.some(t => t.name === FEEDBACK_TOOL)
+    this.mcpTools = usable.filter(t => t.name !== ASK_TOOL && t.name !== FEEDBACK_TOOL)
     this.loadServerLayers(port)
     return this.mcpTools
   }

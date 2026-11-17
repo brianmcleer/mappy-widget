@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.12.0'
+VERSION = '1.13.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -101,6 +101,8 @@ DEFAULTS = {
         'total_seconds': 95,
         'ca_bundle': '',
         'require_token': True,
+        'apps_only': True,
+        'feedback': True,
         'per_person_per_hour': 30,
         'per_day': 1000,
         'cache_minutes': 10,
@@ -1869,6 +1871,7 @@ class Upstream:
 # ---------------------------------------------------------------- Claude on the server (ask_assistant)
 
 ASK_TOOL = 'ask_assistant'
+FEEDBACK_TOOL = 'assistant_feedback'
 ANTHROPIC_VERSION = '2023-06-01'
 
 
@@ -2074,6 +2077,55 @@ class Assistant:
                     'q': {'type': 'string'}, 'a': {'type': 'string'}}}}},
                 'required': ['question']},
             'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True, 'title': 'Ask %s' % self.label}}
+
+    def feedback_definition(self):
+        return {
+            'name': FEEDBACK_TOOL, 'title': 'Rate an answer from %s' % self.label,
+            'description': 'Record whether an answer from %s was helpful, so the people who run this server can improve it.' % self.label,
+            'inputSchema': {'type': 'object', 'properties': {
+                'question': {'type': 'string'}, 'answer': {'type': 'string'}, 'helpful': {'type': 'boolean'},
+                'comment': {'type': 'string', 'description': 'What was wrong or right (optional).'}}, 'required': ['question', 'helpful']},
+            'annotations': {'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': False, 'title': 'Rate an answer'}}
+
+    def feedback(self, args, token, referer, client=None):
+        """One line in logs/assistant-feedback.csv: when, who (a short hash), thumbs up or down, the
+        question, the answer and a comment. Only what the person chose to rate is kept."""
+        import csv
+        if not (self.enabled and self.a.get('feedback', True)):
+            raise ToolError('Feedback is not turned on for this server.')
+        if self.a.get('require_token', True) and not token:
+            raise ToolError('Sign in to rate an answer.')
+        question = clean_text(args.get('question'), 400)
+        if not question or not isinstance(args.get('helpful'), bool):
+            raise ToolError('A rating needs the question and helpful (true or false).')
+        who = Upstream._identity(token) if token else 'anon:' + Upstream._identity(str(client or referer or 'local'))
+        folder = self.cfg.get('log_dir') or 'logs'
+        if not os.path.isabs(folder):
+            folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), folder)
+        path = os.path.join(folder, 'assistant-feedback.csv')
+        with self.lock:
+            now = time.time()
+            recent = [t for t in self.hits.get('fb:' + who, []) if now - t < 3600]
+            if len(recent) >= 60:
+                raise ToolError('That is a lot of ratings in an hour. Thank you, that is plenty for now.')
+            self.hits['fb:' + who] = recent + [now]
+            try:
+                os.makedirs(folder, exist_ok=True)
+                new = not os.path.exists(path)
+                if not new and os.path.getsize(path) > 5_000_000:
+                    raise ToolError('The feedback file is full. Ask the GIS team to archive it.')
+                with open(path, 'a', newline='', encoding='utf-8-sig' if new else 'utf-8') as f:
+                    w = csv.writer(f)
+                    if new:
+                        w.writerow(['When', 'Who', 'Helpful', 'Question', 'Answer', 'Comment'])
+                    # A leading = + - @ would run as a formula when the file is opened in a spreadsheet.
+                    safe = lambda v: ("'" + v) if v[:1] in '=+-@' else v
+                    w.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), who[:8], 'yes' if args['helpful'] else 'no', safe(question), safe(clean_text(args.get('answer'), 800)), safe(clean_text(args.get('comment'), 400))])
+            except OSError:
+                log.warning('Could not write %s', path)
+                raise ToolError('The rating could not be saved.')
+        log.info('assistant feedback %s', 'up' if args['helpful'] else 'down')
+        return 'Thank you. Noted.', {'saved': True}
 
     def _allow(self, who, anonymous=False):
         """Per person per hour (fewer for people who are not signed in), and per day for the whole server."""
@@ -2370,14 +2422,27 @@ class Server:
             return {}
         if method == 'tools/list':
             self.layers.refresh(token, referer=referer)
-            return {'tools': self.tools.definitions() + ([self.assistant.definition()] if self.assistant.enabled else []) + self.upstream_tools(token)}
+            # Claude on the server is for the map apps (requests with an allowed Origin). Desktop
+            # assistants that connect here already have their own model, so they do not get it.
+            mine = []
+            if self.assistant.enabled and (referer or not self.assistant.a.get('apps_only', True)):
+                mine = [self.assistant.definition()] + ([self.assistant.feedback_definition()] if self.assistant.a.get('feedback', True) else [])
+            return {'tools': self.tools.definitions() + mine + self.upstream_tools(token)}
         if method == 'tools/call':
             name = params.get('name')
             args = params.get('arguments') or {}
             started = time.time()
-            if name == ASK_TOOL and self.assistant.enabled:
+            if name in (ASK_TOOL, FEEDBACK_TOOL) and self.assistant.enabled:
                 if not isinstance(args, dict):
                     raise RpcError(-32602, 'Arguments must be an object.')
+                if self.assistant.a.get('apps_only', True) and not referer:
+                    return {'content': [{'type': 'text', 'text': '%s on this server answers inside the map apps only.' % self.assistant.label}], 'isError': True}
+                if name == FEEDBACK_TOOL:
+                    try:
+                        text, data = self.assistant.feedback(args, token, referer, client)
+                        return {'content': [{'type': 'text', 'text': text}], 'structuredContent': data, 'isError': False}
+                    except ToolError as e:
+                        return {'content': [{'type': 'text', 'text': e.said}], 'isError': True}
                 self.layers.refresh(token, referer=referer)
                 try:
                     text, data = self.assistant.ask(args, token, referer, client)
@@ -2563,6 +2628,7 @@ def main():
     p.add_argument('--check', action='store_true', help='Load the config, list the layers found, and exit.')
     p.add_argument('--ask', metavar='QUESTION', help='Ask Claude one question from the command line (tests the API key and tools), then exit.')
     p.add_argument('--eval', metavar='FILE', help='Ask Claude every question in a text file (one per line) and write the answers, tools, seconds and tokens to a CSV, then exit.')
+    p.add_argument('--usage', action='store_true', help='Print questions, tokens and estimated cost by day and month, then exit.')
     p.add_argument('--desktop-config', action='store_true', help='Print the Claude Desktop config that connects it to this server, then exit.')
     a = p.parse_args()
     cfg = load_config(a.config)
@@ -2580,6 +2646,24 @@ def main():
     if a.desktop_config:
         url = (cfg.get('public_url') or 'https://YOUR-SERVER/gis-mcp').rstrip('/') + '/mcp'
         print(json.dumps({'mcpServers': {re.sub(r'[^a-z0-9]+', '-', (cfg.get('name') or 'gis').lower()).strip('-') or 'gis': {'command': 'npx', 'args': ['-y', 'mcp-remote', url]}}}, indent=2))
+        return
+    if a.usage:
+        s = Server(cfg)
+        ledger = s.assistant.ledger
+        if not ledger:
+            print('No questions recorded yet (%s).' % (s.assistant.ledger_path or 'usage_file is off'))
+            return
+        print('%-10s %9s %12s %12s %12s %10s' % ('Day', 'Questions', 'Tokens in', 'Tokens out', 'From cache', 'Est. cost'))
+        months = {}
+        for day in sorted(ledger):
+            row = s.assistant._summary([ledger[day]])
+            months.setdefault(day[:7], []).append(ledger[day])
+            print('%-10s %9d %12d %12d %12d %10s' % (day, row['questions'], row['input_tokens'], row['output_tokens'], row['cached_input_tokens'], ('$%.2f' % row['estimated_cost']) if 'estimated_cost' in row else '-'))
+        for month in sorted(months):
+            row = s.assistant._summary(months[month])
+            print('%-10s %9d %12d %12d %12d %10s' % (month, row['questions'], row['input_tokens'], row['output_tokens'], row['cached_input_tokens'], ('$%.2f' % row['estimated_cost']) if 'estimated_cost' in row else '-'))
+        if not any(float(s.assistant.a.get(k) or 0) for k in ('price_per_mtok_in', 'price_per_mtok_out')):
+            print('Set assistant.price_per_mtok_in and price_per_mtok_out in the config to see estimated cost.')
         return
     if a.eval:
         import csv

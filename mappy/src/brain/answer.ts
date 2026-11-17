@@ -29,6 +29,8 @@ export interface Reply {
   chart?: { title?: string, rows: Array<{ label: string, value: number }>, unit?: string }
   /** A small muted line under the answer ("AI answer. Check anything important."). */
   note?: string
+  /** Thumbs up and down under an AI answer: the requests each one sends. */
+  rate?: { up: string, down: string }
   /** Feature search results, filled by the runtime. */
   results?: any[]
   list?: ListRow[]

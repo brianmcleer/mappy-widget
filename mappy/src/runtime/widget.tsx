@@ -425,8 +425,8 @@ export default function Widget (props: Props): any {
 
   // The greeting, plus a line for the time of year (Halloween, GIS Day, Thanksgiving...).
   // Once per update, a line about what is new (returning people only; a first visit gets the plain greeting).
-  const NEWS_KEY = '2026-10-29d'
-  const NEWS = 'New since last time: say "show me around" for a tour of the app\'s tools, "what did I change" for everything I did to the map, "try again" after a hiccup, and "what did I click" when a popup is open. "What is on the map" sums up the view; "copy that" and "export chat" keep answers. Suggestions appear as you type (Tab takes the first). Plus an outfit for 80 days of the year and "what is an easement".'
+  const NEWS_KEY = '2026-11-17a'
+  const NEWS = 'New since last time: tell me your name ("call me ...") and I will remember it in this browser, say "hug", "juggle" or "find treasure", and try petting me with the pointer. I also notice how your day is going, if you tell me.'
   const greet = React.useCallback(() => {
     const extra = cfg.fun === false ? '' : [season().greeting, dayFeel().line].filter(Boolean).join(' ')
     let news = ''

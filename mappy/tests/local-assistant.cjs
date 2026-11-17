@@ -1788,6 +1788,20 @@ test('Claude through the GIS server answers inside the chat, with history and li
     assert.match(ctx2.context, /The map helper had answered: "/)
     assert.match(ctx2.context, /Its table, /)
   }
+  // Thumbs: only when the server keeps ratings; one rating per answer goes to it.
+  const ratingPort = { ...port, tools: async () => [...(await port.tools()), { name: 'assistant_feedback', inputSchema: { type: 'object', properties: {} } }] }
+  const rater = new Mind({ ...base, mcp: ratingPort, serverAssistant: { label: 'Claude' } })
+  answer = { content: [{ type: 'text', text: 'Twelve parks.' }], structuredContent: { answer: 'Twelve parks.' }, isError: false }
+  const toRate = await rater.respond('ask claude how many parks are there')
+  assert.match(toRate.rate.down, /^__claudefb:down:\d+$/)
+  answer = { content: [{ type: 'text', text: 'Thank you. Noted.' }], structuredContent: { saved: true }, isError: false }
+  const down = await rater.respond(toRate.rate.down)
+  assert.equal(down.mood, 'sorry')
+  const sentFb = calls.filter(c => c.name === 'assistant_feedback').pop()
+  assert.deepEqual(sentFb.args, { question: 'how many parks are there', answer: 'Twelve parks.', helpful: false })
+  assert.match((await rater.respond(toRate.rate.up)).text, /Already noted/)
+  assert.equal(calls.filter(c => c.name === 'assistant_feedback').length, 1)
+  assert.equal(z.rate, undefined, 'no thumbs when the server does not take ratings')
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)
