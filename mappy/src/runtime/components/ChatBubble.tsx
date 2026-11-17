@@ -56,6 +56,8 @@ interface Props {
   size?: { w: number, h: number } | null
   /** Resize (while dragging, done=false; when let go, done=true). null goes back to automatic. */
   onResize?: (size: { w: number, h: number } | null, done: boolean) => void
+  /** Where the page cannot save files (a sandboxed host): leave the save buttons out. */
+  noDownloads?: boolean
   /** In its own desktop window: fills the window, shows a small Mappy, and × returns to the app. */
   docked?: { avatar?: any, subtitle?: string, onReturn: () => void }
 }
@@ -350,10 +352,10 @@ export default function ChatBubble (props: Props): any {
         <button type='button' className='mappy-chip' disabled={busy} onClick={() => send('What can you do?')}>Explore</button>
         <button type='button' className='mappy-chip' disabled={busy} onClick={() => send('undo')}>Undo layers</button>
         <button type='button' className='mappy-chip' disabled={busy} onClick={() => { props.onReset(); setHistory([]); setDraft(''); setHIdx(-1) }}>New chat</button>
-        <button type='button' className='mappy-chip' disabled={!messages.length || busy} onClick={() => {
+        {!props.noDownloads && <button type='button' className='mappy-chip' disabled={!messages.length || busy} onClick={() => {
           const text = messages.map(m => `${m.from === 'user' ? 'You' : props.name}: ${m.text}${m.reply?.table ? '\n' + [m.reply.table.columns, ...m.reply.table.rows].map(row => row.join('\t')).join('\n') : ''}${m.reply?.list ? '\n' + m.reply.list.map(row => row.label + (row.detail ? ': ' + row.detail : '')).join('\n') : ''}${m.reply?.results ? '\n' + m.reply.results.map(r => r.label + ' — ' + r.entry.title).join('\n') : ''}${m.reply?.sources ? '\nSources: ' + m.reply.sources.map(s => s.title + ' (' + s.detail + ')').join('; ') : ''}`).join('\n\n')
           download(text, 'mappy-conversation.txt', 'text/plain;charset=utf-8')
-        }}>Save chat</button>
+        }}>Save chat</button>}
       </div>
       {props.task && <details className='mappy-task'>
         <summary><span className='mappy-task-heading'>Data task</span> <strong>{props.task.layer}</strong><span className='mappy-task-meta'>{props.task.kind} · {props.task.scope}{props.task.filter !== 'No additional filter' ? ' · Filtered' : ''}</span></summary>
@@ -389,7 +391,7 @@ export default function ChatBubble (props: Props): any {
               <table className='mappy-table'><caption className='mappy-sr'>Analysis results</caption><thead><tr>{m.reply.table.columns.map((c, i) => <th scope='col' key={i}>{c}</th>)}{m.reply.table.rowActions?.some(Boolean) && <th scope='col'>Map</th>}</tr></thead>
                 <tbody>{m.reply.table.rows.map((row, i) => <tr key={i}>{row.map((v, j) => <td key={j}>{v}</td>)}{m.reply.table.rowActions?.some(Boolean) && <td>{m.reply.table.rowActions[i] ? <button type='button' className='mappy-chip' disabled={busy} aria-label={m.reply.table.rowActions[i].label} onClick={() => props.onAction(m.reply.table.rowActions[i])}>Show</button> : '—'}</td>}</tr>)}</tbody>
               </table>
-              <button type='button' className='mappy-btn' onClick={() => download(tableCsv(m.reply!.table!.columns, m.reply!.table!.rows), 'mappy-table.csv', 'text/csv;charset=utf-8')}>Save these rows as CSV</button>
+              {!props.noDownloads && <button type='button' className='mappy-btn' onClick={() => download(tableCsv(m.reply!.table!.columns, m.reply!.table!.rows), 'mappy-table.csv', 'text/csv;charset=utf-8')}>Save these rows as CSV</button>}
             </div>}
             {!typingNow(m) && m.reply?.image && /^(data:image\/(png|jpe?g|gif|webp);base64,|https:\/\/)/.test(m.reply.image.src) && <img className='mappy-img' src={m.reply.image.src} alt={m.reply.image.alt} style={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 6, margin: '6px 0' }} />}
             {!typingNow(m) && (m.reply?.note || m.reply?.rate) && <div className='mappy-note'>

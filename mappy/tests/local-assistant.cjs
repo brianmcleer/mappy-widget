@@ -1816,6 +1816,11 @@ test('Claude through the GIS server answers inside the chat, with history and li
   assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n)
   await helper.respond('ask claude about parcel 2945-143-08-002 and permit 20261117000123')
   assert.equal(calls.filter(c => c.name === 'ask_assistant').length, n + 1, 'parcel and permit numbers are not private numbers')
+  // A question in another language that Claude answers gets no "I read that as" note.
+  answer = { content: [{ type: 'text', text: 'Hay tres parques.' }], structuredContent: { answer: 'Hay tres parques.' }, isError: false }
+  const es = await mind.respond('¿cuántos parques hay en la ciudad?')
+  assert.match(es.text, /Hay tres parques/)
+  assert.doesNotMatch(es.text, /I read that as/)
   // Server limits read plainly, even when he was only stuck.
   answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
   assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)
@@ -1933,6 +1938,16 @@ test('feelings in the chat: moods, a remembered name, and a milestone line', asy
   const plainMind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', fun: false })
   assert.notEqual((await plainMind.respond('rough day')).mood, 'hug')
   assert.equal(plainMind.welcome(), '')
+})
+
+test('"clear the filter" clears the map filter even when a data answer is on the table', async () => {
+  const { live, mind, layer } = fixture()
+  layer.visible = true
+  await mind.respond('count parcels by owner')
+  await mind.respond('only show parcels over 2 acres on the map')
+  assert.ok(live.filtered().length, 'a map filter is on')
+  const r = await mind.respond('clear the filter')
+  assert.equal(live.filtered().length, 0, r.text)
 })
 
 test('census and place-in-numbers questions answer from the saved facts', async () => {

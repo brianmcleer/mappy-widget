@@ -527,7 +527,8 @@ export class Mind {
     // Only mention real fixes, not "whats" to "what's".
     const fixed = read.swaps.filter(([a, b]) => a.replace(/['’]/g, '').toLowerCase() !== b.replace(/['’]/g, '').toLowerCase())
     this.lastReading = { input, read: read.text || input, swaps: fixed }
-    if (!fixed.length || reply.mood === 'sleep') return reply
+    // An answer from Claude was to the words as typed (any language), so there is no reading to report.
+    if (!fixed.length || reply.mood === 'sleep' || (this.ctx.serverAssistant && reply.sources?.[0]?.title === this.ctx.serverAssistant.label)) return reply
     return { ...reply, text: `${reply.text}\n\n(I read that as “${read.text.replace(/[*_`]/g, '')}”.)` }
   }
 
@@ -1950,7 +1951,8 @@ export class Mind {
       const said = input.trim().replace(/[.!?]+$/, '').toLowerCase()
       const op: TaskOperation | null = /^(?:use|search|query) (?:the )?(?:whole|entire|full) layer$/.test(said) ? 'all'
         : /^(?:use|search|query) (?:the )?current (?:map )?view$|^(?:only )?in (?:the current )?view$/.test(said) ? 'view'
-          : /^(?:remove|clear|drop) (?:my |the )?filter$/.test(said) ? 'unfilter'
+          // "Clear the filter" means the one on the map when there is one; the task's own filter otherwise.
+          : /^(?:remove|clear|drop) (?:my |the )?filter$/.test(said) && !this.ctx.live.filtered().length ? 'unfilter'
             : /^(?:refresh|rerun|run it again|update) (?:the )?(?:task|results?)?$|^refresh$/.test(said) ? 'refresh' : null
       if (op) return this.runTask(this.dataTask.sequence, op)
     }

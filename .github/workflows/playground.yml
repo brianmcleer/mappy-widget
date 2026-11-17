@@ -1,0 +1,30 @@
+# Every push and pull request: build the playground from the widget's source and talk to Mappy in a real browser.
+name: Playground
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  playground:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Build
+        working-directory: demo
+        run: |
+          npm ci --no-audit --no-fund
+          node build.mjs
+      - name: Browser test
+        working-directory: demo
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@1
+          npx playwright install --with-deps chromium
+          node e2e.mjs

@@ -8,6 +8,8 @@ Discussion, questions and ideas: [Mappy on Esri Community](https://community.esr
 
 Everything runs in the browser. There is no model download, API key, outside AI service or LLM server; it is a local command and retrieval assistant that works with the app's own ArcGIS services. Telemetry is off by default.
 
+Want to try him without ArcGIS? The [playground](demo/README.md) builds one web page that runs the widget's own code on a made-up town.
+
 The downloadable widget lives in the `mappy` subfolder. See [mappy/README.md](mappy/README.md) for the feature list, setup and install steps, and [mappy/docs/local-assistant.md](mappy/docs/local-assistant.md) for what users can ask.
 
 ## Always improving: the language pack
