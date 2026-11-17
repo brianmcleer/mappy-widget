@@ -81,7 +81,7 @@ export interface MindContext {
   /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
   assistant?: AssistantPort | null
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
-  serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean } | null
+  serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean, note?: string } | null
   /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
   waiting?: (note: string) => void
   /** Where the person is (the device's location), when they allow it. */
@@ -667,6 +667,8 @@ export class Mind {
     }
     if (actions.length) reply.actions = actions
     if (followups.length) reply.suggest = followups
+    // Say plainly that this one came from an AI.
+    if (sa.note) reply.note = clip(sa.note, 200)
     // A chart or a small table Claude built from what it looked up.
     const chartRows = (Array.isArray(data.chart?.rows) ? data.chart.rows : []).filter((r: any) => r && typeof r.label === 'string' && Number.isFinite(r.value)).slice(0, 12)
       .map((r: any) => ({ label: clip(r.label, 40), value: Number(r.value) }))

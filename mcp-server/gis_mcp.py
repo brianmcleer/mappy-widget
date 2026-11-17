@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.11.1'
+VERSION = '1.12.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -98,6 +98,8 @@ DEFAULTS = {
         'max_tokens': 1200,
         'max_steps': 6,
         'timeout_seconds': 60,
+        'total_seconds': 95,
+        'ca_bundle': '',
         'require_token': True,
         'per_person_per_hour': 30,
         'per_day': 1000,
@@ -1897,7 +1899,7 @@ class Assistant:
             try:
                 with open(self.ledger_path, 'r', encoding='utf-8') as f:
                     raw = json.load(f)
-                self.ledger = {d: {k: int(v.get(k) or 0) for k in ('questions', 'input', 'output', 'cached')} for d, v in raw.items() if re.match(r'^\d{4}-\d{2}-\d{2}$', str(d)) and isinstance(v, dict)}
+                self.ledger = {d: {k: int(v.get(k) or 0) for k in ('questions', 'input', 'output', 'cached', 'written')} for d, v in raw.items() if re.match(r'^\d{4}-\d{2}-\d{2}$', str(d)) and isinstance(v, dict)}
             except (OSError, ValueError):
                 self.ledger = {}
 
@@ -1943,12 +1945,13 @@ class Assistant:
         pi, po, pc = (float(self.a.get(k) or 0) for k in ('price_per_mtok_in', 'price_per_mtok_out', 'price_per_mtok_cached'))
         if not (pi or po):
             return None
-        return round((row['input'] * pi + row['output'] * po + row['cached'] * pc) / 1e6, 4)
+        # Writing to the cache costs a quarter more than plain input; reading it back costs far less.
+        return round((row['input'] * pi + int(row.get('written') or 0) * pi * 1.25 + row['output'] * po + row['cached'] * pc) / 1e6, 4)
 
     def _summary(self, rows):
-        out = {'questions': sum(r['questions'] for r in rows), 'input_tokens': sum(r['input'] for r in rows),
+        out = {'questions': sum(r['questions'] for r in rows), 'input_tokens': sum(r['input'] + int(r.get('written') or 0) for r in rows),
                'output_tokens': sum(r['output'] for r in rows), 'cached_input_tokens': sum(r['cached'] for r in rows)}
-        cost = self._cost({'input': out['input_tokens'], 'output': out['output_tokens'], 'cached': out['cached_input_tokens']})
+        cost = self._cost({'input': sum(r['input'] for r in rows), 'written': sum(int(r.get('written') or 0) for r in rows), 'output': out['output_tokens'], 'cached': out['cached_input_tokens']})
         if cost is not None:
             out['estimated_cost'] = cost
         return out
@@ -1966,7 +1969,8 @@ class Assistant:
     def _spent(self, usage):
         with self.lock:
             row = self._day()
-            row['input'] += int(usage.get('input_tokens') or 0) + int(usage.get('cache_creation_input_tokens') or 0)
+            row['input'] += int(usage.get('input_tokens') or 0)
+            row['written'] = int(row.get('written') or 0) + int(usage.get('cache_creation_input_tokens') or 0)
             row['cached'] += int(usage.get('cache_read_input_tokens') or 0)
             row['output'] += int(usage.get('output_tokens') or 0)
             self._save()
@@ -2080,7 +2084,7 @@ class Assistant:
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
             # A spending guard: stop for the day once this many tokens (in and out) were used.
             budget = int(self.a.get('max_tokens_per_day') or 0)
-            if budget and row['input'] + row['output'] >= budget:
+            if budget and row['input'] + int(row.get('written') or 0) + row['output'] >= budget:
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
             recent = [t for t in self.hits.get(who, []) if now - t < 3600]
             limit = int(self.a.get('anonymous_per_hour') or 5) if anonymous else int(self.a.get('per_person_per_hour') or 30)
@@ -2099,7 +2103,10 @@ class Assistant:
         names = self.layers.names()
         layer_line = ('Layers you can use: %s.' % ', '.join(names[:150])) if names else ''
         return ('You are %s, answering questions from people using a map app run by %s. Use the tools to look up real data before answering; '
-                'never guess a number, owner, zone or date. You can only read data: if someone asks to change, add or delete anything, say you '
+                'never guess a number, owner, zone or date. Which tool: identify for "what is at this address" (parcel, owner, zoning, districts); '
+                'nearest_feature and features_near for closest and within-a-distance; describe_layer first and then query_layer for counts, sums, '
+                'averages, dates and filters; summarize_layer for a quick count by one field; find_features to look something up by name or number. '
+                'Distances are in feet. If a layer name is unclear, call list_layers. You can only read data: if someone asks to change, add or delete anything, say you '
                 'cannot, and that the GIS team can help. Legal or permit questions: give what the data says and suggest confirming with the '
                 'department. You are inside a small chat beside a map: you cannot make files, pictures, maps or web pages; say so in a few words '
                 'when asked, and give what the data can tell instead. When the answer is about a specific spot, call map_show_place so the person '
@@ -2114,21 +2121,29 @@ class Assistant:
                 'ask next, separated by " | ". %s %s'
                 % (self.label, org, layer_line, extra)).strip()
 
-    def _post(self, body):
+    def _post(self, body, timeout=None):
         """One call to the API; a busy or failing moment is tried once more after a short wait."""
         try:
-            return self._post_once(body)
+            return self._post_once(body, timeout)
         except ToolError as e:
             if not getattr(e, 'retry', False):
                 raise
             time.sleep(max(0.0, min(10.0, float(self.a.get('retry_wait_seconds') or 0))))
-            return self._post_once(body)
+            return self._post_once(body, timeout)
 
-    def _post_once(self, body):
+    def _post_once(self, body, timeout=None):
         req = urllib.request.Request(self.a.get('api_url') or 'https://api.anthropic.com/v1/messages', data=json.dumps(body).encode('utf-8'), method='POST', headers={
             'content-type': 'application/json', 'x-api-key': self.key, 'anthropic-version': ANTHROPIC_VERSION})
+        # On a network that inspects HTTPS, the organization's own root certificate goes in ca_bundle.
+        ctx = None
+        bundle = self.a.get('ca_bundle')
+        if bundle:
+            try:
+                ctx = ssl.create_default_context(cafile=bundle)
+            except (OSError, ssl.SSLError):
+                raise ToolError('%s is not set up correctly on the server (assistant.ca_bundle could not be read).' % self.label)
         try:
-            with urllib.request.urlopen(req, timeout=float(self.a.get('timeout_seconds') or 60)) as res:
+            with urllib.request.urlopen(req, timeout=max(3.0, float(timeout or self.a.get('timeout_seconds') or 60)), context=ctx) as res:
                 return json.loads(res.read(5_000_000).decode('utf-8'))
         except urllib.error.HTTPError as e:
             try:
@@ -2147,7 +2162,14 @@ class Assistant:
             raise ToolError('%s could not answer that one.' % self.label)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             log.warning('assistant API unreachable: %s', e)
-            raise ToolError('The server could not reach %s. Please try again later.' % self.label)
+            reason = getattr(e, 'reason', e)
+            if isinstance(reason, ssl.SSLCertVerificationError) or 'CERTIFICATE_VERIFY_FAILED' in str(e):
+                raise ToolError('The server could not reach %s: the secure connection was not trusted. If this network inspects HTTPS, set assistant.ca_bundle to the organization\'s root certificate file.' % self.label)
+            if isinstance(reason, TimeoutError) or 'timed out' in str(e).lower():
+                err = ToolError('%s took too long to answer. Please try again.' % self.label)
+                err.retry = False
+                raise err
+            raise ToolError('The server could not reach %s (api.anthropic.com over HTTPS, port 443). Please try again later.' % self.label)
 
     def ask(self, args, token, referer, client=None):
         if not self.enabled:
@@ -2195,20 +2217,41 @@ class Assistant:
         usage = {'input_tokens': 0, 'output_tokens': 0}
         started = time.time()
         steps = max(1, min(10, int(self.a.get('max_steps') or 6)))
-        for step in range(steps + 1):
+        # The whole answer has to fit inside the web server's request limit (two minutes on IIS).
+        deadline = started + max(20.0, float(self.a.get('total_seconds') or 95))
+        nudged = False
+        step = -1
+        while True:
+            step += 1
+            left = deadline - time.time()
+            # Out of steps or nearly out of time: the tools stay listed (the API wants the same list
+            # while tool results are in the conversation) but Claude is told to answer now.
+            last = step >= steps or left < 25
+            if left < 4:
+                raise ToolError('%s ran out of time on that one. Please ask a narrower question.' % self.label)
             body = {'model': self.a.get('model') or 'claude-sonnet-5-5', 'max_tokens': max(200, min(4000, int(self.a.get('max_tokens') or 1200))),
-                    'system': system, 'messages': messages}
-            if tools and step < steps:
-                body['tools'] = tools
-            out = self._post(body)
+                    'system': system, 'messages': messages, 'tools': tools}
+            if last:
+                body['tool_choice'] = {'type': 'none'}
+            out = self._post(body, timeout=min(float(self.a.get('timeout_seconds') or 60), left - 2))
             spent = out.get('usage') or {}
             self._spent(spent)
             usage['input_tokens'] += int(spent.get('input_tokens') or 0) + int(spent.get('cache_creation_input_tokens') or 0) + int(spent.get('cache_read_input_tokens') or 0)
             usage['output_tokens'] += int(spent.get('output_tokens') or 0)
             blocks = out.get('content') or []
             calls = [b for b in blocks if b.get('type') == 'tool_use']
-            if not calls or out.get('stop_reason') != 'tool_use':
+            stop = out.get('stop_reason')
+            if stop == 'refusal':
+                raise ToolError('%s could not help with that one. Please ask it another way.' % self.label)
+            if not calls or stop != 'tool_use' or last:
                 answer = '\n\n'.join(b.get('text', '') for b in blocks if b.get('type') == 'text').strip()
+                if stop in ('max_tokens', 'model_context_window_exceeded') and answer:
+                    answer += ' …'
+                if not answer and not nudged and not last and stop == 'end_turn' and deadline - time.time() > 25:
+                    # Now and then the turn ends with nothing said after the tool results: ask once more.
+                    nudged = True
+                    messages.append({'role': 'user', 'content': 'Please answer the question now, from what you found.'})
+                    continue
                 if not answer:
                     raise ToolError('%s did not come back with an answer. Please ask again in other words.' % self.label)
                 # The last line "Next: a | b | c" becomes follow-up suggestions, not part of the answer.
@@ -2231,8 +2274,12 @@ class Assistant:
                 return answer, data
             messages.append({'role': 'assistant', 'content': blocks})
             results = []
-            for c in calls[:6]:
+            for n, c in enumerate(calls):
                 name = c.get('name')
+                if n >= 8:
+                    # Every tool call needs an answer, even the ones past the limit.
+                    results.append({'type': 'tool_result', 'tool_use_id': c.get('id'), 'content': 'Too many lookups at once; this one was skipped.', 'is_error': True})
+                    continue
                 if name in self.MAP_TOOL_NAMES:
                     content, error = self._map_call(name, c.get('input') if isinstance(c.get('input'), dict) else {}, shown, extras)
                     results.append({'type': 'tool_result', 'tool_use_id': c.get('id'), 'content': content, 'is_error': error})

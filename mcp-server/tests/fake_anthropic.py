@@ -46,14 +46,38 @@ def messages():
                                     {'type': 'tool_use', 'id': 'tu_l', 'name': 'map_show_layer', 'input': {'layer': 'Zoning'}},
                                     {'type': 'tool_use', 'id': 'tu_bad', 'name': 'map_show_place', 'input': {'latitude': 999, 'longitude': 0, 'label': 'nowhere'}}]})
     last = body['messages'][-1]
-    if isinstance(last['content'], list) and last['content'] and last['content'][0].get('type') == 'tool_result':
+    # What was asked first in this conversation (the question; later turns are tool results).
+    asked = next((m['content'] for m in body['messages'] if m['role'] == 'user' and isinstance(m['content'], str)), '')
+    said = lambda t, stop='end_turn': jsonify({'id': 'mx', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': stop, 'usage': USAGE, 'content': [{'type': 'text', 'text': t}] if t else []})
+    forced = (body.get('tool_choice') or {}).get('type') == 'none'
+    after_tools = isinstance(last['content'], list) and last['content'] and last['content'][0].get('type') == 'tool_result'
+    if after_tools:
+        # Every tool call in the turn before must have exactly one result, and the tool list must still be there.
+        want = [b['id'] for b in body['messages'][-2]['content'] if b.get('type') == 'tool_use']
+        got = [b['tool_use_id'] for b in last['content']]
+        assert want == got, 'one tool_result per tool_use, in order'
+        assert body.get('tools'), 'the tool list stays while tool results are in the conversation'
+    if 'refuse' in asked:
+        return said('', 'refusal')
+    if 'truncate' in asked:
+        return said('A long answer that got cut', 'max_tokens')
+    if 'loop' in asked and not forced:
+        return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use', 'usage': USAGE,
+                        'content': [{'type': 'tool_use', 'id': 'tu_loop%d' % len(body['messages']), 'name': 'list_layers', 'input': {}}]})
+    if 'loop' in asked and forced:
+        return said('Stopped looking and answered.')
+    if 'many lookups' in asked and not after_tools:
+        return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use', 'usage': USAGE,
+                        'content': [{'type': 'tool_use', 'id': 'tu_m%d' % i, 'name': 'list_layers', 'input': {}} for i in range(10)]})
+    if 'quiet' in asked and after_tools:
+        return said('')
+    if 'quiet' in asked and isinstance(last['content'], str) and 'answer the question now' in last['content']:
+        return said('Here it is after a nudge.')
+    if after_tools:
         result = last['content'][0]['content']
         return jsonify({'id': 'm2', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn', 'usage': USAGE,
                         'content': [{'type': 'text', 'text': 'From the map data: ' + result.split('\n')[0]}]})
-    if 'loop' in text:
-        return jsonify({'id': 'm1', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'tool_use',
-                        'content': [{'type': 'tool_use', 'id': 'tu_loop', 'name': 'list_layers', 'input': {}}]})
-    if not body.get('tools') or 'no tools' in text:
+    if forced or 'no tools' in text:
         return jsonify({'id': 'm0', 'type': 'message', 'role': 'assistant', 'model': body['model'], 'stop_reason': 'end_turn', 'usage': USAGE,
                         'content': [{'type': 'text', 'text': 'Hello from the fake.'}]})
     names = [t['name'] for t in body['tools']]

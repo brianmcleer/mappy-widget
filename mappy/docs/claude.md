@@ -46,7 +46,9 @@ Claude can only read. Every tool it has is read-only, and map buttons do nothing
 4. Restart the server. `/health` shows `"status": "ready"`.
 5. Test from the server: `python gis_mcp.py --config config.json --ask "how many fire hydrants are there"`.
 6. Review real answers before going live: `python gis_mcp.py --config config.json --eval questions.txt` writes every answer to a CSV.
-7. In Mappy's settings: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude**.
+7. In Mappy's settings: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude** and **Ask Claude a test question**.
+
+The server needs outbound HTTPS to `api.anthropic.com`. Every answer from Claude carries a small note saying it is an AI answer; reword it in settings.
 
 ## 2. Claude, opened in the person's own Claude
 

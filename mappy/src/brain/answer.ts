@@ -27,6 +27,8 @@ export interface Reply {
     | 'calling' | 'camera' | 'route' | 'pindrop' | 'measure' | 'chart' | 'idea' | 'layers' | 'treasure' | 'boat' | 'kite' | 'juggle' | 'coffee'
   /** A small bar chart of the table (labels and numbers), drawn by the chat. */
   chart?: { title?: string, rows: Array<{ label: string, value: number }>, unit?: string }
+  /** A small muted line under the answer ("AI answer. Check anything important."). */
+  note?: string
   /** Feature search results, filled by the runtime. */
   results?: any[]
   list?: ListRow[]

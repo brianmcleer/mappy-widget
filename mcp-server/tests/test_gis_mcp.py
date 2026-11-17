@@ -439,7 +439,10 @@ class GisMcpTest(unittest.TestCase):
             app2 = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, max_steps=2)))).test_client()
             r = app2.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'ask_assistant', 'arguments': {'question': 'loop forever'}}}),
                           headers={'Content-Type': 'application/json', 'Origin': ORIGIN, 'Authorization': 'Bearer ' + TOKEN}).get_json()['result']
-            self.assertFalse(r['isError'], 'the last step is sent without tools, so it has to answer')
+            self.assertFalse(r['isError'], r)
+            self.assertEqual(r['structuredContent']['answer'], 'Stopped looking and answered.', 'the last step keeps the tools but tells Claude to answer')
+            self.assertEqual(fake_anthropic.STATE['calls'][-1]['body']['tool_choice'], {'type': 'none'})
+            self.assertEqual(r['structuredContent']['tools_used'], ['list_layers', 'list_layers'])
             # Buttons for the map, follow-up suggestions, a retry after a busy moment, and a kept answer.
             def ask(q, token):
                 return rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': q}}, token=token)
@@ -556,6 +559,26 @@ class GisMcpTest(unittest.TestCase):
             # A model the key cannot use reads as a setup problem.
             wrong = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, model='no-such-model')))).test_client()
             self.assertIn('model "no-such-model" is not available', ask_on(wrong, 'hello there')['content'][0]['text'])
+            # What the API can say besides an answer: a refusal, a cut-off answer, nothing at all, too many lookups.
+            deep = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, per_person_per_hour=50, cache_minutes=0)))).test_client()
+            self.assertIn('could not help with that one', ask_on(deep, 'please refuse this')['content'][0]['text'])
+            self.assertEqual(ask_on(deep, 'truncate this one')['structuredContent']['answer'], 'A long answer that got cut …')
+            self.assertEqual(ask_on(deep, 'a quiet one')['structuredContent']['answer'], 'Here it is after a nudge.')
+            many = ask_on(deep, 'many lookups at once')
+            self.assertFalse(many['isError'], many)
+            self.assertEqual(len(many['structuredContent']['tools_used']), 8, 'eight run, the rest are answered as skipped')
+            # Out of time: he says so instead of hanging.
+            slow = gis_mcp.Server(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, total_seconds=20))))
+            real_time = gis_mcp.time.time
+            try:
+                base = real_time()
+                ticks = iter([base, base] + [base + 30] * 50)
+                gis_mcp.time.time = lambda: next(ticks)
+                with self.assertRaises(gis_mcp.ToolError) as late:
+                    slow.assistant.ask({'question': 'loop forever'}, TOKEN, None, 'x')
+                self.assertIn('ran out of time', late.exception.said)
+            finally:
+                gis_mcp.time.time = real_time
             # A wrong key reads as a setup problem.
             os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')

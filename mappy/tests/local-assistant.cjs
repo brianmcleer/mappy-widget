@@ -1714,6 +1714,9 @@ test('Claude through the GIS server answers inside the chat, with history and li
   assert.match(r.text, /\*\*31\*\* hydrants/)
   assert.equal((r.actions || []).length, 0)
   assert.deepEqual(r.sources, [{ title: 'Claude', detail: 'using City GIS: features near' }])
+  assert.equal(r.note, undefined, 'no note unless the builder set one')
+  const noted = new Mind({ ...base, mcp: port, serverAssistant: { label: 'Claude', note: 'AI answer. Check anything important.' } })
+  assert.equal((await noted.respond('ask claude how many parks are there')).note, 'AI answer. Check anything important.')
   // A follow-up carries the earlier turn.
   answer = { content: [{ type: 'text', text: 'Most are cast iron.' }], structuredContent: { answer: 'Most are cast iron.', tools_used: [] }, isError: false }
   const f = await mind.respond('ask claude what are they made of')

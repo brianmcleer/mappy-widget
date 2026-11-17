@@ -85,6 +85,8 @@ Press **Connect and list tools**. Every tool is read-only, so all of them start 
 
 Answers can carry buttons for the map (Claude calls `map_show_place`, `map_show_layer` or `map_suggest_command`; nothing changes until the person clicks), a small chart (`show_chart`) or table (`show_table`), and up to three follow-up questions. Claude answers in the language of the question. To keep the cost down, the instructions and tool list are marked cacheable (repeat questions pay a fraction of the input), the same question from the same person within `cache_minutes` is answered from memory, and a busy moment is tried once more before giving up. `/health` shows today's questions and tokens under `assistant.today`.
 
+What the server needs on the network: outbound HTTPS (port 443) to `api.anthropic.com`. Behind a proxy, set `HTTPS_PROXY` for the app pool. If the network inspects HTTPS and the connection is "not trusted", save the organization's root certificate as a PEM file and point `assistant.ca_bundle` at it. A whole answer is kept under `total_seconds` (95) so it fits inside IIS's two-minute request limit; when time or steps run short, Claude is told to answer with what it has.
+
 Before going live, review real answers: put the questions people ask in a text file, one per line (see `eval-questions.example.txt`), and run `python gis_mcp.py --config config.json --eval questions.txt`. It writes every answer, the tools used, the seconds and the tokens to a CSV next to the file.
 
 Daily questions and tokens are saved in `logs/assistant-usage.json`, so the limits hold across restarts. `/health` shows `today` and `this_month`; set the `price_per_mtok_*` keys to your plan's prices to see an estimated cost there. With `require_token` off (a public app), people are told apart by address and get `anonymous_per_hour` questions each.
@@ -156,7 +158,9 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `oauth_authorization_servers` | none | Sign-in servers MCP clients should use; turns on `/.well-known/oauth-protected-resource` |
 | `assistant.enabled` | false | Turns on `ask_assistant` (also needs the key) |
 | `assistant.api_key_env` | ANTHROPIC_API_KEY | The environment variable holding the Anthropic API key |
-| `assistant.model` | claude-sonnet-5-5 | The Claude model |
+| `assistant.model` | claude-sonnet-5-5 | The Claude model. `claude-haiku-5-5` is faster and cheaper; `claude-opus-5-5` is the most capable |
+| `assistant.total_seconds` | 95 | The most time one answer may take, start to finish |
+| `assistant.ca_bundle` | none | A PEM file with your organization's root certificate, for networks that inspect HTTPS |
 | `assistant.label` | Claude | Its name in answers |
 | `assistant.org_name` | the server name | Who runs the app, for Claude's instructions |
 | `assistant.extra_instructions` | none | Added to Claude's instructions (house style, departments to point to) |

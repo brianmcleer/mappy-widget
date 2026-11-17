@@ -45,6 +45,23 @@ export default function HelperSection (props: Props): any {
   const serverName = mcp?.label || mcp?.url || ''
   const [check, setCheck] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [trial, setTrial] = React.useState('')
+
+  // One real question through the server, to see an answer and how long it takes (a paid call).
+  const testQuestion = async () => {
+    if (!mcp?.url) return
+    setBusy(true); setTrial('Asking...')
+    const t0 = Date.now()
+    try {
+      const client = new McpClient(mcp, () => { try { return SessionManager.getInstance().getMainSession()?.token || null } catch (e) { return null } })
+      const r: any = await client.callTool('ask_assistant', { question: 'In one sentence, what can you help me find on this map?' }, 110000)
+      const said = Array.isArray(r?.content) ? r.content.filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join(' ').trim() : ''
+      const secs = ((Date.now() - t0) / 1000).toFixed(1)
+      setTrial(r?.isError ? (said || 'The server did not answer.') : `Answered in ${secs} seconds${r?.structuredContent?.usage ? ` (${r.structuredContent.usage.input_tokens} tokens in, ${r.structuredContent.usage.output_tokens} out)` : ''}: ${String(r?.structuredContent?.answer || said).slice(0, 400)}`)
+    } catch (e) {
+      setTrial(e?.message || String(e))
+    } finally { setBusy(false) }
+  }
 
   // Claude on the server: does the connected server offer ask_assistant?
   const checkServer = async () => {
@@ -101,6 +118,13 @@ export default function HelperSection (props: Props): any {
         <Hint>Off unless you turn it on. For questions about what is on screen ("what am I looking at", "which of these is biggest"), a small picture of the map goes to Claude with the question. Whatever is drawn on the map is in the picture, and a picture costs more than text.</Hint>
         <FullButton type='secondary' disabled={busy || !mcp?.url} onClick={checkServer}>{busy ? 'Checking...' : `Check that the server has ${name}`}</FullButton>
         {check && <Note tone={/^Ready/.test(check) ? 'ok' : busy ? 'info' : toneOf(check) === 'info' ? 'warn' : toneOf(check)}>{check}</Note>}
+        <FullButton type='secondary' disabled={busy || !mcp?.url} onClick={testQuestion}>{busy ? 'Asking...' : `Ask ${name} a test question`}</FullButton>
+        {trial && <Note tone={/^Answered/.test(trial) ? 'ok' : busy ? 'info' : 'warn'}>{trial}</Note>}
+        <SettingRow label={`Note under ${name}'s answers`} flow='wrap'>
+          <TextInput size='sm' style={full} key={'an' + (a.note ?? 'd')} defaultValue={a.note ?? 'AI answer from the GIS data. Check anything important before relying on it.'} aria-label='Note under the answers'
+            onAcceptValue={(v: string) => save({ note: String(v || '').trim() })} />
+        </SettingRow>
+        <Hint>A small line under every answer that came from {name}, so people know it is an AI answer. Empty shows none.</Hint>
         <Hint>Each answer is a paid call to the Claude API from the server; the server limits questions per person per hour and per day. The question, a line about where the map is, a few values of the feature under an open popup and the data the tools look up go to Anthropic. The same question asked again within a few minutes is answered from the server's memory at no cost; the server's /health page shows today's questions and tokens.</Hint>
       </React.Fragment>}
 

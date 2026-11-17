@@ -239,7 +239,7 @@ export default function Widget (props: Props): any {
     beacon: beaconRef.current,
     mcp,
     assistant,
-    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false, sharePicture: plain<any>(cfg.assistant)?.sharePicture === true } : null,
+    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false, sharePicture: plain<any>(cfg.assistant)?.sharePicture === true, note: plain<any>(cfg.assistant)?.note === undefined ? 'AI answer from the GIS data. Check anything important before relying on it.' : String(plain<any>(cfg.assistant)?.note || '') } : null,
     waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,
@@ -304,13 +304,13 @@ export default function Widget (props: Props): any {
     try {
       const saved = JSON.parse(store(chatKey, undefined, true) || '[]')
       if (!Array.isArray(saved) || !saved.length) return []
-      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^(?:https:\/\/|claude:\/\/claude\.ai\/)/.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
+      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), note: typeof m.reply.note === 'string' ? m.reply.note.slice(0, 200) : undefined, suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^(?:https:\/\/|claude:\/\/claude\.ai\/)/.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
       return list.length ? [...list, { id: msgSeq++, from: 'mappy', text: 'Welcome back! That was our chat before the page reloaded. What next?', ephemeral: true }] : []
     } catch (e) { return [] }
   })
   React.useEffect(() => {
     try {
-      const keep = messages.filter(m => !m.ephemeral).slice(-40).map(m => ({ from: m.from, text: m.text, reply: m.reply ? { text: m.reply.text, suggest: m.reply.suggest, actions: (m.reply.actions || []).filter(a => a.type === 'ask' || a.type === 'url').map(a => ({ type: a.type, q: a.q, url: a.url, label: a.label })) } : undefined }))
+      const keep = messages.filter(m => !m.ephemeral).slice(-40).map(m => ({ from: m.from, text: m.text, reply: m.reply ? { text: m.reply.text, note: m.reply.note, suggest: m.reply.suggest, actions: (m.reply.actions || []).filter(a => a.type === 'ask' || a.type === 'url').map(a => ({ type: a.type, q: a.q, url: a.url, label: a.label })) } : undefined }))
       store(chatKey, keep.length ? JSON.stringify(keep) : null, true)
     } catch (e) { }
   }, [messages])
