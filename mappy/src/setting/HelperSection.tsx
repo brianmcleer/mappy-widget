@@ -8,7 +8,7 @@
 import { React } from 'jimu-core'
 import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
 import { Select, Option, Switch, TextInput } from 'jimu-ui'
-import { Hint, Note, Sub } from './ui'
+import { Hint, Note, Sub, LinkButton } from './ui'
 import { helperMode, assistantPort, handoffPrompt, handoffUrl, safeAssistantUrl, DEFAULT_ASSISTANT_LABEL, DEFAULT_ASSISTANT_URL } from '../brain/handoff'
 import type { HelperMode } from '../brain/handoff'
 
@@ -87,7 +87,7 @@ export default function HelperSection (props: Props): any {
         {preview && <React.Fragment>
           <Sub>What gets written</Sub>
           <SettingRow><div className='ms-preview' style={{ whiteSpace: 'pre-wrap' }}>{preview}</div></SettingRow>
-          {link && <SettingRow><a href={link} target='_blank' rel='noopener noreferrer' style={{ fontSize: 12 }}>{`Try it: open this sample in ${port?.label}`}</a></SettingRow>}
+          {link && <LinkButton href={link}>{`Try it: open this sample in ${port?.label}`}</LinkButton>}
         </React.Fragment>}
       </React.Fragment>}
     </SettingSection>

@@ -5,7 +5,7 @@
 */
 import { React, ReactRedux, Immutable } from 'jimu-core'
 import { SettingSection, SettingRow, MapWidgetSelector } from 'jimu-ui/advanced/setting-components'
-import { Switch, TextInput, TextArea, Select, Option, Button, NumericInput, Checkbox, Label } from 'jimu-ui'
+import { Switch, TextInput, TextArea, Select, Option, Button, NumericInput, Checkbox, Label, CollapsablePanel } from 'jimu-ui'
 import type { IMConfig } from '../config'
 import type { Brain } from '../brain/types'
 import type { FaqEntry } from '../brain/admin'
@@ -245,12 +245,13 @@ export default function Setting (props: SettingProps): any {
         </ButtonPair>
         {(log.length > 0 || (brain?.notes?.length || 0) > 0) && (
           <SettingRow>
-            <details style={row}>
-              <summary style={{ cursor: 'pointer', fontSize: 12 }}>{__t('log')}</summary>
-              <ul style={{ fontSize: 11, paddingLeft: 16, margin: '6px 0', maxHeight: 180, overflowY: 'auto' }}>
-                {(log.length ? log : brain?.notes || []).map((l, i) => <li key={i}>{l}</li>)}
-              </ul>
-            </details>
+            <div style={row}>
+              <CollapsablePanel label={__t('log')} level={2} type='default' defaultIsOpen={false}>
+                <ul style={{ fontSize: 11, paddingLeft: 16, margin: '6px 0', maxHeight: 180, overflowY: 'auto' }}>
+                  {(log.length ? log : brain?.notes || []).map((l, i) => <li key={i}>{l}</li>)}
+                </ul>
+              </CollapsablePanel>
+            </div>
           </SettingRow>
         )}
       </SettingSection>

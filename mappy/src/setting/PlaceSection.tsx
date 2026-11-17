@@ -82,14 +82,12 @@ export default function PlaceSection (props: Props): any {
         <TextArea height={130} style={full} value={props.localFacts || ''} placeholder={'One fact per line. "Fun fact" mixes these in with his map facts.'} aria-label='Local fun facts' onChange={(e: any) => props.set('localFacts', e.target.value)} />
       </SettingRow>
       <SettingRow flow='wrap' label='Read these too (Wikipedia always)'>
-        <div role='group' aria-label='Fact sources' style={{ width: '100%' }}>
+        <div role='group' aria-label='Fact sources' className='ms-checks'>
           {SOURCES.map(src => (
-            <div key={src.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, margin: '3px 0' }}>
-              <Checkbox id={'mf-' + src.id} checked={chosen.includes(src.id)} onChange={(e: any, c: boolean) => toggle(src.id, c)} />
-              <Label for={'mf-' + src.id} style={{ margin: 0, fontSize: 12, lineHeight: 1.3 }}>
-                <b>{src.name}</b> ({src.license}{src.us ? ', US only' : ''}){'. '}{src.note}
-              </Label>
-            </div>
+            <Label key={src.id} className='ms-check'>
+              <Checkbox checked={chosen.includes(src.id)} onChange={(e: any, c: boolean) => toggle(src.id, c)} />
+              <span><b>{src.name}</b> ({src.license}{src.us ? ', US only' : ''}){'. '}{src.note}</span>
+            </Label>
           ))}
         </div>
       </SettingRow>

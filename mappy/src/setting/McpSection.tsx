@@ -5,7 +5,7 @@
 */
 import { React, SessionManager } from 'jimu-core'
 import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
-import { Button, TextInput, Select, Option, Switch, Checkbox } from 'jimu-ui'
+import { Button, TextInput, Select, Option, Switch, Checkbox, Label } from 'jimu-ui'
 import { McpClient, safeServerUrl } from '../runtime/mcp'
 import type { McpSettings } from '../runtime/mcp'
 import { changesData, toolLabel } from '../brain/mcpTools'
@@ -79,9 +79,9 @@ export default function McpSection (props: Props): any {
           onChange={(e: any) => setUrl(e.target.value.trim())} onAcceptValue={(v: string) => { if (safeServerUrl(v)) save({ url: v.trim() }) }} />
       </SettingRow>
       <SettingRow>
-        <div className='ms-inline' style={{ gap: 12 }}>
-          <Button type='tertiary' size='sm' style={{ padding: 0, height: 'auto' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
-          {cfg.url && <Button type='tertiary' size='sm' style={{ padding: 0, height: 'auto' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
+        <div className='ms-inline' style={{ gap: 12, flexWrap: 'wrap' }}>
+          <Button type='link' size='sm' style={{ padding: 0, height: 'auto' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
+          {cfg.url && <Button type='link' size='sm' style={{ padding: 0, height: 'auto' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
         </div>
       </SettingRow>
 
@@ -125,11 +125,11 @@ export default function McpSection (props: Props): any {
                 <li key={t.name} className='ms-tool'>
                   <div className='ms-tool-head'>
                     <Checkbox id={id} checked={p.enabled} onChange={(e: any) => setPref(t.name, { enabled: e.target.checked })} />
-                    <label className='ms-tool-name' htmlFor={id} title={t.name}>{toolLabel(t)}</label>
-                    <label className='ms-tool-ask' title={risky ? 'Tools that could change data always ask first' : 'Show a Run button first'}>
+                    <Label className='ms-tool-name' for={id} title={t.name}>{toolLabel(t)}</Label>
+                    <Label className='ms-tool-ask' title={risky ? 'Tools that could change data always ask first' : 'Show a Run button first'}>
                       <Checkbox checked={risky || !!p.confirm} disabled={risky || !p.enabled} onChange={(e: any) => setPref(t.name, { confirm: e.target.checked })} />
                       Ask first
-                    </label>
+                    </Label>
                   </div>
                   {t.description && <div className='ms-tool-desc' title={t.description}>{clip(t.description, 200)}</div>}
                   {risky && <span className='ms-badge'>Can change data</span>}
