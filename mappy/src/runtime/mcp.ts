@@ -80,11 +80,11 @@ export class McpClient {
     return h
   }
 
-  private async post (method: string, params: any, notify = false, retried = false): Promise<any> {
+  private async post (method: string, params: any, notify = false, retried = false, timeout = TIMEOUT): Promise<any> {
     const id = notify ? undefined : ++this.seq
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
     // One timer covers the whole exchange, body included: a server may keep the stream open.
-    const timer = ctrl ? setTimeout(() => ctrl.abort(), TIMEOUT) : null
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeout) : null
     try {
       return await this.exchange(method, params, id, notify, retried, ctrl)
     } catch (e) {
@@ -184,9 +184,10 @@ export class McpClient {
     return out
   }
 
-  async callTool (name: string, args: { [k: string]: any }): Promise<any> {
+  /** A tool call; `timeout` (ms) is longer for tools that think in steps, such as ask_assistant. */
+  async callTool (name: string, args: { [k: string]: any }, timeout = TIMEOUT): Promise<any> {
     await this.connect()
-    return this.post('tools/call', { name, arguments: args })
+    return this.post('tools/call', { name, arguments: args }, false, false, Math.max(5000, Math.min(180000, timeout)))
   }
 
   /** Ends the session politely (optional for the server). */

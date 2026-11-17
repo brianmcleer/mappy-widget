@@ -287,7 +287,7 @@ export default function Setting (props: SettingProps): any {
 
       <HelperSection helper={config.helper} assistant={config.assistant} mcp={config.mcp} appTitle={String(appConfig?.attributes?.title || '')} set={set} />
 
-      <McpSection value={config.mcp} active={helperMode(config.helper, plain<any>(config.mcp)) === 'mcp'} onChange={(v: any) => set('mcp', v)} />
+      <McpSection value={config.mcp} active={['mcp', 'claude'].includes(helperMode(config.helper, plain<any>(config.mcp)))} onChange={(v: any) => set('mcp', v)} />
 
       <Group title='Custom answers and notes'>
       <SettingSection>

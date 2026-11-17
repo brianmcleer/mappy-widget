@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.6.0'
+VERSION = '1.7.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -86,7 +86,24 @@ DEFAULTS = {
     'identify_point_tolerance_feet': 25,
     'refresh_minutes': 60,
     'log_dir': 'logs',
-    'log_days': 30
+    'log_days': 30,
+    # Claude on this server (ask_assistant). Off unless enabled here and the key is in the
+    # environment variable named by api_key_env. The key never leaves this server.
+    'assistant': {
+        'enabled': False,
+        'label': 'Claude',
+        'api_key_env': 'ANTHROPIC_API_KEY',
+        'api_url': 'https://api.anthropic.com/v1/messages',
+        'model': 'claude-sonnet-5-5',
+        'max_tokens': 1200,
+        'max_steps': 6,
+        'timeout_seconds': 60,
+        'require_token': True,
+        'per_person_per_hour': 30,
+        'per_day': 1000,
+        'org_name': '',
+        'extra_instructions': ''
+    }
 }
 
 SYSTEM_FIELDS = re.compile(r'^(objectid|fid|oid|shape|shape_length|shape_area|shape\.starea\(\)|shape\.stlength\(\)|st_area\(shape\)|st_length\(shape\)|globalid|created_user|created_date|last_edited_user|last_edited_date|gdb_.*)$', re.I)
@@ -119,6 +136,7 @@ def load_config(path):
             cfg.update(json.load(f))
     cfg['allowed_origins'] = [o.rstrip('/') for o in cfg.get('allowed_origins') or []]
     cfg['max_results'] = max(1, min(100, int(cfg.get('max_results') or 25)))
+    cfg['assistant'] = dict(DEFAULTS['assistant'], **(cfg.get('assistant') or {}))
     for key in ('portal_url', 'locator_url'):
         cfg[key] = (cfg.get(key) or '').rstrip('/')
     return cfg
@@ -1835,12 +1853,173 @@ class Upstream:
         return result
 
 
+# ---------------------------------------------------------------- Claude on the server (ask_assistant)
+
+ASK_TOOL = 'ask_assistant'
+ANTHROPIC_VERSION = '2023-06-01'
+
+
+class Assistant:
+    """Answers a plain-language question with Claude, using this server's own read-only GIS tools.
+    The Anthropic API key stays on the server (an environment variable); people never see it.
+    Only the question, a line about where the map is, a few earlier turns and the tool results
+    go to the API. Every tool Claude can call here is read-only, so it cannot change data."""
+
+    def __init__(self, cfg, tools, layers):
+        self.cfg = cfg
+        self.a = cfg.get('assistant') or {}
+        self.tools = tools
+        self.layers = layers
+        self.lock = threading.Lock()
+        self.hits = {}
+        self.day = ('', 0)
+
+    @property
+    def key(self):
+        return (os.environ.get(self.a.get('api_key_env') or 'ANTHROPIC_API_KEY') or '').strip()
+
+    @property
+    def enabled(self):
+        return bool(self.a.get('enabled')) and bool(self.key)
+
+    @property
+    def label(self):
+        return clean_text(self.a.get('label') or 'Claude', 40) or 'Claude'
+
+    def status(self):
+        if not self.a.get('enabled'):
+            return 'off'
+        return 'ready' if self.key else 'no key (set %s)' % (self.a.get('api_key_env') or 'ANTHROPIC_API_KEY')
+
+    def definition(self):
+        return {
+            'name': ASK_TOOL, 'title': 'Ask %s' % self.label,
+            'description': ('Ask %s a question in plain words. It answers with this server\'s GIS tools (addresses, what is at a place, '
+                            'closest features, layer queries and statistics) and explains the result. Read-only. Use for questions the other tools '
+                            'do not answer directly, or that need several steps.') % self.label,
+            'inputSchema': {'type': 'object', 'properties': {
+                'question': {'type': 'string', 'description': 'The question, as the person asked it.'},
+                'context': {'type': 'string', 'description': 'Where the map is: the place being looked at, the map center, the layers that are on (optional).'},
+                'history': {'type': 'array', 'maxItems': 4, 'description': 'Earlier turns, oldest first (optional).', 'items': {'type': 'object', 'properties': {
+                    'q': {'type': 'string'}, 'a': {'type': 'string'}}}}},
+                'required': ['question']},
+            'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True, 'title': 'Ask %s' % self.label}}
+
+    def _allow(self, who):
+        """Per person per hour, and per day for the whole server."""
+        now = time.time()
+        today = time.strftime('%Y-%m-%d')
+        with self.lock:
+            day, used = self.day
+            if day != today:
+                day, used = today, 0
+            if used >= int(self.a.get('per_day') or 1000):
+                raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
+            recent = [t for t in self.hits.get(who, []) if now - t < 3600]
+            if len(recent) >= int(self.a.get('per_person_per_hour') or 30):
+                raise ToolError('That is a lot of questions in an hour. Please wait a few minutes and ask again.')
+            recent.append(now)
+            self.hits[who] = recent
+            self.day = (day, used + 1)
+            if len(self.hits) > 5000:
+                self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 3600}
+
+    def _system(self):
+        org = clean_text(self.a.get('org_name') or self.cfg.get('name') or 'the organization', 80)
+        extra = clean_text(self.a.get('extra_instructions') or '', 2000)
+        names = self.layers.names()
+        layer_line = ('Layers you can use: %s.' % ', '.join(names[:150])) if names else ''
+        return ('You are %s, answering questions from people using a map app run by %s. Use the tools to look up real data before answering; '
+                'never guess a number, owner, zone or date. You can only read data: if someone asks to change, add or delete anything, say you '
+                'cannot, and that the GIS team can help. Legal or permit questions: give what the data says and suggest confirming with the '
+                'department. Answer in plain, short sentences (under 150 words), with a short list when it helps. Use **bold** for the key fact. '
+                'No tables, headings or code. Say which layer an answer came from. If the tools cannot answer, say so plainly. %s %s'
+                % (self.label, org, layer_line, extra)).strip()
+
+    def _post(self, body):
+        req = urllib.request.Request(self.a.get('api_url') or 'https://api.anthropic.com/v1/messages', data=json.dumps(body).encode('utf-8'), method='POST', headers={
+            'content-type': 'application/json', 'x-api-key': self.key, 'anthropic-version': ANTHROPIC_VERSION})
+        try:
+            with urllib.request.urlopen(req, timeout=float(self.a.get('timeout_seconds') or 60)) as res:
+                return json.loads(res.read(5_000_000).decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read(20000).decode('utf-8')).get('error', {}).get('type', '')
+            except Exception:
+                detail = ''
+            log.warning('assistant API HTTP %s %s', e.code, detail)
+            if e.code in (401, 403):
+                raise ToolError('%s is not set up correctly on the server (the API key was refused).' % self.label)
+            if e.code in (429, 529) or e.code >= 500:
+                raise ToolError('%s is busy right now. Please try again in a minute.' % self.label)
+            raise ToolError('%s could not answer that one.' % self.label)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            log.warning('assistant API unreachable: %s', e)
+            raise ToolError('The server could not reach %s. Please try again later.' % self.label)
+
+    def ask(self, args, token, referer):
+        if not self.enabled:
+            raise ToolError('%s is not turned on for this server.' % self.label)
+        if self.a.get('require_token', True) and not token:
+            raise ToolError('Sign in to ask %s.' % self.label)
+        question = clean_text(args.get('question'), 1500)
+        if not question:
+            raise ToolError('Say what to ask %s.' % self.label)
+        who = Upstream._identity(token) if token else 'anon:' + (referer or '')
+        self._allow(who)
+        context = clean_text(args.get('context') or '', 600)
+        messages = []
+        for turn in (args.get('history') or [])[-4:]:
+            if isinstance(turn, dict) and clean_text(turn.get('q'), 1) and clean_text(turn.get('a'), 1):
+                messages.append({'role': 'user', 'content': clean_text(turn.get('q'), 600)})
+                messages.append({'role': 'assistant', 'content': clean_text(turn.get('a'), 1500)})
+        messages.append({'role': 'user', 'content': question + (('\n\n' + context) if context else '')})
+        tools = [{'name': t['name'], 'description': t.get('description', '')[:1000], 'input_schema': t.get('inputSchema') or {'type': 'object', 'properties': {}}}
+                 for t in self.tools.definitions()]
+        used = []
+        started = time.time()
+        steps = max(1, min(10, int(self.a.get('max_steps') or 6)))
+        for step in range(steps + 1):
+            body = {'model': self.a.get('model') or 'claude-sonnet-5-5', 'max_tokens': max(200, min(4000, int(self.a.get('max_tokens') or 1200))),
+                    'system': self._system(), 'messages': messages}
+            if tools and step < steps:
+                body['tools'] = tools
+            out = self._post(body)
+            blocks = out.get('content') or []
+            calls = [b for b in blocks if b.get('type') == 'tool_use']
+            if not calls or out.get('stop_reason') != 'tool_use':
+                answer = '\n\n'.join(b.get('text', '') for b in blocks if b.get('type') == 'text').strip()
+                if not answer:
+                    raise ToolError('%s did not come back with an answer. Please ask again in other words.' % self.label)
+                log.info('assistant ok %.0fms steps=%d tools=%s', (time.time() - started) * 1000, step, ','.join(used) or '-')
+                return answer, {'answer': answer, 'assistant': self.label, 'model': out.get('model') or body['model'], 'tools_used': used}
+            messages.append({'role': 'assistant', 'content': blocks})
+            results = []
+            for c in calls[:6]:
+                name = c.get('name')
+                used.append(str(name))
+                try:
+                    text, data = self.tools.call(name, c.get('input') or {}, token, referer)
+                    content, error = (text + '\n' + json.dumps(data, ensure_ascii=False))[:12000], False
+                except ToolError as e:
+                    content, error = e.said, True
+                except RpcError as e:
+                    content, error = e.message, True
+                except Exception:
+                    log.exception('assistant tool %s failed', name)
+                    content, error = 'That tool failed.', True
+                results.append({'type': 'tool_result', 'tool_use_id': c.get('id'), 'content': content, 'is_error': error})
+            messages.append({'role': 'user', 'content': results})
+        raise ToolError('%s needed too many steps for that one. Please ask a narrower question.' % self.label)
+
+
 class Server:
     def __init__(self, cfg):
         self.cfg = cfg
         self.gis = ArcGIS(cfg)
         self.layers = Layers(cfg, self.gis)
         self.tools = Tools(cfg, self.gis, self.layers)
+        self.assistant = Assistant(cfg, self.tools, self.layers)
         self.upstreams = []
         for spec in cfg.get('upstream_servers') or []:
             if spec.get('enabled') is False:
@@ -1902,11 +2081,21 @@ class Server:
             return {}
         if method == 'tools/list':
             self.layers.refresh(token, referer=referer)
-            return {'tools': self.tools.definitions() + self.upstream_tools(token)}
+            return {'tools': self.tools.definitions() + ([self.assistant.definition()] if self.assistant.enabled else []) + self.upstream_tools(token)}
         if method == 'tools/call':
             name = params.get('name')
             args = params.get('arguments') or {}
             started = time.time()
+            if name == ASK_TOOL and self.assistant.enabled:
+                if not isinstance(args, dict):
+                    raise RpcError(-32602, 'Arguments must be an object.')
+                self.layers.refresh(token, referer=referer)
+                try:
+                    text, data = self.assistant.ask(args, token, referer)
+                    return {'content': [{'type': 'text', 'text': text}], 'structuredContent': data, 'isError': False}
+                except ToolError as e:
+                    log.info('assistant failed %.0fms: %s', (time.time() - started) * 1000, e)
+                    return {'content': [{'type': 'text', 'text': e.said}], 'isError': True}
             up = next((u for u in self.upstreams if u.owns(name)), None) if name not in {t['name'] for t in self.tools.definitions()} else None
             if up:
                 if not isinstance(args, dict):
@@ -1992,6 +2181,7 @@ def create_app(cfg):
     @app.route(base + '/health', methods=['GET'])
     def health():
         return json_res({'ok': True, 'version': VERSION, 'layers': len(server.layers.by_name), 'notes': server.layers.notes[:20],
+                         'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model')},
                          'upstream': [{'name': u.name, 'label': u.label, 'prefix': u.prefix, 'auth': u.auth, 'status': u.status, 'server': u.server_title} for u in server.upstreams]})
 
     @app.route(base + '/mcp', methods=['OPTIONS'])

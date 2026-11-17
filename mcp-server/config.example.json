@@ -54,5 +54,19 @@
     }
   ],
   "public_url": "https://gis.example.org/gis-mcp",
-  "oauth_authorization_servers": []
+  "oauth_authorization_servers": [],
+  "assistant": {
+    "enabled": false,
+    "label": "Claude",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "model": "claude-sonnet-5-5",
+    "max_tokens": 1200,
+    "max_steps": 6,
+    "timeout_seconds": 60,
+    "require_token": true,
+    "per_person_per_hour": 30,
+    "per_day": 1000,
+    "org_name": "the City",
+    "extra_instructions": ""
+  }
 }

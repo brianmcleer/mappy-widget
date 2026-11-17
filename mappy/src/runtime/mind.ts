@@ -21,7 +21,10 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
-import { handoffUrl, parseHandoff, assistantJob } from '../brain/handoff'
+import { handoffUrl, parseHandoff, assistantJob, contextLine } from '../brain/handoff'
+
+/** The GIS server's tool that hands a question to Claude on the server (gis_mcp.py ask_assistant). */
+const ASK_TOOL = 'ask_assistant'
 import type { AssistantPort, HandoffContext } from '../brain/handoff'
 import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField, compileConditions } from '../brain/analysis'
 import { reviseTask, taskSummary } from '../brain/task'
@@ -69,6 +72,8 @@ export interface MindContext {
   mcp?: McpPort | null
   /** An AI assistant in its own tab (Claude), when the builder chose it as the helper: stuck answers carry one link that opens it with the question written. */
   assistant?: AssistantPort | null
+  /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
+  serverAssistant?: { label: string } | null
   /** Where the person is (the device's location), when they allow it. */
   myLocation?: () => Promise<[number, number] | null>
   /** Jokes, riddles and games. Undefined means on. */
@@ -144,6 +149,10 @@ export class Mind {
   private mcpFailedAt = 0
   private mcpPort: McpPort | null | undefined
   private mcpPrefs = ''
+  /** The server's ask_assistant tool (Claude on the server), kept apart from the ordinary tools. */
+  private askTool: McpTool | null = null
+  /** Recent questions Claude answered here, sent along so follow-ups make sense. */
+  private claudeTurns: Array<{ q: string, a: string }> = []
   private mcpDraft: { tool: McpTool, args: { [k: string]: any }, missing: string[], place?: PlaceQuestion } | null = null
   private placeConversation: PlaceQuestion | null = null
 
@@ -153,7 +162,7 @@ export class Mind {
     if (port !== this.mcpPort || prefs !== this.mcpPrefs) {
       this.mcpResults = null
       this.mcpPort = port; this.mcpPrefs = prefs
-      this.mcpTools = []; this.mcpPending = null; this.mcpDraft = null; this.mcpFailedAt = 0
+      this.mcpTools = []; this.askTool = null; this.mcpPending = null; this.mcpDraft = null; this.mcpFailedAt = 0
       this.awaitingPlace = null; this.placeConversation = null; this.lastToolData = null
     }
   }
@@ -185,7 +194,7 @@ export class Mind {
     this.lastLayer = ''; this.lastResults = []; this.lastReply = null; this.lastReadIntent = ''; this.lastReadScope = ''
     this.lastAddress = ''; this.lastAnalysis = null; this.addressChoices = null; this.tablePage = null
     this.dataTask = null; this.layerPick = null
-    this.awaitingPlace = null; this.placeConversation = null; this.lastPlace = null; this.lastToolData = null; this.mcpDraft = null; this.mcpPending = null; this.placeNames.clear()
+    this.awaitingPlace = null; this.placeConversation = null; this.lastPlace = null; this.lastToolData = null; this.mcpDraft = null; this.mcpPending = null; this.placeNames.clear(); this.claudeTurns = []
     this.contextView = this.ctx.live.view
   }
 
@@ -345,7 +354,8 @@ export class Mind {
     this.locationNote = false
     const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
     const reply = await this.respondInner(input)
-    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(this.ctx.assistant && parseHandoff(input, this.ctx.assistant.label))) this.lastInput = input
+    const handoffLabel = this.ctx.assistant?.label || this.ctx.serverAssistant?.label
+    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(handoffLabel && parseHandoff(input, handoffLabel))) this.lastInput = input
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
     // A server hiccup: one chip runs the same request again.
     if (reply.mood === 'alert' && this.lastInput && !control && !(reply.suggest || []).some(x => /try again/i.test(x))) reply.suggest = ['Try again', ...(reply.suggest || [])].slice(0, 5)
@@ -369,7 +379,7 @@ export class Mind {
         return (f?.codes || []).map(([, name]) => String(name))
       },
       places: !!((this.ctx.geocoders?.length && live.view) || this.ctx.mcp),
-      starters: this.ctx.assistant ? [`ask ${this.ctx.assistant.label} `] : undefined
+      starters: this.ctx.assistant || this.ctx.serverAssistant ? [`ask ${(this.ctx.assistant || this.ctx.serverAssistant)!.label} `] : undefined
     }
   }
 
@@ -434,16 +444,16 @@ export class Mind {
     const continued = this.placeConversation && followPlaceQuestion(plain, this.placeConversation)
     if (continued) input = continued
     let read = { text: input, changed: false, swaps: [] as Array<[string, string]> }
-    if (this.ctx.typoFix !== false && !this.lastAddress && !this.addressChoices && !this.awaitingPlace && !parsePlaceQuestion(normalizeCommand(input)) && !outOfScope(normalizeCommand(input), this.org()) && !DISTANCE_Q.test(normalizeCommand(input)) && !OWNED_Q.test(normalizeCommand(input)) && !/^__/.test(input) && !(this.ctx.assistant && parseHandoff(input, this.ctx.assistant.label))) {
+    if (this.ctx.typoFix !== false && !this.lastAddress && !this.addressChoices && !this.awaitingPlace && !parsePlaceQuestion(normalizeCommand(input)) && !outOfScope(normalizeCommand(input), this.org()) && !DISTANCE_Q.test(normalizeCommand(input)) && !OWNED_Q.test(normalizeCommand(input)) && !/^__/.test(input) && !((this.ctx.assistant || this.ctx.serverAssistant) && parseHandoff(input, (this.ctx.assistant || this.ctx.serverAssistant)!.label))) {
       try { read = readRequest(input, lexiconFor(this.appNames(), this.ctx.index)) } catch (e) { }
     }
     // The reading is the request with typos fixed, polite words dropped, numbers in words as
     // digits ("fifty percent" to 50%) and other phrasings made plain; it equals the input otherwise.
     const text = read.text || input
-    let reply = this.assistantCommand(input) || await this.mcpCommand(text)
+    let reply = (await this.serverClaudeCommand(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
-    else reply = await this.offerServer(text, await this.respondRead(text))
+    else reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, await this.respondRead(text)) : await this.offerServer(text, await this.respondRead(text))
     // Stuck: offer the closest requests he can do, the way Clippy asked "It looks like you're...".
     if (reply.mood === 'confused' && this.ctx.typoFix !== false && !/^__/.test(input) && input.length < 120) {
       try {
@@ -480,6 +490,65 @@ export class Mind {
       if (picked?.title) out.selected = picked.title
     } catch (e) { }
     return out
+  }
+
+  /** "ask Claude ..." when Claude answers inside the chat through the GIS server. */
+  private async serverClaudeCommand (input: string): Promise<Reply | null> {
+    const sa = this.ctx.serverAssistant
+    if (!sa || /^__/.test(input)) return null
+    const asked = parseHandoff(input, sa.label)
+    if (!asked) return null
+    const question = asked.question || this.lastInput
+    if (!question) return { text: `Ask me anything after "ask ${sa.label}" and ${sa.label} will answer here, with the GIS data.`, mood: 'think' }
+    return this.askServerClaude(question)
+  }
+
+  /** Stuck on a real question (a few words, nothing he can offer to fix himself): Claude answers it here. */
+  private async askServerClaudeWhenStuck (input: string, reply: Reply): Promise<Reply> {
+    if (reply.mood !== 'confused' || /^__/.test(input) || input.trim().split(/\s+/).length < 3 || (reply.actions || []).some(a => a.type !== 'ask')) return reply
+    if (Date.now() - this.mcpFailedAt < 60000) return reply
+    const answered = await this.askServerClaude(input, true)
+    return answered || reply
+  }
+
+  /** Claude on the GIS server answers with the server's own read-only tools. Null (quiet) when it cannot and `quiet` is set. */
+  private async askServerClaude (question: string, quiet = false): Promise<Reply | null> {
+    const sa = this.ctx.serverAssistant
+    const port = this.ctx.mcp
+    if (!sa || !port) return null
+    try {
+      if (!this.askTool) await this.serverTools()
+    } catch (e) { this.mcpFailedAt = Date.now(); return quiet ? null : { text: `I could not reach ${port.label}, so ${sa.label} cannot answer right now.`, mood: 'alert' } }
+    const tool = this.askTool
+    if (!tool) return quiet ? null : { text: `${sa.label} is not turned on for ${port.label} yet. The GIS team can turn it on on the server.`, mood: 'confused' }
+    const ctx = this.handoffContextLine()
+    this.track('claude')
+    let raw: any
+    try {
+      raw = await port.call(tool.name, { question: clip(question, 1500), ...(ctx ? { context: ctx } : {}), ...(this.claudeTurns.length ? { history: this.claudeTurns.slice(-3) } : {}) }, 110000)
+    } catch (e) {
+      this.ctx.beacon?.error(e, 'claude')
+      return quiet ? null : { text: e instanceof Error ? e.message : `${sa.label} did not answer.`, mood: 'alert' }
+    }
+    const said = Array.isArray(raw?.content) ? raw.content.filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('\n').trim() : ''
+    if (raw?.isError) return quiet && !/sign in|a lot of questions|today|busy/i.test(said) ? null : { text: said || `${sa.label} could not answer that one.`, mood: 'confused' }
+    const answer = String(raw?.structuredContent?.answer || said || '').trim()
+    if (!answer) return quiet ? null : { text: `${sa.label} did not come back with an answer.`, mood: 'confused' }
+    this.claudeTurns.push({ q: clip(question, 600), a: clip(answer, 1500) })
+    if (this.claudeTurns.length > 3) this.claudeTurns.shift()
+    const used: string[] = Array.isArray(raw?.structuredContent?.tools_used) ? raw.structuredContent.tools_used.map(String) : []
+    const reply: Reply = {
+      text: answer,
+      mood: 'explain',
+      sources: [{ title: sa.label, detail: used.length ? `using ${port.label}: ${Array.from(new Set(used)).map(n => n.replace(/_/g, ' ')).join(', ')}` : `through ${port.label}` }]
+    }
+    this.lastReply = reply
+    return reply
+  }
+
+  /** The line about the map for a question going to Claude. */
+  private handoffContextLine (): string {
+    try { return contextLine(this.handoffContext()) } catch (e) { return '' }
   }
 
   /** "ask Claude ...", "send that to Claude": one link that opens the assistant with the question written. */
@@ -527,7 +596,9 @@ export class Mind {
     const prefs = JSON.stringify(port.prefs || [])
     const tools = await port.tools()
     if (port !== this.ctx.mcp || prefs !== JSON.stringify(port.prefs || [])) throw new Error('The server settings changed. Please ask again.')
-    this.mcpTools = usableTools(tools, port.prefs)
+    const usable = usableTools(tools, port.prefs)
+    this.askTool = usable.find(t => t.name === ASK_TOOL) || null
+    this.mcpTools = usable.filter(t => t.name !== ASK_TOOL)
     this.loadServerLayers(port)
     return this.mcpTools
   }
@@ -2292,7 +2363,7 @@ export class Mind {
     const entries = this.ctx.live.entries()
     const sources = new Map<string, number>()
     for (const doc of this.ctx.index.docs) sources.set(doc.src || 'live', (sources.get(doc.src || 'live') || 0) + 1)
-    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} ${this.ctx.assistant ? `No LLM runs in this app; questions I cannot answer can be opened in ${this.ctx.assistant.label} (a new tab, one click).` : this.ctx.mcp ? `No LLM is used; ${this.ctx.mcp.label} answers place questions.` : 'No LLM is used.'} Map services and imported help may still require network access.${this.ctx.feedInfo ? ' Knowledge ' + this.ctx.feedInfo + '.' : ''}`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
+    return { text: `Local assistant ready. ${this.ctx.live.ready ? 'Map connected.' : 'No active map connected.'} ${entries.filter(e => !e.isGroup).length} layers and tables; ${entries.filter(e => !e.isGroup && this.ctx.live.isVisible(e)).length} enabled. ${this.ctx.featureSearch ? 'Data queries enabled.' : 'Data queries disabled.'} ${this.ctx.serverAssistant ? `No LLM runs in this app; questions I cannot answer go to ${this.ctx.serverAssistant.label} on ${this.ctx.mcp?.label || 'the GIS server'}, which answers with the GIS data.` : this.ctx.assistant ? `No LLM runs in this app; questions I cannot answer can be opened in ${this.ctx.assistant.label} (a new tab, one click).` : this.ctx.mcp ? `No LLM is used; ${this.ctx.mcp.label} answers place questions.` : 'No LLM is used.'} Map services and imported help may still require network access.${this.ctx.feedInfo ? ' Knowledge ' + this.ctx.feedInfo + '.' : ''}`, mood: 'talk', table: { columns: ['Knowledge source', 'Documents'], rows: Array.from(sources, ([source, count]) => [source, count.toLocaleString()]) }, suggest: ['What can you do?', 'List layers', 'List tools'] }
   }
 
   diagnoseLayer (target: string): Reply {

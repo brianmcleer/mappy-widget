@@ -32,7 +32,7 @@ export interface McpPort {
   /** Offer the server when Mappy cannot answer from the app himself. */
   fallback: boolean
   tools: () => Promise<McpTool[]>
-  call: (name: string, args: { [k: string]: any }) => Promise<any>
+  call: (name: string, args: { [k: string]: any }, timeout?: number) => Promise<any>
   prefs?: McpToolPref[]
 }
 

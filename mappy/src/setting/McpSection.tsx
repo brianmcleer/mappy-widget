@@ -64,11 +64,11 @@ export default function McpSection (props: Props): any {
 
   return (
     <SettingSection title='MCP server'>
-      <Hint>Optional, and used when "Where he gets help" is set to My GIS server. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
+      <Hint>Optional, and used when "Where he gets help" is set to My GIS server or to Claude answering in the chat. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
 
       {cfg.url && <Note tone={!props.active ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
         {!props.active
-          ? `Not in use. ${cfg.label || 'The server'} is kept, but "Where he gets help" is set to something else. Choose "My GIS server (MCP)" there to use it.`
+          ? `Not in use. ${cfg.label || 'The server'} is kept, but "Where he gets help" is set to something else. Choose "My GIS server (MCP)" or "Claude, answering in the chat" there to use it.`
           : cfg.url === ESRI_LOCATION_MCP
             ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Disconnect it if you are not using it."
             : `In use: ${cfg.label || cfg.url}.`}

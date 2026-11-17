@@ -92,7 +92,7 @@ export function Group (props: { title: string, children: any, open?: boolean }):
 
 /** A link styled the jimu way, opened in a new tab. */
 export function LinkButton (props: { href: string, children: any }): any {
-  return <SettingRow><Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => { try { window.open(props.href, '_blank', 'noopener,noreferrer') } catch (e) { } }}>{props.children}</Button></SettingRow>
+  return <SettingRow><Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => { try { if (/^claude:/i.test(props.href)) window.location.href = props.href; else window.open(props.href, '_blank', 'noopener,noreferrer') } catch (e) { } }}>{props.children}</Button></SettingRow>
 }
 
 /** Whether a status message reads as a failure, for its color. */

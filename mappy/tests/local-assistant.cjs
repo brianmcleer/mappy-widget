@@ -1689,6 +1689,70 @@ test('with an assistant as the helper, stuck answers and "ask Claude" carry one 
   assert.equal(links(asked).length, 0)
 })
 
+test('Claude through the GIS server answers inside the chat, with history and limits', async () => {
+  const { live } = fixture()
+  const calls = []
+  let answer = { content: [{ type: 'text', text: 'There are **31** hydrants within 300 meters.' }], structuredContent: { answer: 'There are **31** hydrants within 300 meters.', tools_used: ['features_near', 'features_near'] }, isError: false }
+  const port = {
+    label: 'City GIS', fallback: true, prefs: [],
+    tools: async () => [{ name: 'ask_assistant', description: 'Ask Claude', inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] }, annotations: { readOnlyHint: true } },
+      { name: 'geocode', description: 'Find an address', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] }, annotations: { readOnlyHint: true } }],
+    call: async (name, args, timeout) => { calls.push({ name, args, timeout }); return typeof answer === 'function' ? answer() : answer }
+  }
+  const base = { live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' }
+  const mind = new Mind({ ...base, mcp: port, serverAssistant: { label: 'Claude' } })
+  // Map work stays his.
+  await mind.respond('turn on parcels')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, 0)
+  // Stuck: Claude answers here, no link, no button.
+  const r = await mind.respond('why did the zoning change downtown in the nineties')
+  const asked = calls.filter(c => c.name === 'ask_assistant')
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0].args.question, 'why did the zoning change downtown in the nineties')
+  assert.ok(asked[0].timeout >= 60000, 'a longer wait for an answer that takes steps')
+  assert.match(asked[0].args.context || '', /Asked from the map app "Test map"/)
+  assert.match(r.text, /\*\*31\*\* hydrants/)
+  assert.equal((r.actions || []).length, 0)
+  assert.deepEqual(r.sources, [{ title: 'Claude', detail: 'using City GIS: features near' }])
+  // A follow-up carries the earlier turn.
+  answer = { content: [{ type: 'text', text: 'Most are cast iron.' }], structuredContent: { answer: 'Most are cast iron.', tools_used: [] }, isError: false }
+  const f = await mind.respond('ask claude what are they made of')
+  const last = calls.filter(c => c.name === 'ask_assistant').pop()
+  assert.equal(last.args.question, 'what are they made of')
+  assert.equal(last.args.history[0].a, 'There are **31** hydrants within 300 meters.')
+  assert.match(f.text, /cast iron/)
+  assert.deepEqual(f.sources, [{ title: 'Claude', detail: 'through City GIS' }])
+  // Server limits read plainly, even when he was only stuck.
+  answer = { content: [{ type: 'text', text: 'That is a lot of questions in an hour. Please wait a few minutes and ask again.' }], isError: true }
+  assert.match((await mind.respond('which streets flood most often in spring storms')).text, /a lot of questions/)
+  // Other server errors when stuck: his own reply stands.
+  answer = { content: [{ type: 'text', text: 'Claude could not answer that one.' }], isError: true }
+  const quiet = await mind.respond('which streets flood most often in summer storms')
+  assert.doesNotMatch(quiet.text, /could not answer that one/)
+  // A server without the tool: plain message on request.
+  const bare = { ...port, tools: async () => [] }
+  const m2 = new Mind({ ...base, mcp: bare, serverAssistant: { label: 'Claude' } })
+  assert.match((await m2.respond('ask claude how many parks')).text, /not turned on for City GIS/)
+  // In plain MCP mode, ask_assistant is never matched as an ordinary tool.
+  const m3 = new Mind({ ...base, mcp: port })
+  calls.length = 0
+  await m3.respond('why did the zoning change downtown in the nineties')
+  assert.equal(calls.filter(c => c.name === 'ask_assistant').length, 0)
+  assert.ok((mind.complete('ask c') || []).some(x => /^ask Claude/i.test(x)))
+})
+
+test('the handoff can open the Claude desktop app', () => {
+  const { assistantPort, handoffUrl, safeAssistantUrl, helperMode } = require('../src/brain/handoff.ts')
+  assert.equal(helperMode('claude', null), 'claude')
+  const app = assistantPort({ openIn: 'app', prefix: '/cgj-gis' })
+  assert.equal(app.url, 'claude://claude.ai/new?q={q}')
+  assert.equal(handoffUrl(app, 'zoning at city hall', null), 'claude://claude.ai/new?q=' + encodeURIComponent('/cgj-gis zoning at city hall'))
+  assert.equal(safeAssistantUrl('claude://claude.ai/new?q={q}'), true)
+  assert.equal(safeAssistantUrl('claude://evil.example/new?q={q}'), false)
+  assert.equal(safeAssistantUrl('claude://claude.ai/code/new?folder=C:/'), false)
+  assert.equal(assistantPort({ openIn: 'app', url: 'https://chat.example/?q={q}' }).url, 'https://chat.example/?q={q}', 'an address set by hand wins')
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

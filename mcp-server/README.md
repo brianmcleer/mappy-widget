@@ -20,6 +20,7 @@ It costs nothing beyond a Python process on a web server you already run. It use
 | `query_layer` | Structured data questions for assistants, with no SQL: field filters (=, !=, >, <, contains, starts_with, in, between, is_null, in_last_days...), then rows (fields, sort), a count, or sum/avg/min/max, optionally per group |
 | `list_layers` | The layers it can search |
 | `search_content` | Find maps, apps, layers and documents in Portal |
+| `ask_assistant` | Off unless turned on. Claude answers a plain-language question with the tools above, on this server, with your organization's Anthropic key (see [Claude on the server](#claude-on-the-server-optional)) |
 
 Layers can be named in plain words: "sewer line", "sewer lien" (typo) and "sewer pipes" all find Sanitary Sewer Mains. Words like line, main and pipe prefer line layers; hydrant, manhole and valve prefer point layers.
 
@@ -67,7 +68,38 @@ In Mappy's settings, open **MCP server**:
 
 Press **Connect and list tools**. Every tool is read-only, so all of them start on. Save the app.
 
+### Claude on the server (optional)
+
+`ask_assistant` lets Mappy hand a question it cannot answer to Claude and show the answer in its own chat. Claude runs here, uses only this server's read-only tools, and the Anthropic API key never leaves the server. People need no Claude account.
+
+1. Get an API key from the Anthropic Console (console.anthropic.com) under your organization's account. Each answer is billed per use.
+2. On the server, add the key as an environment variable for the app pool. In web.config, inside `<environmentVariables>`:
+   `<environmentVariable name="ANTHROPIC_API_KEY" value="sk-ant-..." />`
+3. In `config.json` add:
+   ```json
+   "assistant": { "enabled": true, "org_name": "the City" }
+   ```
+4. Recycle the app pool. `/health` shows `"assistant": {"status": "ready"}`, or what is missing.
+5. In Mappy's settings, **Where he gets help**: **Claude, answering in the chat (through my GIS server)**, then **Check that the server has Claude**.
+
+What goes to Anthropic: the question, one line about where the map is, up to three earlier turns, and the results of the tools Claude calls. Tokens are never sent. Signed-in users only by default (`require_token`), with limits per person per hour and per day. Each call is logged with its duration and the tool names, never the question. The outbound call goes to `api.anthropic.com` over HTTPS (the usual proxy settings, `HTTPS_PROXY`, apply).
+
 ### Connect a desktop AI tool (optional)
+
+For people who work in the Claude desktop app: it can use these tools directly, signed in the way they already use Claude, with no API key here. In Claude Desktop: **Settings**, **Developer**, **Edit Config**, then add (on a machine on your network):
+
+```json
+{
+  "mcpServers": {
+    "city-gis": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://gis.example.org/gis-mcp/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. Needs Node.js. For layers that need a sign-in, add `"--header", "Authorization: Bearer ${GIS_TOKEN}"` to `args` and `"env": { "GIS_TOKEN": "<ArcGIS token>" }`, or run the server locally over stdio (below).
 
 Assistants do best with `describe_layer` first (field names, types and allowed values), then `query_layer` ("permits issued in the last 30 days", "average acres by zoning", "hydrants installed before 1990, sorted by install date").
 
@@ -113,6 +145,16 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `upstream_servers` | none | Other MCP servers whose tools pass through this one (see below) |
 | `public_url` | from the request | This server's public address, for OAuth metadata |
 | `oauth_authorization_servers` | none | Sign-in servers MCP clients should use; turns on `/.well-known/oauth-protected-resource` |
+| `assistant.enabled` | false | Turns on `ask_assistant` (also needs the key) |
+| `assistant.api_key_env` | ANTHROPIC_API_KEY | The environment variable holding the Anthropic API key |
+| `assistant.model` | claude-sonnet-5-5 | The Claude model |
+| `assistant.label` | Claude | Its name in answers |
+| `assistant.org_name` | the server name | Who runs the app, for Claude's instructions |
+| `assistant.extra_instructions` | none | Added to Claude's instructions (house style, departments to point to) |
+| `assistant.require_token` | true | Only signed-in people may ask |
+| `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
+| `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
+| `assistant.api_url` | Anthropic's | For a gateway in between |
 
 ## Esri's MCP servers (ready when they are)
 

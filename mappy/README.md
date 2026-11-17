@@ -60,7 +60,8 @@ Code changes (new commands, art, settings) still need a widget update and an app
 |---|---|
 | This app only | Nothing. The app's own layers, tools, locator and your answers. |
 | My GIS server (MCP) | The MCP server you connect below, for place and data questions. |
-| An AI assistant (Claude) | He still does map work himself. When he is stuck, or someone says "ask Claude ...", his answer carries one link that opens the assistant in a new tab with the question written. |
+| Claude, answering in the chat (through my GIS server) | He still does map work himself. When he is stuck, or someone says "ask Claude ...", Claude answers right in his chat, using the GIS server's read-only tools. Claude runs on the server with your organization's Anthropic key (gis-mcp `ask_assistant`); people need no Claude account. |
+| Claude, opened in the person's own Claude | When he is stuck, his answer carries one link that opens the Claude desktop app (or claude.ai, or another assistant) with the question written, under that person's own Claude sign-in. |
 
 For an assistant you set its name, a prefix written in front of every question (a skill or plugin of yours, for example `/my-gis-skill`), and optionally another assistant's address (`https://.../?q={q}`). "Send where the map is" adds one line (the address being looked at, the map center, the layers on). "Only for signed-in people" keeps it away from anonymous visitors of a public app. Mappy never calls a model and holds no key: nothing is sent until the person clicks, and the question runs under their own account in the assistant.
 

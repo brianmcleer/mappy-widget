@@ -6,8 +6,11 @@
   where the map was. Nothing leaves the app until the person clicks. Pure TypeScript.
 */
 
-/** Which helper the builder chose: the app alone, an MCP server, or an AI assistant. */
-export type HelperMode = 'local' | 'mcp' | 'assistant'
+/**
+ * Which helper the builder chose: the app alone, an MCP server, an AI assistant opened in its
+ * own tab or app, or Claude answering inside the chat through the GIS server (ask_assistant).
+ */
+export type HelperMode = 'local' | 'mcp' | 'assistant' | 'claude'
 
 export interface AssistantSettings {
   /** Name in the chat ("Claude"). */
@@ -20,6 +23,8 @@ export interface AssistantSettings {
   context?: boolean
   /** Offer the assistant only to people signed in to the portal. Undefined means on. */
   signedInOnly?: boolean
+  /** Where Claude opens: 'app' (the desktop app, signed in as it is) or 'browser' (claude.ai). Ignored when url is set. */
+  openIn?: 'app' | 'browser'
 }
 
 export interface AssistantPort { label: string, url: string, prefix: string, context: boolean }
@@ -37,26 +42,30 @@ export interface HandoffContext {
 
 export const DEFAULT_ASSISTANT_LABEL = 'Claude'
 export const DEFAULT_ASSISTANT_URL = 'https://claude.ai/new?q={q}'
+/** The Claude desktop app's own link: a new chat with the question filled in, signed in as the app is. */
+export const CLAUDE_APP_URL = 'claude://claude.ai/new?q={q}'
 const MAX_QUESTION = 1200
 const MAX_PROMPT = 1800
 
-/** Only https addresses with a host; the question goes where {q} is (or in a q parameter). */
+/** Only https addresses with a host, or the Claude desktop app's claude://claude.ai link; the question goes where {q} is (or in a q parameter). */
 export function safeAssistantUrl (template: string): boolean {
+  const t = String(template || '')
+  if (/^claude:\/\/claude\.ai\/new(?:\?|$)/i.test(t)) return true
   try {
-    const u = new URL(String(template || '').replace('{q}', 'x'))
+    const u = new URL(t.replace('{q}', 'x'))
     return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password
   } catch (e) { return false }
 }
 
 /** The helper in effect: the builder's choice, or (older apps) the server when one is connected. */
 export function helperMode (helper: any, mcp: any): HelperMode {
-  if (helper === 'local' || helper === 'mcp' || helper === 'assistant') return helper
+  if (helper === 'local' || helper === 'mcp' || helper === 'assistant' || helper === 'claude') return helper
   return mcp && mcp.url && mcp.enabled !== false ? 'mcp' : 'local'
 }
 
 /** Settings as the runtime uses them, or null when the address is not usable. */
 export function assistantPort (s: AssistantSettings | null | undefined): AssistantPort | null {
-  const url = String(s?.url || '').trim() || DEFAULT_ASSISTANT_URL
+  const url = String(s?.url || '').trim() || (s?.openIn === 'app' ? CLAUDE_APP_URL : DEFAULT_ASSISTANT_URL)
   if (!safeAssistantUrl(url)) return null
   return {
     label: one(String(s?.label || '')).slice(0, 40) || DEFAULT_ASSISTANT_LABEL,

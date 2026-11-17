@@ -21,9 +21,11 @@ sys.path.insert(0, HERE)
 import gis_mcp  # noqa: E402
 import fake_arcgis  # noqa: E402
 import fake_upstream  # noqa: E402
+import fake_anthropic  # noqa: E402
 
 FAKE = 18899
 UPSTREAM = 18898
+ANTHROPIC = 18897
 ORIGIN = 'https://maps.example.org'
 TOKEN = 'secret-token-123'
 
@@ -375,6 +377,78 @@ class GisMcpTest(unittest.TestCase):
             lock.release()
         finally:
             srv.shutdown()
+
+    def test_ask_assistant_uses_the_servers_own_tools(self):
+        from werkzeug.serving import make_server
+        srv = make_server('127.0.0.1', ANTHROPIC, fake_anthropic.app, threaded=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = os.environ.get('TEST_ANTHROPIC_KEY')
+        try:
+            # Off by default: not listed, and calling it is an unknown tool.
+            names = [t['name'] for t in self.rpc('tools/list').get_json()['result']['tools']]
+            self.assertNotIn('ask_assistant', names)
+            # Enabled but no key in the environment: still not listed; health says why.
+            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield'}
+            os.environ.pop('TEST_ANTHROPIC_KEY', None)
+            app = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **a))).test_client()
+            self.assertIn('no key', app.get('/health').get_json()['assistant']['status'])
+            os.environ['TEST_ANTHROPIC_KEY'] = 'sk-test-key'
+            self.assertEqual(app.get('/health').get_json()['assistant']['status'], 'ready')
+
+            def rpc(method, params, token=TOKEN):
+                h = {'Content-Type': 'application/json', 'Origin': ORIGIN}
+                if token:
+                    h['Authorization'] = 'Bearer ' + token
+                return app.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}), headers=h).get_json()['result']
+            tools = {t['name']: t for t in rpc('tools/list', {})['tools']}
+            self.assertIn('ask_assistant', tools)
+            self.assertTrue(tools['ask_assistant']['annotations']['readOnlyHint'])
+            # Signed out: refused before anything is sent.
+            n = len(fake_anthropic.STATE['calls'])
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'how many hydrants'}}, token=None)
+            self.assertTrue(r['isError'])
+            self.assertIn('Sign in', r['content'][0]['text'])
+            self.assertEqual(len(fake_anthropic.STATE['calls']), n)
+            # Signed in: Claude calls count_features here, then answers from its result.
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'how many hydrants are there', 'context': '(Asked from the map app: map center 39.06, -108.56.)',
+                                                                          'history': [{'q': 'hi', 'a': 'hello'}]}})
+            self.assertFalse(r['isError'], r)
+            self.assertIn('From the map data:', r['structuredContent']['answer'])
+            self.assertEqual(r['structuredContent']['tools_used'], ['count_features'])
+            first = fake_anthropic.STATE['calls'][n]
+            self.assertEqual(first['headers'].get('X-Api-Key'), 'sk-test-key', 'the key is sent by the server')
+            self.assertEqual(first['headers'].get('Anthropic-Version'), gis_mcp.ANTHROPIC_VERSION)
+            self.assertIn('Springfield', first['body']['system'])
+            self.assertEqual(first['body']['messages'][0], {'role': 'user', 'content': 'hi'})
+            self.assertIn('map center 39.06', first['body']['messages'][-1]['content'])
+            self.assertTrue(all(t['name'] != 'ask_assistant' for t in first['body']['tools']))
+            # The API being busy is a plain message, not an error page.
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'are you busy'}})
+            self.assertTrue(r['isError'])
+            self.assertIn('busy', r['content'][0]['text'])
+            # Per-person limit (2 an hour in this config; the busy answer still counted).
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'one more'}})
+            self.assertTrue(r['isError'])
+            self.assertIn('a lot of questions', r['content'][0]['text'])
+            # Another person still can.
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'say hi, no tools'}}, token='another-token-456')
+            self.assertFalse(r['isError'], r)
+            # A tool loop stops after max_steps with a plain message.
+            app2 = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **dict(a, max_steps=2)))).test_client()
+            r = app2.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'ask_assistant', 'arguments': {'question': 'loop forever'}}}),
+                          headers={'Content-Type': 'application/json', 'Origin': ORIGIN, 'Authorization': 'Bearer ' + TOKEN}).get_json()['result']
+            self.assertFalse(r['isError'], 'the last step is sent without tools, so it has to answer')
+            # A wrong key reads as a setup problem.
+            os.environ['TEST_ANTHROPIC_KEY'] = 'sk-wrong'
+            r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')
+            self.assertTrue(r['isError'])
+            self.assertIn('not set up correctly', r['content'][0]['text'])
+        finally:
+            srv.shutdown()
+            if old is None:
+                os.environ.pop('TEST_ANTHROPIC_KEY', None)
+            else:
+                os.environ['TEST_ANTHROPIC_KEY'] = old
 
     def test_oauth_metadata_only_when_configured(self):
         app = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True)).test_client()

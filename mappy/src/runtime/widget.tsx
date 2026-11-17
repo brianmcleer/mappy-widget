@@ -197,10 +197,10 @@ export default function Widget (props: Props): any {
   // One choice in settings, "Where he gets help": the app alone, the MCP server, or an AI assistant.
   const helper = helperMode(cfg.helper, mcpConfig)
   const mcp = React.useMemo<McpPort | null>(() => {
-    if (!mcpConfig?.url || helper !== 'mcp') return null
+    if (!mcpConfig?.url || (helper !== 'mcp' && helper !== 'claude')) return null
     try {
       const client = new McpClient(mcpConfig, () => { try { return SessionManager.getInstance().getMainSession()?.token || null } catch (e) { return null } })
-      return { label: mcpConfig.label || 'the MCP server', fallback: mcpConfig.fallback !== false, prefs: mcpConfig.tools || [], tools: () => client.listTools(), call: (n: string, a: any) => client.callTool(n, a) }
+      return { label: mcpConfig.label || 'the MCP server', fallback: mcpConfig.fallback !== false, prefs: mcpConfig.tools || [], tools: () => client.listTools(), call: (n: string, a: any, t?: number) => client.callTool(n, a, t) }
     } catch (e) { return null }
   }, [mcpConfig, helper])
   // The assistant never gets called from here: a stuck answer carries one link that opens it in
@@ -235,6 +235,7 @@ export default function Widget (props: Props): any {
     beacon: beaconRef.current,
     mcp,
     assistant,
+    serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude' } : null,
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,
     place: {
@@ -294,7 +295,7 @@ export default function Widget (props: Props): any {
     try {
       const saved = JSON.parse(store(chatKey, undefined, true) || '[]')
       if (!Array.isArray(saved) || !saved.length) return []
-      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^https:\/\//.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
+      const list: ChatMsg[] = saved.filter((m: any) => m && (m.from === 'user' || m.from === 'mappy') && typeof m.text === 'string').map((m: any) => ({ id: msgSeq++, from: m.from, text: String(m.text).slice(0, 4000), reply: m.reply ? { text: String(m.reply.text || m.text), suggest: Array.isArray(m.reply.suggest) ? m.reply.suggest.slice(0, 5).map(String) : undefined, actions: Array.isArray(m.reply.actions) ? m.reply.actions.filter((a: any) => a && ((a.type === 'ask' && typeof a.q === 'string') || (a.type === 'url' && typeof a.url === 'string' && /^(?:https:\/\/|claude:\/\/claude\.ai\/)/.test(a.url))) && typeof a.label === 'string').slice(0, 4) : undefined } : undefined }))
       return list.length ? [...list, { id: msgSeq++, from: 'mappy', text: 'Welcome back! That was our chat before the page reloaded. What next?', ephemeral: true }] : []
     } catch (e) { return [] }
   })
