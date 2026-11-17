@@ -67,6 +67,8 @@ const SIZES = { small: 72, medium: 96, large: 128 }
 const MOOD_MS: { [m: string]: number } = {
   talk: 1600, wave: 2600, happy: 1500, pleased: 1500, acknowledge: 1200, celebrate: 1400, confused: 1400, attention: 2300, point: 2800, love: 2800, excited: 2300, dance: 3600, roll: 1300, dizzy: 2600, party: 5200,
   // the Clippy pack: long enough for the act to finish (processing stays until the answer comes)
+  // feelings
+  sorry: 2600, sad: 3600, shy: 3200, proud: 2800, surprised: 1800, laugh: 2600, hug: 3000, grateful: 2800, cheer: 3000, sleepy: 4200, curious: 2600,
   // the second pack (calling and camera stay until the answer comes)
   route: 3400, pindrop: 2600, measure: 2600, chart: 2600, idea: 2800, layers: 2400, treasure: 4600, boat: 4400, kite: 4600, juggle: 3800, coffee: 4600,
   writing: 3600, checking: 3000, alert: 2200, explain: 3600, knock: 2600, print: 2800, trash: 3400, mail: 2600, save: 2800, artsy: 3600, techy: 3400, wizardy: 3800, airplane: 4400, bike: 3800, congratulate: 3200, goodbye: 1800
@@ -291,6 +293,7 @@ export default function Widget (props: Props): any {
   const [mood, setMoodState] = React.useState<Mood>('idle')
   const [busy, setBusy] = React.useState(false)
   const [waitNote, setWaitNote] = React.useState('')
+  const confusedRun = React.useRef(0)
   const waitNoteRef = React.useRef(setWaitNote)
   waitNoteRef.current = setWaitNote
   const busyRef = React.useRef(false)
@@ -433,9 +436,11 @@ export default function Widget (props: Props): any {
       if (!store(greetedKey)) { store(greetedKey, '1'); store('mappy-news', NEWS_KEY); first = true } else if (store('mappy-news') !== NEWS_KEY) { news = NEWS; store('mappy-news', NEWS_KEY) }
     } catch (e) { }
     // First visit: offer the tour, so nobody has to guess what to type.
-    const text = (cfg.greeting || V.greet(name, appTitle)) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : '') + (first ? '\n\nNew here? Say "show me around" and I will walk you through the app.' : '')
+    let back = ''
+    try { back = first ? '' : mind.welcome() } catch (e) { }
+    const text = (back ? back + ' ' : '') + (cfg.greeting || (back ? 'What are we looking for?' : V.greet(name, appTitle))) + (extra ? '\n\n' + extra : '') + (news ? '\n\n' + news : '') + (first ? '\n\nNew here? Say "show me around" and I will walk you through the app.' : '')
     say(text, first ? { text, suggest: ['Show me around', 'What is on the map', 'Help'] } : undefined)
-  }, [cfg.greeting, name, appTitle, say, appId])
+  }, [cfg.greeting, name, appTitle, say, appId, mind])
 
   const toggleChat = React.useCallback(() => {
     lastInteraction.current = Date.now()
@@ -470,7 +475,9 @@ export default function Widget (props: Props): any {
       if (reply.effect === 'quietTips') { setTipsOff(true); store('mappy-tips-off:' + appId, '1'); setBulb(null) }
       say(reply.text, reply)
       // A chart in the answer: bars rise beside him (unless he has something more pressing to act out).
-      setMood(reply.chart && !['confused', 'alert', 'attention'].includes(reply.mood || '') ? 'chart' : (reply.mood as Mood) || 'talk')
+      // Stuck twice in a row: he stops looking puzzled and looks sorry.
+      confusedRun.current = reply.mood === 'confused' ? confusedRun.current + 1 : 0
+      setMood(reply.chart && !['confused', 'alert', 'attention'].includes(reply.mood || '') ? 'chart' : confusedRun.current >= 2 ? 'sorry' : (reply.mood as Mood) || 'talk')
       handlePoint(reply.pointAt)
       if (reply.mood === 'sleep') setTimeout(() => closeChat(true), 1400)
       if (reply.mood === 'goodbye') setTimeout(() => closeChat(true), 1500)

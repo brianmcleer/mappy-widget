@@ -848,10 +848,12 @@ test('Mind: where are the parks, list the parks, labels, map blank, data info, c
 
 test('Mind: kind words get hearts, not a lookup', async () => {
   const mind = new Mind({ live: new LiveMap(), index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: false, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' })
-  for (const q of ['i love you mappy', "you're the best", 'you are my bff', 'high five']) {
+  for (const q of ['i love you mappy', "you're the best", 'you are my bff']) {
     const r = await mind.respond(q)
     assert.equal(r.mood, 'love', q + ': ' + r.text)
   }
+  // A high five gets pompoms.
+  assert.equal((await mind.respond('high five')).mood, 'cheer')
   // "Good job" earns a trophy; "bye" is a bike ride off.
   assert.equal((await mind.respond('good job')).mood, 'congratulate')
   assert.equal((await mind.respond('bye')).mood, 'goodbye')

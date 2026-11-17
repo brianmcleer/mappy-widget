@@ -23,12 +23,17 @@ import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
 import { handoffUrl, parseHandoff, assistantJob, contextLine } from '../brain/handoff'
 
+/** Moods that are feelings, not answers: "try again" never re-runs what led to them. */
+const EMOTIONS = ['sorry', 'sad', 'shy', 'proud', 'surprised', 'laugh', 'hug', 'grateful', 'cheer', 'sleepy', 'curious']
+
 /** Questions about what is on screen right now, where a picture of the map helps. */
 const ABOUT_THE_SCREEN = /\b(?:on (?:the|this|my) (?:map|screen)|(?:this|the) (?:map|view|picture|area|screen)\b|what am i (?:looking at|seeing)|what do you see|can you see|look at (?:this|the map|these)|in view|shown here|these|those)\b/i
 
 /** The GIS server's tool that hands a question to Claude on the server (gis_mcp.py ask_assistant). */
 const ASK_TOOL = 'ask_assistant'
 import type { AssistantPort, HandoffContext } from '../brain/handoff'
+import { feel, readBond, bumpBond, milestone, welcomeBack, emptyBond } from '../brain/feelings'
+import type { Bond } from '../brain/feelings'
 import { parseAnalysis, analysisFollowup, resultCountFollowup, resultTableFollowup, tablePhrase, resolveField, compileConditions } from '../brain/analysis'
 import { reviseTask, taskSummary } from '../brain/task'
 import type { TaskOperation, TaskSummary } from '../brain/task'
@@ -160,6 +165,8 @@ export class Mind {
   private claudeTurns: Array<{ q: string, a: string }> = []
   /** When Claude last answered, and the follow-ups it suggested: the conversation stays with Claude for a few minutes. */
   private claudeAt = 0
+  /** What he remembers about the two of you when the browser cannot keep it (tests, private windows). */
+  private bondMemory: Bond = emptyBond()
   private claudeFollowups: string[] = []
   private mcpDraft: { tool: McpTool, args: { [k: string]: any }, missing: string[], place?: PlaceQuestion } | null = null
   private placeConversation: PlaceQuestion | null = null
@@ -363,7 +370,17 @@ export class Mind {
     const control = /^__|^(?:try (?:that |it )?again|retry(?: that)?|do (?:that|it) again|once more|again|next|next (?:stop|one|tool|page)|undo|repeat(?: that)?|cancel|stop|never ?mind|yes|no|ok|okay)[!.?]*$/i.test(input.trim())
     const reply = await this.respondInner(input)
     const handoffLabel = this.ctx.assistant?.label || this.ctx.serverAssistant?.label
-    if (!control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(handoffLabel && parseHandoff(input, handoffLabel))) this.lastInput = input
+    const real = !control && !/^__/.test(input) && !META.has(parseIntent(input).name) && !(handoffLabel && parseHandoff(input, handoffLabel))
+    if (real && !(EMOTIONS as readonly string[]).includes(reply.mood || '')) this.lastInput = input
+    // One more question together; round numbers get a line of their own.
+    if (real) {
+      try {
+        const bond = bumpBond(this.bond())
+        this.keepBond(bond)
+        const line = this.ctx.fun === false ? '' : milestone(bond.chats)
+        if (line && !['confused', 'alert', 'sad', 'sorry'].includes(reply.mood || '')) reply.text = `${reply.text}\n\n${line}`
+      } catch (e) { }
+    }
     if (this.locationNote) { this.locationNote = false; reply.text = `I could not get your location (it may be turned off for this site), so this is for the middle of the map.\n\n${reply.text}` }
     // His own data answers (a table or a chart) offer Claude for the "why" and "what does this mean".
     const sa = this.ctx.serverAssistant
@@ -454,6 +471,11 @@ export class Mind {
         catch (e) { return { text: e instanceof Error ? e.message : 'The server did not answer.', mood: 'alert' } }
       }
     }
+    // The small things people say to a friend ("how are you", "rough day", "call me Sam").
+    if (!/^__/.test(input) && !this.awaitingPlace && !this.layerPick && !this.layerChoices && !this.addressChoices) {
+      const felt = this.feelings(input)
+      if (felt) return felt
+    }
     const continued = this.placeConversation && followPlaceQuestion(plain, this.placeConversation)
     if (continued) input = continued
     let read = { text: input, changed: false, swaps: [] as Array<[string, string]> }
@@ -486,6 +508,38 @@ export class Mind {
     this.lastReading = { input, read: read.text || input, swaps: fixed }
     if (!fixed.length || reply.mood === 'sleep') return reply
     return { ...reply, text: `${reply.text}\n\n(I read that as “${read.text.replace(/[*_`]/g, '')}”.)` }
+  }
+
+  // ------------------------------------------------------------ the two of you
+
+  /** What he remembers about this person, from the browser (or from memory when it cannot be kept). */
+  bond (): Bond {
+    const store = this.ctx.store
+    if (!store) return this.bondMemory
+    try { return readBond(store.get('mappy-bond')) } catch (e) { return this.bondMemory }
+  }
+
+  private keepBond (bond: Bond): void {
+    this.bondMemory = bond
+    try { this.ctx.store?.set('mappy-bond', JSON.stringify(bond)) } catch (e) { }
+  }
+
+  /** A line for the start of a visit, for someone he has met ("Good morning, Sam! Day 3 in a row."). */
+  welcome (now = new Date()): string {
+    if (this.ctx.fun === false) return ''
+    try { return welcomeBack(this.bond(), now) } catch (e) { return '' }
+  }
+
+  private feelings (input: string): Reply | null {
+    if (this.ctx.fun === false) return null
+    let felt: ReturnType<typeof feel> = null
+    try { felt = feel(input, this.bond(), this.ctx.name) } catch (e) { return null }
+    if (!felt) return null
+    if (felt.name !== undefined) { const b = { ...this.bond() }; if (felt.name) b.name = felt.name; else delete b.name; this.keepBond(b) }
+    const reply: Reply = { text: felt.text, mood: felt.mood as Reply['mood'] }
+    if (felt.suggest?.length) reply.suggest = felt.suggest
+    this.lastReply = reply
+    return reply
   }
 
   // ------------------------------------------------------------ AI assistant handoff

@@ -22,6 +22,8 @@ export interface Reply {
     // the Clippy pack (runtime/components/Acts.tsx)
     | 'processing' | 'writing' | 'checking' | 'alert' | 'explain' | 'knock' | 'print' | 'trash' | 'mail' | 'save' | 'artsy' | 'techy' | 'wizardy' | 'airplane' | 'bike' | 'congratulate' | 'goodbye'
     // the second pack: map life
+    // feelings (brain/feelings.ts)
+    | 'sorry' | 'sad' | 'shy' | 'proud' | 'surprised' | 'laugh' | 'hug' | 'grateful' | 'cheer' | 'sleepy' | 'curious'
     | 'calling' | 'camera' | 'route' | 'pindrop' | 'measure' | 'chart' | 'idea' | 'layers' | 'treasure' | 'boat' | 'kite' | 'juggle' | 'coffee'
   /** A small bar chart of the table (labels and numbers), drawn by the chat. */
   chart?: { title?: string, rows: Array<{ label: string, value: number }>, unit?: string }

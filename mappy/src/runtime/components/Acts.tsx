@@ -214,6 +214,50 @@ export const ACT_CSS = `
 .mappy-layersheet{transform-box:fill-box;transform-origin:center;animation:mappy-layerfan .8s cubic-bezier(.3,1.3,.5,1) 1 both}
 @keyframes mappy-layerfan{0%{opacity:0;transform:translateY(0) scale(.6)}100%{opacity:1;transform:translateY(var(--ly))}}
 .mappy-act-layers .mappy-body{animation:mappy-nod .9s ease-in-out 2}
+/* feelings */
+.mappy-mood-sorry .mappy-body{animation:mappy-bow 2.2s ease-in-out 1}
+@keyframes mappy-bow{0%,100%{transform:none}25%,75%{transform:translateY(4px) scaleY(.95) rotate(3deg)}}
+.mappy-mood-sad .mappy-body{animation:mappy-sag 2.8s ease-in-out infinite}
+@keyframes mappy-sag{0%,100%{transform:translateY(2px) scaleY(.97)}50%{transform:translateY(4px) scaleY(.94) scaleX(1.02)}}
+.mappy-tear{transform-box:fill-box;transform-origin:center top;animation:mappy-tear 1.8s ease-in infinite}
+@keyframes mappy-tear{0%{opacity:0;transform:translateY(-2px) scale(.5)}20%{opacity:1;transform:translateY(0) scale(1)}80%{opacity:1;transform:translateY(16px) scale(1)}100%{opacity:0;transform:translateY(22px) scale(.7)}}
+.mappy-mood-shy .mappy-cheek{opacity:1;transform:scale(1.8)}
+.mappy-mood-shy .mappy-body{animation:mappy-shy 1.8s ease-in-out 2}
+@keyframes mappy-shy{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg) translateY(1px) scale(.98)}}
+.mappy-shylines{animation:mappy-wavepulse 1.2s ease-in-out 3}
+.mappy-mood-proud .mappy-body{animation:mappy-proud 2.4s ease-in-out 1}
+@keyframes mappy-proud{0%,100%{transform:none}20%,80%{transform:translateY(-4px) scale(1.05) rotate(-2deg)}}
+.mappy-medal{animation:mappy-dropin .5s ease-out 1}
+.mappy-mood-surprised .mappy-body{animation:mappy-startle .7s cubic-bezier(.3,1.6,.5,1) 1}
+@keyframes mappy-startle{0%{transform:none}30%{transform:translateY(-14px) scale(1.08,1.12)}60%{transform:translateY(0) scale(1.05,.94)}100%{transform:none}}
+.mappy-startle{animation:mappy-startlemarks .9s ease-out 1 both}
+@keyframes mappy-startlemarks{0%{opacity:0;transform:translateY(6px)}30%{opacity:1;transform:none}100%{opacity:0;transform:translateY(-6px)}}
+.mappy-mood-laugh .mappy-body{animation:mappy-laugh .28s ease-in-out 8}
+@keyframes mappy-laugh{0%,100%{transform:rotate(-2deg) translateY(0)}50%{transform:rotate(2deg) translateY(-3px) scale(1.02)}}
+.mappy-haha text{opacity:0;animation:mappy-float 1s ease-out 2}
+.mappy-haha text:nth-child(2){animation-delay:.25s}.mappy-haha text:nth-child(3){animation-delay:.5s}
+.mappy-mood-hug .mappy-body{animation:mappy-hugin 2.6s ease-in-out 1}
+@keyframes mappy-hugin{0%,100%{transform:none}30%,75%{transform:scale(1.08) translateY(-2px)}}
+.mappy-hugarm-l{transform-box:view-box;transform-origin:12px 52px;animation:mappy-hugl 2.6s ease-in-out 1 both}
+.mappy-hugarm-r{transform-box:view-box;transform-origin:88px 48px;animation:mappy-hugr 2.6s ease-in-out 1 both}
+@keyframes mappy-hugl{0%{opacity:0;transform:rotate(40deg) scale(.4)}15%{opacity:1;transform:rotate(-20deg) scale(1)}35%,75%{transform:rotate(26deg)}90%{opacity:1;transform:rotate(-10deg)}100%{opacity:0;transform:rotate(40deg) scale(.4)}}
+@keyframes mappy-hugr{0%{opacity:0;transform:rotate(-40deg) scale(.4)}15%{opacity:1;transform:rotate(20deg) scale(1)}35%,75%{transform:rotate(-26deg)}90%{opacity:1;transform:rotate(10deg)}100%{opacity:0;transform:rotate(-40deg) scale(.4)}}
+.mappy-mood-grateful .mappy-body{animation:mappy-bow 2.4s ease-in-out 1}
+.mappy-thanksheart{transform-box:fill-box;transform-origin:center;animation:mappy-heartbeat .8s ease-in-out 3}
+@keyframes mappy-heartbeat{0%,100%{transform:translate(50px,82px) scale(1.5)}30%{transform:translate(50px,82px) scale(1.9)}55%{transform:translate(50px,82px) scale(1.55)}}
+.mappy-mood-cheer .mappy-body{animation:mappy-hop .5s ease-in-out 5}
+.mappy-pompom{transform-box:fill-box;transform-origin:center;animation:mappy-pompom .3s ease-in-out 9}
+.mappy-pompom-r{animation-delay:.15s}
+@keyframes mappy-pompom{0%,100%{transform:translateY(0) rotate(-12deg)}50%{transform:translateY(-8px) rotate(14deg)}}
+.mappy-mood-sleepy .mappy-body{animation:mappy-drowse 3s ease-in-out infinite}
+@keyframes mappy-drowse{0%,100%{transform:rotate(0)}60%{transform:rotate(7deg) translateY(2px)}70%{transform:rotate(-2deg)}}
+.mappy-mood-curious .mappy-body{animation:mappy-leanin 2.2s ease-in-out 1}
+@keyframes mappy-leanin{0%,100%{transform:none}30%,80%{transform:rotate(7deg) scale(1.05) translateX(2px)}}
+.mappy-pet .mappy-body{animation:mappy-purr .18s linear 12}
+@keyframes mappy-purr{0%,100%{transform:translateX(-.6px) rotate(-.6deg)}50%{transform:translateX(.6px) rotate(.6deg)}}
+.mappy-pet .mappy-cheek{opacity:1;transform:scale(1.6)}
+.mappy-skit-perk .mappy-body{animation:mappy-startle .7s cubic-bezier(.3,1.6,.5,1) 1}
+.mappy-skit-perk .mappy-hand{animation:mappy-wave .4s ease-in-out 4 .5s}
 /* transformations */
 .mappy-act-artsy .mappy-act-hat{animation:mappy-dropin .5s ease-out 1}
 .mappy-act-techy .mappy-act-hat,.mappy-act-wizardy .mappy-act-hat{animation:mappy-dropin .5s ease-out 1}

@@ -1448,7 +1448,7 @@ test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps
   mind.ctx.store = { get: k => kept[k] || null, set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } }
   live.jmv.view.viewpoint = { toJSON: () => ({ scale: 5000, targetGeometry: { x: 1, y: 2 } }) }
   assert.match((await mind.respond('save this view as home base')).text, /Saved this view as \*\*home base\*\*/)
-  assert.equal(Object.keys(kept).length, 1)
+  assert.equal(Object.keys(kept).filter(k => k !== 'mappy-bond').length, 1)
   const gone = []
   live.jmv.view.goTo = async t => { gone.push(t) }
   sdkLoader = async () => [{ fromJSON: j => ({ ...j, fromJSON: true }) }]
@@ -1456,7 +1456,7 @@ test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps
   assert.equal(gone[gone.length - 1].fromJSON, true)
   assert.match((await mind.respond('my saved views')).list[0].label, /home base/)
   assert.match((await mind.respond('delete the home base view')).text, /Forgot the \*\*home base\*\* view/)
-  assert.equal(Object.keys(kept).length, 0)
+  assert.equal(Object.keys(kept).filter(k => k !== 'mappy-bond').length, 0)
   sdkLoader = async () => { throw new Error('Unexpected SDK call in test') }
 
   // Zoom steps, pans, turns.
@@ -1832,6 +1832,76 @@ test('the second pack of acts: asked for by name, and shown at the right moments
     assert.ok(acts.includes(`case '${name}':`), 'drawing for ' + name)
     assert.ok(name === 'goodbye' || acts.includes(`.mappy-act-${name} `) || acts.includes(`mappy-${name}`) || /^(fingertap|headscratch|browraise|sway|atom|stack|airplane|glasses|headphones|bike|artsy|techy|wizardy|processing|writing|checking|alert|explain|knock|print|trash|mail|save|congratulate|calling|camera|route|pindrop|measure|chart|idea|layers|treasure|boat|kite|telescope|juggle|coffee|umbrella)$/.test(name), 'motion for ' + name)
   }
+})
+
+test('feelings: the small things people say to a friend, and what he remembers', () => {
+  const { feel, emptyBond, bumpBond, readBond, milestone, welcomeBack, bondSummary, cleanName } = require('../src/brain/feelings.ts')
+  const b = emptyBond()
+  const mood = t => (feel(t, b) || {}).mood
+  for (const [say, want] of [['how are you', /happy|sleepy/], ['Hey Mappy, how are you?', /happy|sleepy/], ["you're so cute", /shy/], ['good boy', /proud/], ['you are a lifesaver', /grateful/],
+    ['you are useless', /sad/], ['sorry', /hug/], ['hug', /hug/], ['high five', /cheer/], ['lol', /laugh/], ['boo', /surprised/], ['guess what', /curious/], ['good night', /sleepy/],
+    ["i'm so tired", /coffee/], ['rough day', /hug/], ["i'm sad", /hug/], ['it worked', /cheer/], ['wish me luck', /cheer/], ["i'm bored", /curious/], ['cheer me up', /grateful/],
+    ['do you have feelings', /curious/], ['do you like me', /shy/], ['can we be friends', /love/], ["it's my birthday", /party/]]) assert.match(String(mood(say)), want, say)
+  // Real requests are left alone.
+  for (const say of ['turn on parcels', 'yes', 'ok', 'good', 'how many parcels', 'zoom to 250 N 5th St', 'find Smith in parcels', 'sad road', 'i am looking for parks', 'call 911', 'what is zoning', 'help', 'no', 'thanks']) assert.equal(feel(say, b), null, say)
+  // Honest about what he is, and he points people toward people.
+  assert.match(feel('are you alive', b).text, /paper and code/)
+  assert.match(feel("i'm lonely", b).text, /someone good is close by/)
+  // Names: offered, kept, used, forgotten.
+  assert.deepEqual([cleanName('sam'), cleanName('mary jo'), cleanName('tired'), cleanName('x'), cleanName('a b c')], ['Sam', 'Mary Jo', '', '', ''])
+  const named = feel('call me sam', b)
+  assert.equal(named.name, 'Sam')
+  assert.match(named.text, /Nice to meet you, Sam|Sam! Good name/)
+  assert.equal(feel('call me tired', b).name, undefined)
+  const known = { ...b, name: 'Sam', met: '2026-11-01', last: '2026-11-16', chats: 41, days: 9, streak: 3 }
+  assert.match(feel('what is my name', known, 'Mappy', new Date(2026, 10, 17)).text, /^You are Sam! We met 16 days ago, Sam\. Since then: 41 questions over 9 days, 3 days in a row/)
+  assert.equal(feel('forget my name', known).name, null)
+  assert.match(feel('how long have we known each other', b).text, /only just met/)
+  // The count: a new day, a streak, a gap.
+  let bond = bumpBond(emptyBond(), new Date(2026, 10, 15))
+  assert.deepEqual(bond, { chats: 1, days: 1, streak: 1, met: '2026-11-15', last: '2026-11-15' })
+  bond = bumpBond(bond, new Date(2026, 10, 15)); assert.equal(bond.days, 1)
+  bond = bumpBond(bond, new Date(2026, 10, 16)); assert.equal(bond.streak, 2)
+  bond = bumpBond(bond, new Date(2026, 10, 17)); assert.deepEqual([bond.streak, bond.days, bond.chats], [3, 3, 4])
+  bond = bumpBond(bond, new Date(2026, 10, 20)); assert.equal(bond.streak, 1)
+  assert.deepEqual(readBond(JSON.stringify(bond)), bond)
+  assert.deepEqual(readBond('{"name":"<script>","chats":-5,"met":"yesterday"}'), { name: 'Script', chats: 0, days: 0, streak: 0 })
+  assert.deepEqual(readBond('not json'), emptyBond())
+  assert.equal(milestone(100).includes('One hundred'), true)
+  assert.equal(milestone(101), '')
+  // The start of a visit.
+  assert.equal(welcomeBack(emptyBond()), '')
+  assert.equal(welcomeBack({ ...known, last: '2026-11-16' }, new Date(2026, 10, 17, 9)), 'Good morning, Sam! Day 4 in a row. I like this habit.')
+  assert.equal(welcomeBack({ ...known, last: '2026-10-01' }, new Date(2026, 10, 17, 14)), 'Good afternoon, Sam! It has been a while. I kept your spot on the map.')
+  assert.equal(welcomeBack({ ...known, name: undefined, last: '2026-11-17' }, new Date(2026, 10, 17, 14)), '')
+  assert.equal(welcomeBack({ ...known, last: '2026-11-17' }, new Date(2026, 10, 17, 20)), 'Good evening, Sam!')
+  assert.match(bondSummary(known, new Date(2026, 10, 17)), /in this browser only/)
+})
+
+test('feelings in the chat: moods, a remembered name, and a milestone line', async () => {
+  const { live } = fixture()
+  const kept = {}
+  const mind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', store: { get: k => kept[k] ?? null, set: (k, v) => { if (v === null) delete kept[k]; else kept[k] = v } } })
+  assert.equal((await mind.respond('hug')).mood, 'hug')
+  assert.equal((await mind.respond('you are so cute')).mood, 'shy')
+  assert.match((await mind.respond('call me Sam')).text, /Sam/)
+  assert.equal(JSON.parse(kept['mappy-bond']).name, 'Sam')
+  assert.match((await mind.respond('did you miss me')).text, /Sam/)
+  assert.match((await mind.respond('what is my name')).text, /^You are Sam!/)
+  await mind.respond('forget my name')
+  assert.equal(JSON.parse(kept['mappy-bond']).name, undefined)
+  // Questions together are counted, and the tenth gets a line.
+  const before = JSON.parse(kept['mappy-bond']).chats
+  let last
+  for (let i = before; i < 10; i++) last = await mind.respond('list layers')
+  assert.match(last.text, /our 10th question together/)
+  assert.doesNotMatch((await mind.respond('list layers')).text, /question together/)
+  // A real request with a feeling word in it is still a request.
+  assert.notEqual((await mind.respond('turn on parcels')).mood, 'hug')
+  // Jokes and holiday fun off: no small talk, no milestones.
+  const plainMind = new Mind({ live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'T', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '', fun: false })
+  assert.notEqual((await plainMind.respond('rough day')).mood, 'hug')
+  assert.equal(plainMind.welcome(), '')
 })
 
 test('census and place-in-numbers questions answer from the saved facts', async () => {

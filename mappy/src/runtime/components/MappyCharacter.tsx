@@ -20,6 +20,8 @@ import { Act, ACT_MOODS, IDLE_ACTS } from './Acts'
 
 export type Mood = 'idle' | 'wave' | 'talk' | 'think' | 'search' | 'happy' | 'pleased' | 'acknowledge' | 'celebrate' | 'confused' | 'sleep' | 'attention' | 'listen' | 'point' | 'love' | 'excited' | 'dance' | 'roll' | 'dizzy' | 'party'
   | typeof ACT_MOODS[number]
+  // feelings: how he looks when he is sorry, shy, proud, startled, laughing, hugging, thankful, cheering, sleepy or curious
+  | 'sorry' | 'sad' | 'shy' | 'proud' | 'surprised' | 'laugh' | 'hug' | 'grateful' | 'cheer' | 'sleepy' | 'curious'
 
 /** The face an act borrows: a trophy raise smiles like a celebration, an alert looks alert. */
 const ACT_FACE: { [m: string]: string } = { congratulate: 'celebrate', alert: 'attention', goodbye: 'wave', processing: 'think', checking: 'idle', explain: 'talk', knock: 'attention', print: 'pleased', trash: 'excited', mail: 'pleased', save: 'pleased', artsy: 'happy', techy: 'idle', wizardy: 'excited', airplane: 'excited', bike: 'happy', writing: 'idle', calling: 'listen', camera: 'idle', route: 'pleased', pindrop: 'happy', measure: 'idle', chart: 'pleased', idea: 'happy', layers: 'pleased', treasure: 'excited', boat: 'excited', kite: 'happy', juggle: 'happy', coffee: 'pleased' }
@@ -72,7 +74,19 @@ const BROWS: { [m: string]: [string, string] } = {
   dance: ['M33 30 Q40 26 47 30', 'M53 30 Q60 26 67 30'],
   roll: ['M33 29 Q40 25 47 29', 'M53 29 Q60 25 67 29'],
   dizzy: ['M33 32 Q40 30 47 33', 'M53 33 Q60 30 67 32'],
-  party: ['M33 28 Q40 23 47 28', 'M53 28 Q60 23 67 28']
+  party: ['M33 28 Q40 23 47 28', 'M53 28 Q60 23 67 28'],
+  // feelings
+  sorry: ['M33 35 Q40 32 47 29', 'M53 29 Q60 32 67 35'],
+  sad: ['M33 36 Q40 33 47 29', 'M53 29 Q60 33 67 36'],
+  shy: ['M33 32 Q40 30 47 33', 'M53 33 Q60 30 67 32'],
+  proud: ['M33 30 Q40 26 47 30', 'M53 30 Q60 26 67 30'],
+  surprised: ['M33 26 Q40 21 47 26', 'M53 26 Q60 21 67 26'],
+  laugh: ['M33 29 Q40 25 47 30', 'M53 30 Q60 25 67 29'],
+  hug: ['M33 31 Q40 27 47 31', 'M53 31 Q60 27 67 31'],
+  grateful: ['M33 33 Q40 30 47 30', 'M53 30 Q60 30 67 33'],
+  cheer: ['M33 28 Q40 23 47 28', 'M53 28 Q60 23 67 28'],
+  sleepy: ['M33 37 Q40 36 47 37', 'M53 37 Q60 36 67 37'],
+  curious: ['M33 33 Q40 31 47 33', 'M53 28 Q60 23 67 28']
 }
 
 /** Confetti: where each piece flies to (x, y offsets in the drawing) and its color. */
@@ -99,8 +113,24 @@ const MOUTH: { [m: string]: string } = {
   dance: 'M41 61 Q50 72 59 61',
   roll: 'M44 62 Q50 70 56 62 Q50 66 44 62',
   dizzy: 'M43 65 Q46 62 50 65 Q54 68 57 64',
-  party: 'M41 60 Q50 74 59 60 Z'
+  party: 'M41 60 Q50 74 59 60 Z',
+  // feelings
+  sorry: 'M44 66 Q50 62 56 66',
+  sad: 'M43 68 Q50 61 57 68',
+  shy: 'M46 63 Q50 66 54 63',
+  proud: 'M42 62 Q51 70 58 60',
+  surprised: 'M47 62 Q50 58 53 62 Q55 68 50 70 Q45 68 47 62 Z',
+  laugh: 'M40 59 Q50 77 60 59 Z',
+  hug: 'M41 61 Q50 72 59 61',
+  grateful: 'M43 62 Q50 69 57 62',
+  cheer: 'M41 60 Q50 74 59 60 Z',
+  sleepy: 'M46 61 Q50 58 54 61 Q56 68 50 70 Q44 68 46 61 Z',
+  curious: 'M45 64 Q50 67 56 62'
 }
+
+/** Mouths that are open (drawn filled), and the ones wide enough to show a tongue. */
+const OPEN_MOUTH = ['celebrate', 'excited', 'party', 'laugh', 'cheer', 'surprised', 'sleepy']
+const TONGUE = ['celebrate', 'excited', 'party', 'laugh', 'cheer']
 
 /** Arm angle per direction, from the side of the map that faces it. */
 const ARM: { [d: string]: { x: number, y: number, rot: number } } = {
@@ -161,6 +191,43 @@ export default function MappyCharacter (props: Props): any {
     boopTimer.current = setTimeout(() => setBoop(0), 900)
   }
 
+  // Petting: the pointer strokes back and forth over him. He closes his eyes and purrs.
+  const [pet, setPet] = React.useState(false)
+  const stroke = React.useRef<{ x: number, dir: number, turns: number[] }>({ x: 0, dir: 0, turns: [] })
+  const petTimer = React.useRef<any>(null)
+  React.useEffect(() => () => clearTimeout(petTimer.current), [])
+  const onStroke = (e: any) => {
+    if (still || props.expanded) return
+    const st = stroke.current
+    const dx = e.clientX - st.x
+    if (Math.abs(dx) < 4) return
+    const dir = dx > 0 ? 1 : -1
+    const now = Date.now()
+    if (st.dir && dir !== st.dir) { st.turns = st.turns.filter(t => now - t < 1600); st.turns.push(now) }
+    st.dir = dir; st.x = e.clientX
+    if (st.turns.length >= 3) {
+      st.turns = []
+      setPet(true)
+      clearTimeout(petTimer.current)
+      petTimer.current = setTimeout(() => setPet(false), 2200)
+    }
+  }
+
+  // He notices when you come back to the page after a while away, and perks up.
+  React.useEffect(() => {
+    if (still) return
+    const doc = ref.current?.ownerDocument || document
+    let leftAt = 0
+    let t: any
+    const onVis = () => {
+      if (doc.hidden) { leftAt = Date.now(); return }
+      if (leftAt && Date.now() - leftAt > 5 * 60000 && !props.expanded) { setSkit('perk'); clearTimeout(t); t = setTimeout(() => setSkit(s => s === 'perk' ? '' : s), 2400) }
+      leftAt = 0
+    }
+    doc.addEventListener('visibilitychange', onVis)
+    return () => { doc.removeEventListener('visibilitychange', onVis); clearTimeout(t) }
+  }, [still, props.expanded])
+
   const aim = (tx: number, ty: number) => {
     const el = ref.current
     if (!el) return
@@ -189,12 +256,17 @@ export default function MappyCharacter (props: Props): any {
   if (mood === 'think') { lx = 2.4; ly = -2.6 }
   if (mood === 'sleep') { lx = 0; ly = 0 }
   if (mood === 'listen') { lx = -1.5; ly = 2.4 }
-  const eyesClosed = mood === 'sleep'
-  const happyEyes = mood === 'love' || mood === 'excited' || mood === 'dance' || mood === 'party' || mood === 'congratulate'
+  if (mood === 'shy') { lx = -2.6; ly = 2.6 }
+  if (mood === 'sorry' || mood === 'sad') { lx = 0; ly = 2.6 }
+  if (mood === 'curious') { lx = 2.4; ly = -1.4 }
+  if (mood === 'surprised') { lx = 0; ly = 0 }
+  const eyesClosed = mood === 'sleep' || mood === 'sleepy' || mood === 'grateful'
+  const happyEyes = mood === 'love' || mood === 'excited' || mood === 'dance' || mood === 'party' || mood === 'congratulate' || mood === 'laugh' || mood === 'hug' || mood === 'proud' || mood === 'cheer' || (pet && mood === 'idle')
+  const wideEyes = mood === 'surprised'
   const dizzy = mood === 'dizzy'
   const hatOfDay = mood === 'party' ? 'party' : props.hat !== undefined ? props.hat : seasonalHat()
   const wink = skit === 'wink' && mood === 'idle' && !props.expanded
-  const pupil = mood === 'love' || mood === 'excited' || hover ? 4.6 : 3.8
+  const pupil = wideEyes ? 2.6 : mood === 'love' || mood === 'excited' || mood === 'curious' || hover ? 4.6 : mood === 'sad' || mood === 'sorry' ? 4.4 : 3.8
   // He leans a little toward whatever he is looking at.
   const lean = still ? 0 : Math.max(-4, Math.min(4, lx * 1.2))
   const face = ACT_FACE[mood] || mood
@@ -217,6 +289,7 @@ export default function MappyCharacter (props: Props): any {
   if (still) cls.push('mappy-still')
   if (hover && !still) cls.push('mappy-hover')
   if (boop) cls.push('mappy-boop')
+  if (pet && mood === 'idle') cls.push('mappy-pet')
   if (skit && mood === 'idle' && !props.expanded) cls.push(`mappy-skit-${skit}`)
   const act = (ACT_MOODS as readonly string[]).includes(mood) ? mood : (mood === 'idle' && !props.expanded && (IDLE_ACTS as readonly string[]).includes(skit) ? skit : '')
   if (act) cls.push(`mappy-act-${act}`)
@@ -239,6 +312,7 @@ export default function MappyCharacter (props: Props): any {
       onKeyDown={props.onKeyDown}
       onPointerDown={(e: any) => { doBoop(); props.onPointerDown?.(e) }}
       onPointerEnter={() => setHover(true)}
+      onPointerMove={onStroke}
       onPointerLeave={() => setHover(false)}
       onDoubleClick={props.onDoubleClick}
       onContextMenu={props.onContextMenu}
@@ -302,15 +376,16 @@ export default function MappyCharacter (props: Props): any {
                     <path d='M53 48 Q60 39 67 48' />
                   </g>
                 : <g>
-                    <ellipse cx='40' cy='45' rx='8' ry='9.5' fill='#fff' stroke='#2c2216' strokeWidth='1.6' />
+                    <ellipse cx='40' cy='45' rx={wideEyes ? 9 : 8} ry={wideEyes ? 11 : 9.5} fill='#fff' stroke='#2c2216' strokeWidth='1.6' />
                     {wink
                       ? <path className='mappy-wink' d='M52 46 Q60 50 68 46' stroke='#2c2216' strokeWidth='2.2' fill='none' strokeLinecap='round' />
-                      : <ellipse cx='60' cy='45' rx='8' ry='9.5' fill='#fff' stroke='#2c2216' strokeWidth='1.6' />}
+                      : <ellipse cx='60' cy='45' rx={wideEyes ? 9 : 8} ry={wideEyes ? 11 : 9.5} fill='#fff' stroke='#2c2216' strokeWidth='1.6' />}
                     <g className='mappy-pupils' transform={`translate(${lx.toFixed(2)} ${ly.toFixed(2)})`}>
                       <circle cx='40' cy='46' r={pupil} fill='#1d1d1d' />
                       {!wink && <circle cx='60' cy='46' r={pupil} fill='#1d1d1d' />}
                       <circle cx='41.3' cy='44.6' r='1.2' fill='#fff' />
                       {!wink && <circle cx='61.3' cy='44.6' r='1.2' fill='#fff' />}
+                      {(mood === 'sad' || mood === 'sorry' || mood === 'curious') && <g fill='#fff'><circle cx='38.200' cy='47.800' r='.9' /><circle cx='58.200' cy='47.800' r='.9' /></g>}
                     </g>
                   </g>}
           </g>
@@ -318,8 +393,8 @@ export default function MappyCharacter (props: Props): any {
             <path d={brows[0]} />
             <path d={brows[1]} />
           </g>
-          <path className='mappy-mouth' d={mouth} fill={face === 'celebrate' || face === 'excited' || face === 'party' ? '#7a2b22' : 'none'} stroke='#2c2216' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-          {(face === 'celebrate' || face === 'excited' || face === 'party') && <path d='M45 67 Q50 71 55 67' fill='#e8837a' stroke='none' />}
+          <path className='mappy-mouth' d={mouth} fill={OPEN_MOUTH.includes(face) ? '#7a2b22' : 'none'} stroke='#2c2216' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+          {TONGUE.includes(face) && <path d='M45 67 Q50 71 55 67' fill='#e8837a' stroke='none' />}
           {hat && <Costume kind={hat} />}
         </g>
         {act && !still && <Act act={act} />}
@@ -343,11 +418,24 @@ export default function MappyCharacter (props: Props): any {
         {mood === 'listen' && <g fill='none' stroke='#7a5c2e' strokeWidth='1.6' strokeLinecap='round'>
           <path d='M4 44 Q0 50 4 56' /><path d='M8 46 Q5 50 8 54' />
         </g>}
-        {!still && (mood === 'love' || (skit === 'heart' && mood === 'idle')) && <g className='mappy-hearts' fill='#e0533f'>
+        {/* feelings */}
+        {(mood === 'sorry' || mood === 'sad') && !still && <path className='mappy-sweat' d='M18 30 q0 -3 1.5 -5 q1.5 2 1.5 5 q0 2 -1.5 2 q-1.5 0 -1.5 -2 Z' fill='#5fa8e0' />}
+        {mood === 'sad' && <path className='mappy-tear' d='M45 55 q0 -3 1.6 -5.4 q1.6 2.4 1.6 5.4 q0 2.200 -1.6 2.200 q-1.6 0 -1.6 -2.200 Z' fill='#7cc0f0' stroke='#3f8fc9' strokeWidth='.5' />}
+        {mood === 'shy' && <g className='mappy-shylines' stroke='#e8837a' strokeWidth='1.3' strokeLinecap='round'><path d='M27 57 l2.5 -3 M30.500 59 l2.500 -3 M66 57 l2.500 -3 M69.500 59 l2.500 -3' /></g>}
+        {mood === 'proud' && <g className='mappy-medal'><path d='M24 62 L28 74 L32 62 Z' fill='#5fa8e0' stroke='#2c5f8a' strokeWidth='.8' /><circle cx='28' cy='78' r='5.5' fill='#f2b632' stroke='#b8860b' strokeWidth='1.1' /><path d='M28 74.800 l1 2 l2.200 .3 l-1.600 1.500 l.4 2.200 l-2 -1 l-2 1 l.4 -2.200 l-1.600 -1.500 l2.200 -.3 Z' fill='#fff' opacity='.85' /><path className='mappy-glint' d='M82 22 l1.400 3.400 l3.400 1.400 l-3.400 1.400 l-1.400 3.400 l-1.400 -3.400 l-3.400 -1.400 l3.400 -1.400 Z' fill='#f2b632' /></g>}
+        {mood === 'surprised' && !still && <g className='mappy-startle' stroke='#7a5c2e' strokeWidth='2.2' strokeLinecap='round'><path d='M50 4 v-8 M34 7 l-4 -7 M66 7 l4 -7' /></g>}
+        {mood === 'laugh' && !still && <g className='mappy-haha' fill='#7a5c2e' fontFamily='sans-serif' fontWeight='700'><text x='78' y='14' fontSize='10'>ha</text><text x='88' y='4' fontSize='8'>ha</text><text x='4' y='12' fontSize='8'>ha</text></g>}
+        {mood === 'hug' && <g className='mappy-hugarms' fill='#fbf2d8' stroke='#7a5c2e' strokeWidth='1.5' strokeLinejoin='round'><path className='mappy-hugarm-l' d='M12 44 L-8 34 L-12 44 L-6 56 L12 60 Z' /><path className='mappy-hugarm-r' d='M88 40 L108 30 L112 40 L106 52 L88 56 Z' /></g>}
+        {mood === 'grateful' && <path className='mappy-thanksheart' transform='translate(50 82) scale(1.5)' d={HEART} fill='#e0533f' stroke='#8f2a1d' strokeWidth='.5' />}
+        {mood === 'cheer' && !still && <g className='mappy-pompoms'>{[[6, 6, '#e0533f', 'l'], [96, 2, '#5fa8e0', 'r']].map(([x, y, c, side]) => <g key={side as string} className={`mappy-pompom mappy-pompom-${side}`}>{[[0, 0, 6], [-5, 3, 4.5], [5, 3, 4.5], [-3, -5, 4.5], [3, -5, 4.5], [0, 6, 4]].map(([dx, dy, r], i) => <circle key={i} cx={(x as number) + dx} cy={(y as number) + dy} r={r} fill={i % 2 ? '#f2b632' : c as string} stroke='#7a5c2e' strokeWidth='.6' />)}</g>)}</g>}
+        {mood === 'sleepy' && <text className='mappy-zzz' x='78' y='12' fontSize='9' fontWeight='700' fill='#7a5c2e' fontFamily='sans-serif'>z z</text>}
+        {mood === 'curious' && <text className='mappy-float-q' x='84' y='10' fontSize='14' fontWeight='700' fill='#2c5f8a' fontFamily='sans-serif'>?</text>}
+        {pet && mood === 'idle' && !still && <g className='mappy-hearts' fill='#e0533f'>{[[80, 16, .8], [16, 20, .7], [50, 2, .9]].map(([x, y, k], i) => <path key={i} className='mappy-heart' style={{ animationDelay: `${i * 0.3}s` }} transform={`translate(${x} ${y}) scale(${k})`} d={HEART} />)}</g>}
+        {!still && (mood === 'love' || mood === 'hug' || (skit === 'heart' && mood === 'idle')) && <g className='mappy-hearts' fill='#e0533f'>
           {[[78, 22, 1], [90, 34, 0.7], [14, 26, 0.8]].map(([x, y, k], i) => <path key={i} className='mappy-heart' style={{ animationDelay: `${i * 0.35}s` }} transform={`translate(${x} ${y}) scale(${k})`} d={HEART} />)}
         </g>}
         {boop > 0 && !still && <path className='mappy-boop-heart' transform='translate(50 6)' d={HEART} fill='#e0533f' />}
-        {!still && (mood === 'celebrate' || mood === 'excited' || mood === 'party' || mood === 'congratulate') && <g className='mappy-confetti'>
+        {!still && (mood === 'celebrate' || mood === 'excited' || mood === 'party' || mood === 'congratulate' || mood === 'cheer') && <g className='mappy-confetti'>
           {CONFETTI.map((c, i) => <rect key={i} x={50} y={30} width='3.2' height='5' rx='1' fill={c[2]} style={{ ['--cx' as any]: `${c[0]}px`, ['--cy' as any]: `${c[1]}px`, animationDelay: `${(i % 4) * 0.08}s` }} />)}
         </g>}
         {skit === 'fan' && mood === 'idle' && !still && <path className='mappy-sweat' d='M18 30 q0 -3 1.5 -5 q1.5 2 1.5 5 q0 2 -1.5 2 q-1.5 0 -1.5 -2 Z' fill='#5fa8e0' />}
