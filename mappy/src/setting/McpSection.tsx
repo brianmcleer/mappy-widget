@@ -68,7 +68,7 @@ export default function McpSection (props: Props): any {
 
       {cfg.url && <Note tone={!props.active ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
         {!props.active
-          ? `Questions do not go to ${cfg.label || 'the server'}: "Where he gets help" is set to something else. Its voice can still read answers aloud (see Voice).`
+          ? `Questions do not go to ${cfg.label || 'the server'}: "Where he gets help" is set to something else.`
           : cfg.url === ESRI_LOCATION_MCP
             ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Disconnect it if you are not using it."
             : `In use: ${cfg.label || cfg.url}.`}

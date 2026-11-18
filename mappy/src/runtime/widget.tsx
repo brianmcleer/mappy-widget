@@ -376,14 +376,10 @@ export default function Widget (props: Props): any {
     pointTimer.current = setTimeout(() => { setLookAt(null); setPointDir(null) }, 2800)
   }, [])
 
-  // One speaker for the widget: the server's open-source voice when the builder chose it, else the browser's best.
+  // One speaker for the widget: the most natural voice the browser has.
   const speakerOpts = React.useRef<any>({})
-  speakerOpts.current = {
-    on: readAloud && cfg.allowReadAloud !== false,
-    voice: plain<any>(cfg.voice) || null,
-    mcpUrl: plain<any>(cfg.mcp)?.url || '',
-    headers: async () => { const m = plain<any>(cfg.mcp) || {}; const h: { [k: string]: string } = {}; if (m.auth === 'arcgis') { try { const t = SessionManager.getInstance().getMainSession()?.token; if (t) h.authorization = 'Bearer ' + t } catch (e) { } } if (m.auth === 'header' && m.headerName && m.headerValue && /^x-[a-z0-9-]+$/i.test(m.headerName)) h[m.headerName] = m.headerValue; return h }
-  }
+  speakerOpts.current = { voice: plain<any>(cfg.voice) || null }
+
   const speaker = React.useMemo(() => new Speaker(() => speakerOpts.current), [])
   const speak = React.useCallback((text: string) => {
     if (!readAloud || cfg.allowReadAloud === false) return
@@ -419,7 +415,6 @@ export default function Widget (props: Props): any {
 
   const openChat = React.useCallback((focus = true) => {
     setOpen(true)
-    speaker.warm()
     setBulb(null)
     if (focus) focusInput()
   }, [])

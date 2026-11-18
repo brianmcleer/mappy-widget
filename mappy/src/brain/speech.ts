@@ -9,12 +9,8 @@ export interface VoiceInfo { name: string, lang: string, localService?: boolean,
 
 /** How he reads an answer aloud, from settings. */
 export interface VoiceSettings {
-  /** 'browser': the best voice the browser has. 'server': the open-source voice on the GIS server, with the browser's as the fallback. */
-  source?: 'browser' | 'server'
   /** A browser voice to prefer when the person's browser has it. */
   name?: string
-  /** The server voice (Kokoro names such as af_heart, am_adam, bf_emma). */
-  serverVoice?: string
   /** Speed: 1 is normal. */
   rate?: number
   /**
@@ -64,26 +60,6 @@ export function sentences (text: string, max = 240): string[] {
   return out
 }
 
-/**
- * Pieces for the server voice: the first one short (a few words, cut at a comma or sentence end)
- * so the voice starts almost at once; the rest a sentence or two each, made while the first plays.
- */
-export function quickPieces (text: string, first = 60, rest = 180): string[] {
-  const said = String(text || '').trim()
-  if (!said) return []
-  if (said.length <= first) return [said]
-  // The first natural break within the first `first` letters: a sentence end, then a comma or colon.
-  const head = said.slice(0, first + 1)
-  let cut = -1
-  const end = head.search(/[.!?](?=\s)/)
-  if (end >= 12) cut = end + 1
-  else {
-    const comma = Math.max(head.lastIndexOf(', '), head.lastIndexOf(': '), head.lastIndexOf('; '))
-    cut = comma >= 15 ? comma + 1 : head.lastIndexOf(' ') > 15 ? head.lastIndexOf(' ') : first
-  }
-  return [said.slice(0, cut).trim(), ...sentences(said.slice(cut).trim(), rest)].filter(Boolean)
-}
-
 /** How natural a browser voice is likely to sound for this language. Higher is better. */
 export function voiceScore (v: VoiceInfo, lang: string, wanted?: string): number {
   const name = String(v.name || '')
@@ -114,16 +90,4 @@ export function pickVoice<T extends VoiceInfo> (voices: T[], lang = 'en-US', wan
   let best: T | null = null; let top = -Infinity
   for (const v of pool) { const s = voiceScore(v, lang, wanted); if (s > top) { top = s; best = v } }
   return top > -100 ? best : pool[0] || null
-}
-
-/**
- * Where the server voice lives, from the MCP address in settings: ".../gis-mcp/mcp" (or "/sse", or the
- * bare ".../gis-mcp") becomes ".../gis-mcp/speak". https only, or http on this computer. '' when there is none.
- */
-export function speakUrl (mcpUrl: string | undefined | null): string {
-  const u = String(mcpUrl || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '')
-  if (!/^https:\/\/[^\s/]+|^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i.test(u)) return ''
-  if (/\/(?:mcp|sse|messages)$/i.test(u)) return u.replace(/\/(?:mcp|sse|messages)$/i, '/speak')
-  if (/\/speak$/i.test(u)) return u
-  return /^https?:\/\/[^/]+$/i.test(u) ? '' : u + '/speak'
 }

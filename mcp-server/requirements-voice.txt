@@ -1,2 +1,0 @@
-# Only for the optional server voice (read aloud). See mappy/docs/voice.md.
-kokoro-onnx>=0.6.1,<0.7

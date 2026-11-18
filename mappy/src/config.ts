@@ -45,9 +45,8 @@ export interface Config {
   /** Offer "Read answers aloud" in his menu (browser speech). Undefined means on. */
   allowReadAloud?: boolean
   /**
-   * The voice for read aloud: source 'browser' (the most natural voice the browser has) or 'server'
-   * (the open-source voice on the GIS server, POST /speak beside the MCP address), name (a browser
-   * voice to prefer), serverVoice and rate. See brain/speech.ts and docs/voice.md.
+   * The voice for read aloud, from the browser's voices: name (a voice to prefer), online (allow the
+   * browser's online voices, which send the words to its maker) and rate. See brain/speech.ts.
    */
   voice?: any
   /** Fix typos before reading a request ("trun on parcles"). Undefined means on. Turn off for apps used mostly in other languages. */
