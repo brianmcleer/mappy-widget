@@ -64,6 +64,26 @@ export function sentences (text: string, max = 240): string[] {
   return out
 }
 
+/**
+ * Pieces for the server voice: the first one short (a few words, cut at a comma or sentence end)
+ * so the voice starts almost at once; the rest a sentence or two each, made while the first plays.
+ */
+export function quickPieces (text: string, first = 60, rest = 180): string[] {
+  const said = String(text || '').trim()
+  if (!said) return []
+  if (said.length <= first) return [said]
+  // The first natural break within the first `first` letters: a sentence end, then a comma or colon.
+  const head = said.slice(0, first + 1)
+  let cut = -1
+  const end = head.search(/[.!?](?=\s)/)
+  if (end >= 12) cut = end + 1
+  else {
+    const comma = Math.max(head.lastIndexOf(', '), head.lastIndexOf(': '), head.lastIndexOf('; '))
+    cut = comma >= 15 ? comma + 1 : head.lastIndexOf(' ') > 15 ? head.lastIndexOf(' ') : first
+  }
+  return [said.slice(0, cut).trim(), ...sentences(said.slice(cut).trim(), rest)].filter(Boolean)
+}
+
 /** How natural a browser voice is likely to sound for this language. Higher is better. */
 export function voiceScore (v: VoiceInfo, lang: string, wanted?: string): number {
   const name = String(v.name || '')

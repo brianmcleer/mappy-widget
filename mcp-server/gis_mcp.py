@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.14.0'
+VERSION = '1.14.1'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -2619,7 +2619,9 @@ class Voice:
         except Exception:
             log.exception('Voice failed on a sentence')
             raise VoiceError('The voice could not say that.', 500)
-        data = self.encode(samples, int(rate_hz))
+        # A moment of silence first, so speakers and headsets that sleep between sounds are awake
+        # for the first syllable, and a small fade so the sound does not start with a click.
+        data = self.encode(samples, int(rate_hz), lead=float(self.v.get('lead_silence', 0.25) or 0))
         log.info('Voice: %d characters, %.1fs of sound in %.1fs', len(said), len(samples) / float(rate_hz or 1), time.time() - started)
         keep = int(self.v.get('cache_items') or 0)
         if keep > 0 and len(data) < 2000000:
@@ -2631,16 +2633,27 @@ class Voice:
         return data
 
     @staticmethod
-    def encode(samples, rate_hz):
-        """Float samples (-1 to 1) as a 16-bit mono WAV."""
+    def encode(samples, rate_hz, lead=0.0):
+        """Float samples (-1 to 1) as a 16-bit mono WAV, with `lead` seconds of silence first."""
         import io
         import wave
+        pad = max(0, int(rate_hz * min(1.0, max(0.0, lead))))
         try:
             import numpy as np
-            pcm = (np.clip(np.asarray(samples, dtype='float32'), -1.0, 1.0) * 32767.0).astype('<i2').tobytes()
+            x = np.clip(np.asarray(samples, dtype='float32'), -1.0, 1.0)
+            # Even out a quiet start: bring the whole sentence up to a steady level.
+            peak = float(np.abs(x).max()) if x.size else 0.0
+            if 0.0 < peak < 0.89:
+                x = x * (0.89 / peak)
+            fade = min(x.size, int(rate_hz * 0.004))
+            if fade > 1:
+                x[:fade] *= np.linspace(0.0, 1.0, fade, dtype='float32')
+            if pad:
+                x = np.concatenate([np.zeros(pad, dtype='float32'), x])
+            pcm = (x * 32767.0).astype('<i2').tobytes()
         except ImportError:
             import array
-            a = array.array('h', (int(max(-1.0, min(1.0, float(x))) * 32767) for x in samples))
+            a = array.array('h', [0] * pad + [int(max(-1.0, min(1.0, float(v))) * 32767) for v in samples])
             if sys.byteorder == 'big':
                 a.byteswap()
             pcm = a.tobytes()
@@ -2779,7 +2792,10 @@ def create_app(cfg):
         if not ok:
             return json_res({'error': 'origin not allowed'}, 403)
         v = server.voice
-        return json_res({'status': v.status(), 'voice': v.v.get('voice'), 'voices': v.names, 'max_chars': int(v.v.get('max_chars') or 600)}, 200, origin)
+        # ?warm=1: load the model now (in the background) so the next sentence is not kept waiting.
+        if request.args.get('warm') and v.v.get('enabled') and v.engine is None and v.status() == 'ready':
+            threading.Thread(target=lambda: v._load() if v.engine is None else None, daemon=True).start()
+        return json_res({'status': v.status(), 'loaded': v.engine is not None, 'voice': v.v.get('voice'), 'voices': v.names, 'max_chars': int(v.v.get('max_chars') or 600)}, 200, origin)
 
     @app.route(base + '/speak', methods=['POST'])
     def speak():

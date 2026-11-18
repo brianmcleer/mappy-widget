@@ -2197,6 +2197,13 @@ test('read aloud: what is said, how it is cut, and which voice is picked', () =>
   const long = sentences('a'.repeat(30) + ', ' + 'b '.repeat(60) + '. Short one.', 60)
   assert.ok(long.length >= 3 && long.every(p => p.length <= 60), JSON.stringify(long.map(p => p.length)))
   assert.deepEqual(sentences('', 50), [])
+  // The server voice starts with a short piece so it speaks at once.
+  const { quickPieces } = require('../src/brain/speech.ts')
+  const q = quickPieces('8 parcels match (Zoning R-4). That is 22 percent of the 36 in the layer, and the rest are R-8 or commercial.')
+  assert.equal(q[0], '8 parcels match (Zoning R-4).'); assert.ok(q[0].length <= 60 && q.length >= 2)
+  const q2 = quickPieces('The most expensive parcel in the whole layer by total current value is 2550 Patterson Road, at four million dollars')
+  assert.ok(q2[0].length <= 60 && q2[0].length >= 15, q2[0]); assert.equal(q2.join(' ').replace(/\s+/g, ' '), 'The most expensive parcel in the whole layer by total current value is 2550 Patterson Road, at four million dollars')
+  assert.deepEqual(quickPieces('Okay.'), ['Okay.'])
   // A natural voice beats the default; the right language beats a nicer voice in another one; a preferred name wins.
   const voices = [{ name: 'Microsoft David - English (United States)', lang: 'en-US', default: true, localService: true }, { name: 'Microsoft Aria Online (Natural) - English (United States)', lang: 'en-US', localService: false }, { name: 'Microsoft Denise Online (Natural) - French (France)', lang: 'fr-FR', localService: false }, { name: 'Google UK English Female', lang: 'en-GB', localService: false }, { name: 'Zarvox', lang: 'en-US', localService: true }, { name: 'Samantha (Enhanced)', lang: 'en-US', localService: true }]
   // Online voices send the words to the browser's maker, so they are used only when the builder allows it.

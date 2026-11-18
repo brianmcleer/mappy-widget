@@ -670,7 +670,9 @@ class VoiceTest(unittest.TestCase):
         self.assertEqual(r.mimetype, 'audio/wav')
         self.assertEqual(r.data[:4], b'RIFF')
         self.assertEqual(r.headers['Access-Control-Allow-Origin'], 'https://maps.example.org')
-        self.assertEqual(len(r.data), 44 + 2400 * 2)
+        # A quarter second of silence (6000 samples at 24 kHz) leads the sound.
+        self.assertEqual(len(r.data), 44 + (6000 + 2400) * 2)
+        self.assertEqual(r.data[44:44 + 12000], b'\x00' * 12000)
         self.assertEqual(tone.said[0], ('8 parcels match (Zoning R-4). 22 percent and more link', 'am_adam', 1.2))
         # The same sentence again comes from memory; an unknown voice falls back to the configured one.
         c.post('/speak', json={'text': '**8** parcels match (Zoning R-4). 22% & more https://example.org/x 🎉', 'voice': 'am_adam', 'speed': 1.2})
