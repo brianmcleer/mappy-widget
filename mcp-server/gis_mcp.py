@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.15.0'
+VERSION = '1.16.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -103,8 +103,27 @@ DEFAULTS = {
         'require_token': True,
         'apps_only': True,
         'feedback': True,
+        # Who is asking: with a portal_url set, each token is checked with the Portal and usage is
+        # counted per person (their Portal username, which is their single sign-on identity), not
+        # per token. usage_names keeps the username itself in the usage file; off keeps a short hash.
+        'identify': True,
+        'usage_names': False,
+        # Per person: questions an hour, a day and a month, and tokens a month. 0 = no limit.
         'per_person_per_hour': 30,
+        'per_person_per_day': 50,
+        'per_person_per_month': 500,
+        'per_person_tokens_per_month': 0,
+        # Other limits for members of a Portal group (by group title or id); the most generous
+        # matching rule wins. Example: {"group": "GIS Division", "per_day": 200, "per_month": 3000}
+        'groups': [],
+        # Only members of these Portal groups may ask at all. Empty = every signed-in person.
+        'allow_groups': [],
+        # Tell the person how many questions they have left once they are this close to a limit.
+        'warn_at': 5,
+        # The whole server: questions a day and a month, tokens a day and a month. 0 = no limit.
         'per_day': 1000,
+        'per_month': 0,
+        'max_tokens_per_month': 0,
         'cache_minutes': 10,
         'max_tokens_per_day': 0,
         'anonymous_per_hour': 5,
@@ -1872,6 +1891,7 @@ class Upstream:
 
 ASK_TOOL = 'ask_assistant'
 FEEDBACK_TOOL = 'assistant_feedback'
+USAGE_TOOL = 'assistant_usage'
 ANTHROPIC_VERSION = '2023-06-01'
 
 
@@ -1892,6 +1912,9 @@ class Assistant:
         # Questions and tokens per day, kept in a small file beside the logs so the daily limits
         # and the spending guard survive an app pool recycle.
         self.ledger = {}
+        # Per person, per month: {month: {person: {'q': questions, 'in': tokens, 'out': tokens, 'd': {day: questions}}}}
+        self.people = {}
+        self.known = {}
         self.ledger_path = ''
         name = self.a.get('usage_file')
         if name:
@@ -1903,8 +1926,14 @@ class Assistant:
                 with open(self.ledger_path, 'r', encoding='utf-8') as f:
                     raw = json.load(f)
                 self.ledger = {d: {k: int(v.get(k) or 0) for k in ('questions', 'input', 'output', 'cached', 'written')} for d, v in raw.items() if re.match(r'^\d{4}-\d{2}-\d{2}$', str(d)) and isinstance(v, dict)}
-            except (OSError, ValueError):
+                for month, rows in (raw.get('people') or {}).items() if isinstance(raw.get('people'), dict) else []:
+                    if re.match(r'^\d{4}-\d{2}$', str(month)) and isinstance(rows, dict):
+                        self.people[month] = {str(k)[:120]: {'q': int(v.get('q') or 0), 'in': int(v.get('in') or 0), 'out': int(v.get('out') or 0),
+                                                             'd': {str(d)[:2]: int(n or 0) for d, n in (v.get('d') or {}).items()} if isinstance(v.get('d'), dict) else {}}
+                                              for k, v in rows.items() if isinstance(v, dict)}
+            except (OSError, ValueError, AttributeError, TypeError):
                 self.ledger = {}
+                self.people = {}
 
     @property
     def key(self):
@@ -1935,10 +1964,12 @@ class Assistant:
         try:
             for old in sorted(self.ledger)[:-120]:
                 del self.ledger[old]
+            for old in sorted(self.people)[:-13]:
+                del self.people[old]
             os.makedirs(os.path.dirname(self.ledger_path), exist_ok=True)
             tmp = self.ledger_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(self.ledger, f)
+                json.dump(dict(self.ledger, people=self.people), f)
             os.replace(tmp, self.ledger_path)
         except OSError:
             log.warning('Could not write %s', self.ledger_path)
@@ -1969,14 +2000,138 @@ class Assistant:
         with self.lock:
             return self._summary([dict(v) for d, v in self.ledger.items() if d.startswith(month)])
 
-    def _spent(self, usage):
+    def _spent(self, usage, who=None):
         with self.lock:
             row = self._day()
             row['input'] += int(usage.get('input_tokens') or 0)
             row['written'] = int(row.get('written') or 0) + int(usage.get('cache_creation_input_tokens') or 0)
             row['cached'] += int(usage.get('cache_read_input_tokens') or 0)
             row['output'] += int(usage.get('output_tokens') or 0)
+            if who:
+                mine = self._mine(who)
+                mine['in'] += int(usage.get('input_tokens') or 0) + int(usage.get('cache_creation_input_tokens') or 0) + int(usage.get('cache_read_input_tokens') or 0)
+                mine['out'] += int(usage.get('output_tokens') or 0)
             self._save()
+
+    # ------------------------------------------------------------ who is asking, and what they may use
+
+    def _mine(self, who):
+        """This person's row for this month (call with the lock held)."""
+        return self.people.setdefault(time.strftime('%Y-%m'), {}).setdefault(who, {'q': 0, 'in': 0, 'out': 0, 'd': {}})
+
+    def person(self, token, referer=None, client=None):
+        """Who is asking: {'key', 'name', 'groups', 'verified'}.
+
+        With a portal_url, the token is checked with the Portal (community/self), which gives the
+        username the person signed in with (their single sign-on identity) and their groups. Usage is
+        then counted per person, on every device and across new tokens. Without a Portal, or when it
+        cannot be reached, a token is told apart by a hash of itself, as before."""
+        if not token:
+            return {'key': 'anon:' + Upstream._identity(str(client or referer or 'local')), 'name': '', 'groups': [], 'verified': False}
+        ident = Upstream._identity(token)
+        portal = (self.cfg.get('portal_url') or '').rstrip('/')
+        if not portal or not self.a.get('identify', True):
+            return {'key': ident, 'name': '', 'groups': [], 'verified': False}
+        now = time.time()
+        with self.lock:
+            hit = self.known.get(ident)
+            if hit and hit[0] > now:
+                if hit[1] is None:
+                    # Refused a moment ago: do not ask the Portal again for every try.
+                    raise ToolError('Sign in again to ask %s. Your sign-in has expired.' % self.label)
+                return dict(hit[1])
+        try:
+            me = self.tools.gis.get(portal + '/sharing/rest/community/self', {}, token, referer)
+        except ToolError as e:
+            if 'sign in' in str(e.said).lower():
+                # The Portal does not know this token: it is expired or made up.
+                with self.lock:
+                    if len(self.known) > 5000:
+                        self.known = {}
+                    self.known[ident] = (now + 60, None)
+                raise ToolError('Sign in again to ask %s. Your sign-in has expired.' % self.label)
+            log.warning('Could not check who is asking with the Portal: %s', e.said)
+            return {'key': ident, 'name': '', 'groups': [], 'verified': False}
+        name = clean_text((me or {}).get('username') or '', 120).lower()
+        if not name:
+            raise ToolError('Sign in to ask %s.' % self.label)
+        groups = []
+        for g in (me.get('groups') or [])[:300]:
+            if isinstance(g, dict):
+                groups += [clean_text(g.get('title') or '', 120).lower(), clean_text(g.get('id') or '', 60).lower()]
+        import hashlib
+        key = name if self.a.get('usage_names') else 'u:' + hashlib.sha256(name.encode('utf-8')).hexdigest()[:16]
+        out = {'key': key, 'name': name, 'groups': [g for g in groups if g], 'verified': True}
+        with self.lock:
+            if len(self.known) > 5000:
+                self.known = {}
+            self.known[ident] = (now + 600, out)
+        return dict(out)
+
+    def limits_for(self, who):
+        """This person's limits: the defaults, raised (or lifted) by any Portal group rule that matches."""
+        anonymous = who['key'].startswith('anon:')
+        base = {'hour': int(self.a.get('anonymous_per_hour') or 5) if anonymous else int(self.a.get('per_person_per_hour') or 0),
+                'day': int(self.a.get('per_person_per_day') or 0), 'month': int(self.a.get('per_person_per_month') or 0),
+                'tokens': int(self.a.get('per_person_tokens_per_month') or 0)}
+        mine = set(who.get('groups') or [])
+        best = {}
+        for rule in self.a.get('groups') or []:
+            if not isinstance(rule, dict) or clean_text(rule.get('group') or '', 120).lower() not in mine:
+                continue
+            for key, name in (('hour', 'per_hour'), ('day', 'per_day'), ('month', 'per_month'), ('tokens', 'tokens_per_month')):
+                if name not in rule:
+                    continue
+                try:
+                    n = max(0, int(rule[name]))
+                except (TypeError, ValueError):
+                    continue
+                # A group rule replaces the default. Between rules the most generous wins; 0 = no limit.
+                best[key] = n if key not in best else (0 if n == 0 or best[key] == 0 else max(best[key], n))
+        base.update(best)
+        return base
+
+    def standing(self, who):
+        """What this person has used and has left, for the app to show (call without the lock)."""
+        lim = self.limits_for(who)
+        now = time.time()
+        with self.lock:
+            mine = dict(self.people.get(time.strftime('%Y-%m'), {}).get(who['key']) or {'q': 0, 'in': 0, 'out': 0, 'd': {}})
+            hour = len([t for t in self.hits.get(who['key'], []) if now - t < 3600])
+            row = dict(self._day())
+            month_rows = [dict(v) for d, v in self.ledger.items() if d.startswith(time.strftime('%Y-%m'))]
+        today = int((mine.get('d') or {}).get(time.strftime('%d')) or 0)
+        left = lambda limit, used: None if not limit else max(0, limit - used)
+        out = {'used_today': today, 'used_month': int(mine.get('q') or 0), 'per_hour': lim['hour'] or None, 'per_day': lim['day'] or None, 'per_month': lim['month'] or None,
+               'left_hour': left(lim['hour'], hour), 'left_today': left(lim['day'], today), 'left_month': left(lim['month'], int(mine.get('q') or 0)),
+               'warn_at': max(0, int(self.a.get('warn_at') or 0)), 'counted_as': 'you' if who.get('verified') else ('this sign-in' if not who['key'].startswith('anon:') else 'this computer')}
+        # The whole server close to its own ceiling: say so before it stops for everyone.
+        tokens_day = row['input'] + int(row.get('written') or 0) + row['output']
+        tokens_month = sum(r['input'] + int(r.get('written') or 0) + r['output'] for r in month_rows)
+        shares = []
+        for used, limit in ((row['questions'], int(self.a.get('per_day') or 0)), (tokens_day, int(self.a.get('max_tokens_per_day') or 0)),
+                            (sum(r['questions'] for r in month_rows), int(self.a.get('per_month') or 0)), (tokens_month, int(self.a.get('max_tokens_per_month') or 0))):
+            if limit:
+                shares.append(used / float(limit))
+        out['server_low'] = bool(shares) and max(shares) >= 0.9
+        return out
+
+    def usage(self, token, referer=None, client=None):
+        """The assistant_usage tool: this person's own numbers, in a sentence and as data."""
+        if not self.enabled:
+            raise ToolError('%s is not turned on for this server.' % self.label)
+        if self.a.get('require_token', True) and not token:
+            raise ToolError('Sign in to see your %s usage.' % self.label)
+        who = self.person(token, referer, client)
+        st = self.standing(who)
+        of = lambda used, limit: '%d of %d' % (used, limit) if limit else '%d' % used
+        text = 'You have asked %s %s question%s today and %s this month.' % (self.label, of(st['used_today'], st['per_day']), '' if st['used_today'] == 1 and not st['per_day'] else 's', of(st['used_month'], st['per_month']))
+        if st['left_today'] is not None or st['left_month'] is not None:
+            least = min(x for x in (st['left_today'], st['left_month']) if x is not None)
+            text += ' %d left %s.' % (least, 'today' if st['left_today'] is not None and least == st['left_today'] else 'this month')
+        if st['server_low']:
+            text += ' The shared budget for everyone is nearly used up for now.'
+        return text, st
 
     # Things Claude can ask the map app to offer. They change nothing: the app shows a button.
     MAP_TOOLS = [
@@ -2078,6 +2233,13 @@ class Assistant:
                 'required': ['question']},
             'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True, 'title': 'Ask %s' % self.label}}
 
+    def usage_definition(self):
+        return {
+            'name': USAGE_TOOL, 'title': 'My %s usage' % self.label,
+            'description': 'How many questions the signed-in person has asked %s today and this month, and how many they have left.' % self.label,
+            'inputSchema': {'type': 'object', 'properties': {}},
+            'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': False, 'title': 'My usage'}}
+
     def feedback_definition(self):
         return {
             'name': FEEDBACK_TOOL, 'title': 'Rate an answer from %s' % self.label,
@@ -2099,6 +2261,10 @@ class Assistant:
         if not question or not isinstance(args.get('helpful'), bool):
             raise ToolError('A rating needs the question and helpful (true or false).')
         who = Upstream._identity(token) if token else 'anon:' + Upstream._identity(str(client or referer or 'local'))
+        try:
+            who = self.person(token, referer, client)['key']
+        except ToolError:
+            pass
         folder = self.cfg.get('log_dir') or 'logs'
         if not os.path.isabs(folder):
             folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), folder)
@@ -2127,24 +2293,45 @@ class Assistant:
         log.info('assistant feedback %s', 'up' if args['helpful'] else 'down')
         return 'Thank you. Noted.', {'saved': True}
 
-    def _allow(self, who, anonymous=False):
-        """Per person per hour (fewer for people who are not signed in), and per day for the whole server."""
+    def _allow(self, who):
+        """Count one question for this person, or say plainly which limit was reached: theirs (an
+        hour, a day, a month, tokens this month) or the whole server's (a day, a month)."""
         now = time.time()
+        key = who['key']
+        allowed = [clean_text(g, 120).lower() for g in (self.a.get('allow_groups') or []) if clean_text(g, 120)]
+        if allowed and not (set(allowed) & set(who.get('groups') or [])):
+            raise ToolError('%s is turned on for certain groups, and your account is not in one of them yet. The people who run this map can add you.' % self.label)
+        lim = self.limits_for(who)
+        month = time.strftime('%Y-%m')
+        day = time.strftime('%d')
         with self.lock:
             row = self._day()
-            if row['questions'] >= int(self.a.get('per_day') or 1000):
-                raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
-            # A spending guard: stop for the day once this many tokens (in and out) were used.
+            rows = [v for d, v in self.ledger.items() if d.startswith(month)]
+            tokens = lambda r: r['input'] + int(r.get('written') or 0) + r['output']
+            # The whole server first: everyone shares these.
             budget = int(self.a.get('max_tokens_per_day') or 0)
-            if budget and row['input'] + int(row.get('written') or 0) + row['output'] >= budget:
+            if row['questions'] >= int(self.a.get('per_day') or 1000) or (budget and tokens(row) >= budget):
                 raise ToolError('%s has answered as many questions as it can today. Please try again tomorrow.' % self.label)
-            recent = [t for t in self.hits.get(who, []) if now - t < 3600]
-            limit = int(self.a.get('anonymous_per_hour') or 5) if anonymous else int(self.a.get('per_person_per_hour') or 30)
-            if len(recent) >= limit:
+            per_month = int(self.a.get('per_month') or 0)
+            budget = int(self.a.get('max_tokens_per_month') or 0)
+            if (per_month and sum(r['questions'] for r in rows) >= per_month) or (budget and sum(tokens(r) for r in rows) >= budget):
+                raise ToolError('%s has used its budget for this month. It will answer again on the 1st.' % self.label)
+            # Then this person.
+            mine = self._mine(key)
+            if lim['month'] and mine['q'] >= lim['month']:
+                raise ToolError('You have used your %d %s questions for this month. They come back on the 1st.' % (lim['month'], self.label))
+            if lim['tokens'] and mine['in'] + mine['out'] >= lim['tokens']:
+                raise ToolError('You have used your share of %s for this month. It comes back on the 1st.' % self.label)
+            if lim['day'] and int(mine['d'].get(day) or 0) >= lim['day']:
+                raise ToolError('You have used your %d %s questions for today. They come back tomorrow.' % (lim['day'], self.label))
+            recent = [t for t in self.hits.get(key, []) if now - t < 3600]
+            if lim['hour'] and len(recent) >= lim['hour']:
                 raise ToolError('That is a lot of questions in an hour. Please wait a few minutes and ask again.')
             recent.append(now)
-            self.hits[who] = recent
+            self.hits[key] = recent
             row['questions'] += 1
+            mine['q'] += 1
+            mine['d'][day] = int(mine['d'].get(day) or 0) + 1
             self._save()
             if len(self.hits) > 5000:
                 self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 3600}
@@ -2232,8 +2419,9 @@ class Assistant:
         question = clean_text(args.get('question'), 1500)
         if not question:
             raise ToolError('Say what to ask %s.' % self.label)
-        # People who are not signed in are told apart by their address (hashed), with a lower limit.
-        who = Upstream._identity(token) if token else 'anon:' + Upstream._identity(str(client or referer or 'local'))
+        # Who is asking: their Portal username when the Portal can say, else the token or (not signed in) the address.
+        asker = self.person(token, referer, client)
+        who = asker['key']
         context = clean_text(args.get('context') or '', 2500)
         # A picture of the person's map (a small JPEG or PNG the app took), when the app sends one.
         image = None
@@ -2249,8 +2437,8 @@ class Assistant:
             with self.lock:
                 hit = self.answers.get(cache_key)
             if hit and time.time() - hit[0] < keep:
-                return hit[1], dict(hit[2], cached=True)
-        self._allow(who, anonymous=not token)
+                return hit[1], dict(hit[2], cached=True, limits=self.standing(asker))
+        self._allow(asker)
         messages = []
         for turn in (args.get('history') or [])[-4:]:
             if isinstance(turn, dict) and clean_text(turn.get('q'), 1) and clean_text(turn.get('a'), 1):
@@ -2288,7 +2476,7 @@ class Assistant:
                 body['tool_choice'] = {'type': 'none'}
             out = self._post(body, timeout=min(float(self.a.get('timeout_seconds') or 60), left - 2))
             spent = out.get('usage') or {}
-            self._spent(spent)
+            self._spent(spent, who)
             usage['input_tokens'] += int(spent.get('input_tokens') or 0) + int(spent.get('cache_creation_input_tokens') or 0) + int(spent.get('cache_read_input_tokens') or 0)
             usage['output_tokens'] += int(spent.get('output_tokens') or 0)
             blocks = out.get('content') or []
@@ -2319,6 +2507,7 @@ class Assistant:
                     log.info('assistant asked by %s: %s', who[:8], question)
                 data = {'answer': answer, 'assistant': self.label, 'model': out.get('model') or body['model'], 'tools_used': used, 'followups': followups, 'map': shown, 'usage': usage, 'saw_map': bool(image)}
                 data.update(extras)
+                data['limits'] = self.standing(asker)
                 if cache_key:
                     with self.lock:
                         if len(self.answers) > 200:
@@ -2427,17 +2616,23 @@ class Server:
             # assistants that connect here already have their own model, so they do not get it.
             mine = []
             if self.assistant.enabled and (referer or not self.assistant.a.get('apps_only', True)):
-                mine = [self.assistant.definition()] + ([self.assistant.feedback_definition()] if self.assistant.a.get('feedback', True) else [])
+                mine = [self.assistant.definition(), self.assistant.usage_definition()] + ([self.assistant.feedback_definition()] if self.assistant.a.get('feedback', True) else [])
             return {'tools': self.tools.definitions() + mine + self.upstream_tools(token)}
         if method == 'tools/call':
             name = params.get('name')
             args = params.get('arguments') or {}
             started = time.time()
-            if name in (ASK_TOOL, FEEDBACK_TOOL) and self.assistant.enabled:
+            if name in (ASK_TOOL, FEEDBACK_TOOL, USAGE_TOOL) and self.assistant.enabled:
                 if not isinstance(args, dict):
                     raise RpcError(-32602, 'Arguments must be an object.')
                 if self.assistant.a.get('apps_only', True) and not referer:
                     return {'content': [{'type': 'text', 'text': '%s on this server answers inside the map apps only.' % self.assistant.label}], 'isError': True}
+                if name == USAGE_TOOL:
+                    try:
+                        text, data = self.assistant.usage(token, referer, client)
+                        return {'content': [{'type': 'text', 'text': text}], 'structuredContent': data, 'isError': False}
+                    except ToolError as e:
+                        return {'content': [{'type': 'text', 'text': e.said}], 'isError': True}
                 if name == FEEDBACK_TOOL:
                     try:
                         text, data = self.assistant.feedback(args, token, referer, client)
@@ -2539,7 +2734,7 @@ def create_app(cfg):
     @app.route(base + '/health', methods=['GET'])
     def health():
         return json_res({'ok': True, 'version': VERSION, 'layers': len(server.layers.by_name), 'notes': server.layers.notes[:20],
-                         'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model'), 'today': server.assistant.today(), 'this_month': server.assistant.this_month()},
+                         'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model'), 'today': server.assistant.today(), 'counting': 'per person (Portal username)' if cfg.get('portal_url') and server.assistant.a.get('identify', True) else 'per sign-in token', 'people_this_month': len(server.assistant.people.get(time.strftime('%Y-%m'), {})), 'this_month': server.assistant.this_month()},
                          'upstream': [{'name': u.name, 'label': u.label, 'prefix': u.prefix, 'auth': u.auth, 'status': u.status, 'server': u.server_title} for u in server.upstreams]})
 
     @app.route(base + '/mcp', methods=['OPTIONS'])
@@ -2664,6 +2859,14 @@ def main():
         for month in sorted(months):
             row = s.assistant._summary(months[month])
             print('%-10s %9d %12d %12d %12d %10s' % (month, row['questions'], row['input_tokens'], row['output_tokens'], row['cached_input_tokens'], ('$%.2f' % row['estimated_cost']) if 'estimated_cost' in row else '-'))
+        people = s.assistant.people
+        for month in sorted(people)[-2:]:
+            rows = sorted(people[month].items(), key=lambda kv: -kv[1]['q'])
+            print('')
+            print('%s by person (%d people)%s' % (month, len(rows), '' if s.assistant.a.get('usage_names') else '  [names are hashed; set assistant.usage_names to true to see usernames]'))
+            print('%-32s %9s %12s %12s' % ('Person', 'Questions', 'Tokens in', 'Tokens out'))
+            for who, r in rows[:40]:
+                print('%-32s %9d %12d %12d' % (who[:32], r['q'], r['in'], r['out']))
         if not any(float(s.assistant.a.get(k) or 0) for k in ('price_per_mtok_in', 'price_per_mtok_out')):
             print('Set assistant.price_per_mtok_in and price_per_mtok_out in the config to see estimated cost.')
         return

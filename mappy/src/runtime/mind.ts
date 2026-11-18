@@ -21,7 +21,7 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
-import { handoffUrl, parseHandoff, assistantJob, contextLine } from '../brain/handoff'
+import { handoffUrl, parseHandoff, assistantJob, contextLine, usageQuestion, usageNote } from '../brain/handoff'
 
 /** A card number or a US Social Security number typed into a question. */
 function looksPrivate (text: string): boolean {
@@ -46,6 +46,7 @@ const ABOUT_THE_SCREEN = /\b(?:on (?:the|this|my) (?:map|screen)|(?:this|the) (?
 /** The GIS server's tool that hands a question to Claude on the server (gis_mcp.py ask_assistant). */
 const ASK_TOOL = 'ask_assistant'
 const FEEDBACK_TOOL = 'assistant_feedback'
+const USAGE_TOOL = 'assistant_usage'
 import type { AssistantPort, HandoffContext } from '../brain/handoff'
 import { feel, readBond, bumpBond, milestone, welcomeBack, emptyBond } from '../brain/feelings'
 import type { Bond } from '../brain/feelings'
@@ -202,6 +203,8 @@ export class Mind {
   private claudeTurns: Array<{ q: string, a: string }> = []
   /** The server takes ratings (assistant_feedback), and the answers that can still be rated. */
   private rateTool = false
+  /** The server counts questions per person and can say how many are left (assistant_usage). */
+  private usageTool = false
   private rated = new Map<number, { q: string, a: string, done?: boolean }>()
   private rateSeq = 0
   /** When Claude last answered, and the follow-ups it suggested: the conversation stays with Claude for a few minutes. */
@@ -580,6 +583,7 @@ export class Mind {
     const text = read.text || input
     const fb = input.match(/^__claudefb:(up|down):(\d+)$/)
     if (fb) return this.rateClaude(fb[1] === 'up', Number(fb[2]))
+    if (this.ctx.serverAssistant && usageQuestion(input, this.ctx.serverAssistant.label)) { this.keepsakeTurn = true; const mine = await this.claudeUsage(); this.lastReply = mine; return mine }
     const cared = this.care(input)
     if (cared) { this.lastReply = cared; return cared }
     const followed = await this.followAsk(input)
@@ -1003,6 +1007,22 @@ export class Mind {
     return answered || reply
   }
 
+  /** "How many Claude questions do I have left": the server's own count for this person. */
+  private async claudeUsage (): Promise<Reply> {
+    const sa = this.ctx.serverAssistant
+    const port = this.ctx.mcp
+    if (!sa || !port) return { text: 'There is no AI assistant set up for this app, so there is nothing to count.', mood: 'explain' }
+    try {
+      if (!this.askTool) await this.serverTools()
+      if (!this.usageTool) return { text: `${port.label} does not keep a count per person for ${sa.label}. The people who run this app can tell you about limits.`, mood: 'explain' }
+      const raw: any = await port.call(USAGE_TOOL, {})
+      const said = Array.isArray(raw?.content) ? raw.content.filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join(' ').trim() : ''
+      return { text: clip(said, 400) || `${sa.label} did not say.`, mood: raw?.isError ? 'confused' : 'explain', sources: raw?.isError ? undefined : [{ title: port.label, detail: `counted for your sign-in, not for this browser` }] }
+    } catch (e) {
+      return { text: `I could not reach ${port.label} to check.`, mood: 'alert' }
+    }
+  }
+
   /** Claude on the GIS server answers with the server's own read-only tools. Null (quiet) when it cannot and `quiet` is set. */
   private async askServerClaude (question: string, quiet = false, extra = ''): Promise<Reply | null> {
     const sa = this.ctx.serverAssistant
@@ -1030,7 +1050,8 @@ export class Mind {
       return quiet ? null : { text: e instanceof Error ? e.message : `${sa.label} did not answer.`, mood: 'alert' }
     }
     const said = Array.isArray(raw?.content) ? raw.content.filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('\n').trim() : ''
-    if (raw?.isError) return quiet && !/sign in|a lot of questions|today|busy/i.test(said) ? null : { text: said || `${sa.label} could not answer that one.`, mood: 'confused' }
+    // A limit or a sign-in problem is said out loud even when Claude was only a quiet second try.
+    if (raw?.isError) return quiet && !/sign in|a lot of questions|today|this month|you have used|certain groups|busy/i.test(said) ? null : { text: said || `${sa.label} could not answer that one.`, mood: 'confused' }
     const answer = String(raw?.structuredContent?.answer || said || '').trim()
     if (!answer) return quiet ? null : { text: `${sa.label} did not come back with an answer.`, mood: 'confused' }
     this.claudeTurns.push({ q: clip(question, 600), a: clip(answer, 1500) })
@@ -1067,6 +1088,9 @@ export class Mind {
     if (followups.length) reply.suggest = followups
     // Say plainly that this one came from an AI.
     if (sa.note) reply.note = clip(sa.note, 200)
+    // Close to this person's limit: say how many are left, before they hit it.
+    const left = usageNote(data.limits, sa.label)
+    if (left) reply.note = reply.note ? `${reply.note} ${left}` : left
     // Thumbs under the answer, when the server keeps ratings.
     if (this.rateTool) {
       const id = ++this.rateSeq
@@ -1174,7 +1198,8 @@ export class Mind {
     const usable = usableTools(tools, port.prefs)
     this.askTool = usable.find(t => t.name === ASK_TOOL) || null
     this.rateTool = tools.some(t => t.name === FEEDBACK_TOOL)
-    this.mcpTools = usable.filter(t => t.name !== ASK_TOOL && t.name !== FEEDBACK_TOOL)
+    this.usageTool = tools.some(t => t.name === USAGE_TOOL)
+    this.mcpTools = usable.filter(t => t.name !== ASK_TOOL && t.name !== FEEDBACK_TOOL && t.name !== USAGE_TOOL)
     this.loadServerLayers(port)
     return this.mcpTools
   }

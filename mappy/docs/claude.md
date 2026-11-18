@@ -33,7 +33,9 @@ What is never sent: ArcGIS tokens, the API key, anything from a person who has n
 Controls on the server (`config.json`, under `assistant`):
 
 - Signed-in people only (`require_token`, on by default).
-- Questions per person per hour, per day, and a daily token budget (`max_tokens_per_day`).
+- Questions per person per hour, per day and per month, counted by the Portal username the person signed in with (so by their single sign-on identity, on any device), with other limits for members of a Portal group (`groups`) and, if wanted, only certain groups allowed (`allow_groups`).
+- Budgets for the whole server: questions and tokens per day and per month.
+- People are told before they run out: a line under the answer once they are within `warn_at` of a limit, and "how many Claude questions do I have left" answers any time.
 - Fields that never reach Claude (`redact_fields`).
 - Usage by day and month on `/health`, with an estimated cost when you set your prices.
 

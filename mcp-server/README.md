@@ -93,6 +93,18 @@ Before going live, review real answers: put the questions people ask in a text f
 
 Daily questions and tokens are saved in `logs/assistant-usage.json`, so the limits hold across restarts. `/health` shows `today` and `this_month`; set the `price_per_mtok_*` keys to your plan's prices to see an estimated cost there. With `require_token` off (a public app), people are told apart by address and get `anonymous_per_hour` questions each.
 
+**Limits per person.** When `portal_url` is set, each question's token is checked with the Portal (`community/self`), which gives the username the person signed in with (their single sign-on identity) and their Portal groups. Questions are counted per person, so a new browser, a new device or a new sign-in does not start a new count, and a made-up or expired token is refused. Each person gets `per_person_per_hour`, `per_person_per_day` and `per_person_per_month` questions (and, if you set it, `per_person_tokens_per_month`). `groups` gives other numbers to members of a Portal group, by title or id; the most generous matching rule wins and 0 means no limit:
+
+```json
+"groups": [
+  { "group": "GIS Division", "per_day": 200, "per_month": 3000 },
+  { "group": "Planning", "per_day": 100 }
+],
+"allow_groups": []
+```
+
+`allow_groups` limits Claude to members of the listed groups. The whole server has its own ceilings on top (`per_day`, `per_month`, `max_tokens_per_day`, `max_tokens_per_month`). Every answer carries a `limits` object (left today, left this month), and Mappy tells the person once they are within `warn_at` of a limit; `assistant_usage` answers "how many do I have left". `--usage` lists people for the month. The usage file keeps a short hash of each username unless `usage_names` is true. If the Portal cannot be reached, tokens are told apart by a hash of themselves, as before. Set a monthly spend limit on the workspace in the Claude Console as well: that is the hard stop on the bill, whatever this server counts.
+
 If Mappy's "Send a picture of the map" is on, a small JPEG of the map (under 180 KB) comes with questions about what is on screen and goes to Claude as an image; set `allow_images` to false to refuse pictures on the server.
 
 What goes to Anthropic: the question, one line about where the map is (and a few values of the feature under an open popup), up to three earlier turns, and the results of the tools Claude calls. Tokens are never sent. Signed-in users only by default (`require_token`), with limits per person per hour and per day. Each call is logged with its duration and the tool names, never the question. The outbound call goes to `api.anthropic.com` over HTTPS (the usual proxy settings, `HTTPS_PROXY`, apply).
@@ -167,7 +179,15 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.org_name` | the server name | Who runs the app, for Claude's instructions |
 | `assistant.extra_instructions` | none | Added to Claude's instructions (house style, departments to point to) |
 | `assistant.require_token` | true | Only signed-in people may ask |
-| `assistant.per_person_per_hour`, `assistant.per_day` | 30, 1000 | Question limits |
+| `assistant.identify` | true | Ask the Portal who each token belongs to, and count per person (needs `portal_url`) |
+| `assistant.per_person_per_hour`, `_per_day`, `_per_month` | 30, 50, 500 | Questions each person may ask (0: no limit) |
+| `assistant.per_person_tokens_per_month` | 0 (no cap) | Tokens each person may use in a month |
+| `assistant.groups` | none | Other limits for members of a Portal group: `{"group", "per_hour", "per_day", "per_month", "tokens_per_month"}` |
+| `assistant.allow_groups` | none (everyone signed in) | Only members of these Portal groups may ask |
+| `assistant.warn_at` | 5 | Tell the person how many are left once they are this close |
+| `assistant.usage_names` | false | Keep usernames (not a hash) in the usage file and `--usage` |
+| `assistant.per_day`, `assistant.per_month` | 1000, 0 | Questions for the whole server (0: no limit) |
+| `assistant.max_tokens_per_month` | 0 (no cap) | Tokens for the whole server in a month |
 | `assistant.max_steps`, `assistant.max_tokens`, `assistant.timeout_seconds` | 6, 1200, 60 | Tool rounds per answer, answer length, wait per API call |
 | `assistant.apps_only` | true | Only the map apps (requests with an allowed Origin) get `ask_assistant`. Desktop assistants connecting to this server bring their own model |
 | `assistant.feedback` | true | Take thumbs up and down on answers (`assistant_feedback`), saved to `logs/assistant-feedback.csv` |

@@ -38,10 +38,14 @@ def p(name, default=None):
     return request.values.get(name, default)
 
 
+PEOPLE = {'token-for-ann-lee-one': ('Ann.Lee@example.org', ['GIS Division']), 'token-for-ann-lee-two': ('ann.lee@example.org', ['GIS Division']),
+          'token-for-bob-0001': ('bob@example.org', ['Parks']), 'token-for-cy-00001': ('cy@example.org', [])}
+
+
 @app.before_request
 def record():
     CALLS.append({'path': request.path, 'token': p('token'), 'referer': request.headers.get('Referer'), 'where': p('where')})
-    if p('token') and p('token') != GOOD:
+    if p('token') and p('token') != GOOD and p('token') not in PEOPLE:
         return jsonify({'error': {'code': 498, 'message': 'Invalid token.'}})
     if '/Land/MapServer/3/' in request.path and not p('token'):
         return jsonify({'error': {'code': 499, 'message': 'Token Required'}})
@@ -215,6 +219,15 @@ def geocode():
 @app.route('/arcgis/rest/services/Search/GJlocator/GeocodeServer/reverseGeocode', methods=['GET', 'POST'])
 def reverse():
     return jsonify({'address': {'Match_addr': '250 N 5TH ST, GRAND JUNCTION, CO, 81501'}, 'location': {'x': -108.5506, 'y': 39.0639}})
+
+
+@app.route('/portal/sharing/rest/community/self', methods=['GET', 'POST'])
+def whoami():
+    token = request.values.get('token') or ''
+    if token not in PEOPLE:
+        return jsonify({'error': {'code': 498, 'message': 'Invalid token.'}})
+    name, groups = PEOPLE[token]
+    return jsonify({'username': name, 'groups': [{'id': 'g-' + g.lower().replace(' ', '-'), 'title': g} for g in groups]})
 
 
 @app.route('/portal/sharing/rest/search', methods=['GET', 'POST'])

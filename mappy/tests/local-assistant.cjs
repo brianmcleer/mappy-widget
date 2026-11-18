@@ -1691,6 +1691,55 @@ test('with an assistant as the helper, stuck answers and "ask Claude" carry one 
   assert.equal(links(asked).length, 0)
 })
 
+test('Claude usage: how many are left is said before the limit, and on request', async () => {
+  const { usageNote, usageQuestion } = require('../src/brain/handoff.ts')
+  assert.equal(usageNote({ left_today: 20, left_month: 300, warn_at: 5 }, 'Claude'), '')
+  assert.equal(usageNote({ left_today: 3, left_month: 300, warn_at: 5 }, 'Claude'), '3 Claude questions left for you today.')
+  assert.equal(usageNote({ left_today: 1, left_month: null, warn_at: 5 }, 'Claude'), '1 Claude question left for you today.')
+  assert.equal(usageNote({ left_today: 0, left_month: 40 }, 'Claude'), 'That was your last Claude question today. They come back tomorrow.')
+  assert.equal(usageNote({ left_today: 4, left_month: 2, warn_at: 5 }, 'Claude'), '2 Claude questions left for you this month.')
+  assert.equal(usageNote({ left_today: null, left_month: null, server_low: true }, 'Claude'), 'Claude is close to its shared limit for now, so it may pause soon.')
+  assert.equal(usageNote({ left_today: 'many', warn_at: 5 }, 'Claude'), '')
+  assert.equal(usageNote(null, 'Claude'), '')
+  for (const q of ['how many claude questions do I have left?', 'my Claude usage', 'what is my limit', 'my usage', 'how many questions do I have left today', 'Claude usage', 'how much claude have I used']) assert.ok(usageQuestion(q, 'Claude'), q)
+  for (const q of ['how many parcels are left of main', 'what is the speed limit on main st', 'land use near me', 'how many hydrants', 'city limits']) assert.ok(!usageQuestion(q, 'Claude'), q)
+  const { live } = fixture()
+  const calls = []
+  let limits = { left_today: 3, left_month: 200, per_day: 50, warn_at: 5 }
+  let fail = null
+  const port = {
+    label: 'City GIS', fallback: true, prefs: [],
+    tools: async () => [{ name: 'ask_assistant', description: 'Ask Claude', inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] }, annotations: { readOnlyHint: true } },
+      { name: 'assistant_usage', description: 'My usage', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } }],
+    call: async (name, args) => {
+      calls.push({ name, args })
+      if (name === 'assistant_usage') return { content: [{ type: 'text', text: 'You have asked Claude 47 of 50 questions today and 300 of 500 this month. 3 left today.' }], isError: false }
+      if (fail) return { content: [{ type: 'text', text: fail }], isError: true }
+      return { content: [{ type: 'text', text: 'It changed in 1994.' }], structuredContent: { answer: 'It changed in 1994.', limits }, isError: false }
+    }
+  }
+  const base = { live, index: new MappyIndex([]), model: {}, hints: new Map(), name: 'Mappy', appTitle: 'Test map', featureSearch: true, maxResults: 8, showInLayerList: false, layerListIds: [], layerListLabel: '' }
+  const mind = new Mind({ ...base, mcp: port, serverAssistant: { label: 'Claude', note: 'Answered by AI.' } })
+  let r = await mind.respond('ask claude why did the zoning change downtown')
+  assert.equal(r.note, 'Answered by AI. 3 Claude questions left for you today.')
+  limits = { left_today: 30, left_month: 200, warn_at: 5 }
+  r = await mind.respond('ask claude why did the zoning change uptown')
+  assert.equal(r.note, 'Answered by AI.', 'quiet when there is plenty left')
+  r = await mind.respond('how many Claude questions do I have left?')
+  assert.match(r.text, /47 of 50 questions today/)
+  assert.equal(calls.pop().name, 'assistant_usage', 'the count comes from the server, and asking it costs nothing')
+  // Out of questions: the server's own words are shown, even when Claude was only the quiet second try.
+  fail = 'You have used your 50 Claude questions for today. They come back tomorrow.'
+  r = await mind.respond('why did the zoning change in the nineties around the old depot')
+  assert.match(r.text, /used your 50 Claude questions for today/)
+  // A server without per-person counts says so plainly.
+  const old = new Mind({ ...base, mcp: { ...port, tools: async () => (await port.tools()).slice(0, 1) }, serverAssistant: { label: 'Claude' } })
+  assert.match((await old.respond('my claude usage')).text, /does not keep a count per person/)
+  // No Claude here: the words are an ordinary question again.
+  const none = new Mind(base)
+  assert.doesNotMatch((await none.respond('my usage')).text, /Claude/)
+})
+
 test('Claude through the GIS server answers inside the chat, with history and limits', async () => {
   const { live } = fixture()
   const calls = []

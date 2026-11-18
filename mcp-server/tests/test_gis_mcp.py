@@ -390,7 +390,7 @@ class GisMcpTest(unittest.TestCase):
             names = [t['name'] for t in self.rpc('tools/list').get_json()['result']['tools']]
             self.assertNotIn('ask_assistant', names)
             # Enabled but no key in the environment: still not listed; health says why.
-            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield', 'retry_wait_seconds': 0, 'usage_file': ''}
+            a = {'enabled': True, 'api_key_env': 'TEST_ANTHROPIC_KEY', 'api_url': 'http://127.0.0.1:%d/v1/messages' % ANTHROPIC, 'per_person_per_hour': 2, 'org_name': 'Springfield', 'retry_wait_seconds': 0, 'usage_file': '', 'identify': False}
             os.environ.pop('TEST_ANTHROPIC_KEY', None)
             app = gis_mcp.create_app(dict(self.cfg, _no_startup_refresh=True, assistant=dict(gis_mcp.DEFAULTS['assistant'], **a))).test_client()
             self.assertIn('no key', app.get('/health').get_json()['assistant']['status'])
@@ -612,6 +612,95 @@ class GisMcpTest(unittest.TestCase):
             r = rpc('tools/call', {'name': 'ask_assistant', 'arguments': {'question': 'hello'}}, token='third-token-789')
             self.assertTrue(r['isError'])
             self.assertIn('not set up correctly', r['content'][0]['text'])
+        finally:
+            srv.shutdown()
+            if old is None:
+                os.environ.pop('TEST_ANTHROPIC_KEY', None)
+            else:
+                os.environ['TEST_ANTHROPIC_KEY'] = old
+
+    def test_usage_is_counted_per_person_from_the_portal(self):
+        from werkzeug.serving import make_server
+        srv = make_server('127.0.0.1', ANTHROPIC, fake_anthropic.app, threaded=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = os.environ.get('TEST_ANTHROPIC_KEY')
+        os.environ['TEST_ANTHROPIC_KEY'] = 'sk-test-key'
+        folder = tempfile.mkdtemp()
+        try:
+            a = dict(gis_mcp.DEFAULTS['assistant'], enabled=True, api_key_env='TEST_ANTHROPIC_KEY', api_url='http://127.0.0.1:%d/v1/messages' % ANTHROPIC, retry_wait_seconds=0,
+                     per_person_per_hour=0, per_person_per_day=2, per_person_per_month=3, warn_at=5, usage_names=True, cache_minutes=0,
+                     groups=[{'group': 'GIS Division', 'per_day': 4, 'per_month': 0}, {'group': 'nobody', 'per_day': 999}])
+            cfg = dict(self.cfg, _no_startup_refresh=True, log_dir=folder, assistant=a)
+            app = gis_mcp.create_app(cfg).test_client()
+            n = [0]
+
+            def call(name, args, token):
+                h = {'Content-Type': 'application/json', 'Origin': ORIGIN}
+                if token:
+                    h['Authorization'] = 'Bearer ' + token
+                return app.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}}), headers=h).get_json()['result']
+
+            def ask(token):
+                n[0] += 1
+                return call('ask_assistant', {'question': 'hello number %d' % n[0]}, token)
+            # A made-up or expired token is not a person.
+            r = ask('not-a-real-token')
+            self.assertTrue(r['isError'])
+            self.assertIn('Sign in again', r['content'][0]['text'])
+            # Bob gets the default two a day, and is told how many are left.
+            r = ask('token-for-bob-0001')
+            self.assertFalse(r['isError'], r)
+            lim = r['structuredContent']['limits']
+            self.assertEqual((lim['left_today'], lim['per_day'], lim['left_month'], lim['counted_as']), (1, 2, 2, 'you'))
+            self.assertEqual(ask('token-for-bob-0001')['structuredContent']['limits']['left_today'], 0)
+            r = ask('token-for-bob-0001')
+            self.assertTrue(r['isError'])
+            self.assertIn('your 2 Claude questions for today', r['content'][0]['text'])
+            # Cy is somebody else: Bob's limit is not hers.
+            self.assertFalse(ask('token-for-cy-00001')['isError'])
+            # Ann is in GIS Division: four a day, no monthly limit. A new token (new device, new sign-in) is still Ann.
+            for token in ('token-for-ann-lee-one', 'token-for-ann-lee-two', 'token-for-ann-lee-one', 'token-for-ann-lee-two'):
+                r = ask(token)
+                self.assertFalse(r['isError'], r)
+            self.assertEqual((r['structuredContent']['limits']['left_today'], r['structuredContent']['limits']['per_month']), (0, None))
+            self.assertTrue(ask('token-for-ann-lee-one')['isError'])
+            # Her own numbers, on request.
+            mine = call('assistant_usage', {}, 'token-for-ann-lee-two')
+            self.assertFalse(mine['isError'], mine)
+            self.assertIn('4 of 4 questions today', mine['content'][0]['text'])
+            self.assertEqual(mine['structuredContent']['used_month'], 4)
+            self.assertTrue(call('assistant_usage', {}, None)['isError'])
+            # The file keeps people by month, by username because usage_names is on, and a restart reads it back.
+            with open(os.path.join(folder, 'assistant-usage.json')) as f:
+                saved = json.load(f)
+            month = time.strftime('%Y-%m')
+            self.assertEqual(saved['people'][month]['ann.lee@example.org']['q'], 4)
+            self.assertEqual(saved['people'][month]['bob@example.org']['q'], 2)
+            again = gis_mcp.Server(cfg)
+            self.assertEqual(again.assistant.people[month]['ann.lee@example.org']['q'], 4)
+            self.assertEqual(again.assistant.today()['questions'], 7)
+            with self.assertRaises(gis_mcp.ToolError):
+                again.assistant.ask({'question': 'after a restart'}, 'token-for-bob-0001', ORIGIN, 'x')
+            # The month: three for Bob, whatever the day says.
+            again.assistant.a['per_person_per_day'] = 0
+            again.assistant.ask({'question': 'the third this month'}, 'token-for-bob-0001', ORIGIN, 'x')
+            with self.assertRaises(gis_mcp.ToolError) as e:
+                again.assistant.ask({'question': 'the fourth this month'}, 'token-for-bob-0001', ORIGIN, 'x')
+            self.assertIn('for this month', e.exception.said)
+            # Names hashed by default; only certain groups; and a budget for the whole server.
+            hashed = gis_mcp.Server(dict(cfg, log_dir=tempfile.mkdtemp(), assistant=dict(a, usage_names=False, allow_groups=['GIS Division'], per_month=1)))
+            with self.assertRaises(gis_mcp.ToolError) as e:
+                hashed.assistant.ask({'question': 'may I'}, 'token-for-bob-0001', ORIGIN, 'x')
+            self.assertIn('certain groups', e.exception.said)
+            hashed.assistant.ask({'question': 'may I'}, 'token-for-ann-lee-one', ORIGIN, 'x')
+            key = list(hashed.assistant.people[month])[0]
+            self.assertTrue(key.startswith('u:') and 'ann' not in key)
+            with self.assertRaises(gis_mcp.ToolError) as e:
+                hashed.assistant.ask({'question': 'one more'}, 'token-for-ann-lee-one', ORIGIN, 'x')
+            self.assertIn('budget for this month', e.exception.said)
+            # No Portal to ask: it falls back to telling tokens apart, as before.
+            alone = gis_mcp.Server(dict(cfg, portal_url='', log_dir=tempfile.mkdtemp()))
+            self.assertFalse(alone.assistant.person('anything', ORIGIN, 'x')['verified'])
         finally:
             srv.shutdown()
             if old is None:

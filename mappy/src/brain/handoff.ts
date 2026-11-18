@@ -140,3 +140,36 @@ export function parseHandoff (text: string, label: string): { question: string }
   if (!rest || /^(?:this|that|it|instead|please|the same(?: thing| question)?|again|then|too)$/i.test(rest)) return { question: '' }
   return { question: m[1].replace(/^(?:to|about|for)\s+/i, '').trim() }
 }
+
+/** What the GIS server says this person has used and has left with the AI assistant (gis_mcp.py `limits`). */
+export interface AssistantLimits { left_today?: number | null, left_month?: number | null, left_hour?: number | null, per_day?: number | null, per_month?: number | null, used_today?: number, used_month?: number, warn_at?: number, server_low?: boolean }
+
+/** "How many Claude questions do I have left", "my Claude usage", "what is my limit". */
+export function usageQuestion (text: string, label: string): boolean {
+  const name = one(label).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const who = `(?:${name ? name + '|' : ''}claude|ai|assistant)`
+  const t = one(text).toLowerCase().replace(/[?!.]+$/, '')
+  if (new RegExp(`^(?:what(?: is|'s| are)? |show (?:me )?|check )?my (?:${who} )?(?:usage|limits?|quota|allowance)(?: (?:for|with|on) ${who})?$`).test(t)) return true
+  if (new RegExp(`\\bhow (?:many|much)\\b.*\\b(?:${who}\\b.*\\b(?:left|remaining|used|have i (?:asked|used))|(?:questions?|asks?|usage)\\b.*\\b(?:left|remaining)\\b.*\\b${who})`).test(t)) return true
+  return new RegExp(`\\b(?:${who}) (?:usage|limits?|quota)$`).test(t) || /^how many questions (?:do i have |have i got )?(?:left|remaining)(?: today| this month)?$/.test(t)
+}
+
+/**
+ * The line under an answer once this person is close to a limit: "3 Claude questions left for you today".
+ * Empty when there is nothing to say. The server sets how close is close (warn_at).
+ */
+export function usageNote (limits: AssistantLimits | null | undefined, label: string): string {
+  if (!limits || typeof limits !== 'object') return ''
+  const who = one(label) || 'AI'
+  const near = Number.isFinite(limits.warn_at as number) ? Math.max(0, Number(limits.warn_at)) : 5
+  const n = (v: any): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null
+  const day = n(limits.left_today)
+  const month = n(limits.left_month)
+  const hour = n(limits.left_hour)
+  const say = (count: number, when: string, back: string): string => count === 0 ? `That was your last ${who} question ${when}. ${back}` : `${count} ${who} question${count === 1 ? '' : 's'} left for you ${when}.`
+  // The month runs out for longer, so it is said first when both are close.
+  if (month !== null && month <= near && (day === null || month <= day)) return say(month, 'this month', 'They come back on the 1st.')
+  if (day !== null && day <= near) return say(day, 'today', 'They come back tomorrow.')
+  if (hour !== null && hour <= Math.min(near, 2)) return say(hour, 'this hour', 'Give it a few minutes.')
+  return limits.server_low ? `${who} is close to its shared limit for now, so it may pause soon.` : ''
+}
