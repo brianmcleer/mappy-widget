@@ -96,9 +96,14 @@ export function pickVoice<T extends VoiceInfo> (voices: T[], lang = 'en-US', wan
   return top > -100 ? best : pool[0] || null
 }
 
-/** Where the server voice lives, from the MCP address in settings (".../gis-mcp/mcp" to ".../gis-mcp/speak"). '' when there is none. */
+/**
+ * Where the server voice lives, from the MCP address in settings: ".../gis-mcp/mcp" (or "/sse", or the
+ * bare ".../gis-mcp") becomes ".../gis-mcp/speak". https only, or http on this computer. '' when there is none.
+ */
 export function speakUrl (mcpUrl: string | undefined | null): string {
-  const u = String(mcpUrl || '').trim()
-  if (!/^https:\/\/|^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\//i.test(u)) return ''
-  return /\/mcp\/?$/.test(u) ? u.replace(/\/mcp\/?$/, '/speak') : ''
+  const u = String(mcpUrl || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '')
+  if (!/^https:\/\/[^\s/]+|^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i.test(u)) return ''
+  if (/\/(?:mcp|sse|messages)$/i.test(u)) return u.replace(/\/(?:mcp|sse|messages)$/i, '/speak')
+  if (/\/speak$/i.test(u)) return u
+  return /^https?:\/\/[^/]+$/i.test(u) ? '' : u + '/speak'
 }

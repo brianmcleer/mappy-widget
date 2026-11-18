@@ -2210,7 +2210,11 @@ test('read aloud: what is said, how it is cut, and which voice is picked', () =>
   assert.equal(pickVoice([], 'en-US'), null)
   // The voice lives beside the MCP address, https only.
   assert.equal(speakUrl('https://gis.example.org/gis-mcp/mcp'), 'https://gis.example.org/gis-mcp/speak')
-  assert.equal(speakUrl('http://gis.example.org/gis-mcp/mcp'), ''); assert.equal(speakUrl('https://gis.example.org/other'), ''); assert.equal(speakUrl(''), '')
+  assert.equal(speakUrl('https://gis.example.org/gis-mcp/mcp/'), 'https://gis.example.org/gis-mcp/speak')
+  assert.equal(speakUrl('https://gis.example.org/gis-mcp'), 'https://gis.example.org/gis-mcp/speak')
+  assert.equal(speakUrl('https://gis.example.org/gis-mcp/sse?x=1'), 'https://gis.example.org/gis-mcp/speak')
+  assert.equal(speakUrl('http://localhost:8912/mcp'), 'http://localhost:8912/speak')
+  assert.equal(speakUrl('http://gis.example.org/gis-mcp/mcp'), ''); assert.equal(speakUrl('https://gis.example.org'), ''); assert.equal(speakUrl(''), '')
 })
 
 test('questions land on the right field when names are short forms with no aliases (assessor and utility layers)', () => {

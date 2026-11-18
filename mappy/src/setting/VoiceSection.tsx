@@ -93,7 +93,8 @@ export default function VoiceSection (props: Props): any {
       )}
       {source === 'server' && (
         <>
-          {!url && <Note tone='warn'>Add your GIS server under MCP server first. The voice lives at the same address.</Note>}
+          {!url && <Note tone='warn'>{props.mcp?.url ? `The MCP server address (${props.mcp.url}) does not look like a gis-mcp address. It should end in /gis-mcp/mcp.` : 'Add your GIS server under MCP server first. The voice lives at the same address.'}</Note>}
+          {url && <Hint>Voice address: {url}</Hint>}
           <SettingRow flow='wrap' label='Server voice'>
             <Select size='sm' style={full} value={v.serverVoice || ''} onChange={(e: any) => save({ serverVoice: e.target.value })} aria-label='Server voice'>
               <Option value=''>The server's own choice</Option>

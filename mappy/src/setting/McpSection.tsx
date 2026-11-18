@@ -64,11 +64,11 @@ export default function McpSection (props: Props): any {
 
   return (
     <SettingSection title='MCP server'>
-      <Hint>Optional, and used when "Where he gets help" is set to My GIS server or to Claude answering in the chat. Connect a Model Context Protocol server and Mappy can answer with its tools: your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services (addresses, directions, elevation) or another server. Read-only tools run on their own; anything that could change data asks first.</Hint>
+      <Hint>Optional. Your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services or another Model Context Protocol server. Read-only tools run on their own; anything that could change data asks first.</Hint>
 
       {cfg.url && <Note tone={!props.active ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
         {!props.active
-          ? `Not in use. ${cfg.label || 'The server'} is kept, but "Where he gets help" is set to something else. Choose "My GIS server (MCP)" or "Claude, answering in the chat" there to use it.`
+          ? `Questions do not go to ${cfg.label || 'the server'}: "Where he gets help" is set to something else. Its voice can still read answers aloud (see Voice).`
           : cfg.url === ESRI_LOCATION_MCP
             ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Disconnect it if you are not using it."
             : `In use: ${cfg.label || cfg.url}.`}
@@ -79,9 +79,9 @@ export default function McpSection (props: Props): any {
           onChange={(e: any) => setUrl(e.target.value.trim())} onAcceptValue={(v: string) => { if (safeServerUrl(v)) save({ url: v.trim() }) }} />
       </SettingRow>
       <SettingRow>
-        <div className='ms-inline' style={{ gap: 12, flexWrap: 'wrap' }}>
-          <Button type='link' size='sm' style={{ padding: 0, height: 'auto' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
-          {cfg.url && <Button type='link' size='sm' style={{ padding: 0, height: 'auto' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, width: '100%' }}>
+          <Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
+          {cfg.url && <Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
         </div>
       </SettingRow>
 
