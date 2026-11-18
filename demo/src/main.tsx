@@ -37,6 +37,7 @@ const store = {
   set: (k: string, v: string | null): void => { try { if (v === null) window.localStorage.removeItem('mappy-demo:' + k); else window.localStorage.setItem('mappy-demo:' + k, v) } catch (e) { if (v === null) delete memory[k]; else memory[k] = v } }
 }
 const port = pretendClaude(town.layers, town.places)
+const ALONE = /[?&]helper=local\b/.test(window.location.search)
 let waitingNote: (note: string) => void = () => {}
 const mind = new Mind({
   index: new MappyIndex([...live.docs(), ...adminDocs(FAQ as any, 'Mapleton is a made-up town of twelve blocks.\n\nTown Hall is open weekdays 8 to 5.')]),
@@ -53,8 +54,9 @@ const mind = new Mind({
   geocoders: [{ url: 'https://demo.invalid/GeocodeServer', name: 'Mapleton addresses', singleLineFieldName: 'SingleLine' } as any],
   typoFix: true,
   fun: true,
-  mcp: port as any,
-  serverAssistant: { label: 'Claude (demo)', shareSelection: true, note: DEMO_NOTE },
+  // ?helper=local shows him on his own, with no server and no AI helper.
+  mcp: ALONE ? null : port as any,
+  serverAssistant: ALONE ? null : { label: 'Claude (demo)', shareSelection: true, note: DEMO_NOTE },
   waiting: (note: string) => waitingNote(note),
   contact: { name: 'the Mapleton map desk', email: 'mapdesk@mapleton.example', hours: 'weekdays, 8 to 5 (a made-up desk for this demo)' },
   place: { org: 'the Town', name: 'Mapleton', website: '', facts: ['Mapleton has twelve blocks, three parks and one very proud paper map.', 'Every street in Mapleton is named for a tree, and every avenue for a number.'] },

@@ -9,6 +9,9 @@ export interface AnalysisRequest {
   stat?: 'avg' | 'sum' | 'min' | 'max'
   valueField?: string
   condition?: string
+  /** A filter already compiled to SQL by the question reader (brain/ask.ts), and how to say it. */
+  where?: string
+  said?: string
   inView: boolean
   offset?: number
   limit?: number

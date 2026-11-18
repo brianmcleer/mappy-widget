@@ -171,6 +171,9 @@ export function parsePlaceQuestion (input: string): PlaceQuestion | null {
   if (near2 && cleanThing(near2[1])) return { kind: 'nearest', thing: cleanThing(near2[1]), ...cleanPlace(near2[2]) }
   const near3 = q.match(/^(?:(?:are there|is there|any|show me|find|where are(?: the)?)\s+)?(.+?)\s+(?:near|nearby|around|by|next to)\s+(.+)$/i)
   if (near3 && looksLikePlace(cleanPlace(near3[2]).place || (cleanPlace(near3[2]).here ? 'here' : '')) && cleanThing(near3[1])) return { kind: 'nearest', thing: cleanThing(near3[1]), ...cleanPlace(near3[2]) }
+  // "How many hydrants are near the library", "parcels near City Hall": near, with no distance said, is within 500 feet.
+  const near4 = q.match(/^(?:how many |which |what |show me |find |list |are there (?:any )?|any )?(?:the\s+)?(.+?)\s+(?:are |is )?(?:near|nearby|around|close to|next to)\s+(.+)$/i)
+  if (near4 && !/^(?:count|summari[sz]e|tally|group|break)\b|\b(?:by|per|where|with)\b/i.test(q) && cleanThing(near4[1]) && cleanThing(near4[1]).split(' ').length <= 3 && !/\b(?:and|or|the same|each other)\b/i.test(near4[2])) return { kind: 'within', thing: cleanThing(near4[1]), feet: 500, ...cleanPlace(near4[2]) }
   // Summary: "count sewer mains by material", "break down parcels by zoning".
   const sum = q.match(/^(?:how many|count|summari[sz]e|break ?down|tally|group)\s+(?:the\s+)?(.+?)\s+(?:by|per|for each|grouped by)\s+(?:the\s+)?([\w ]{2,40})$/i)
   if (sum) return { kind: 'summary', thing: cleanThing(sum[1]).replace(/\s+(?:are there|there are)$/i, ''), groupBy: sum[2].replace(/\s+(?:are there|is it)$/i, '').trim() }

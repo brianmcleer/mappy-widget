@@ -16,13 +16,14 @@ export async function analyzeLayer (live: LiveMap, entry: LayerEntry, request: A
   q.where = q.where || target.definitionExpression || '1=1'
   const base = q.where
   if (request.condition) q.where = `(${q.where}) AND (${compileConditions(request.condition, fields)})`
+  if (request.where) q.where = `(${q.where}) AND (${request.where})`
   q.returnGeometry = false
   if (request.inView) {
     if (!live.view?.extent) throw new Error('The current map extent is not available yet.')
     q.geometry = live.view.extent
     q.spatialRelationship = 'intersects'
   }
-  const scope = (request.inView ? 'in the current map extent' : 'across the layer') + (request.condition ? `, where ${request.condition}` : '')
+  const scope = (request.inView ? 'in the current map extent' : 'across the layer') + (request.condition ? `, where ${request.condition}` : '') + (request.said ? `, where ${request.said}` : '')
   const source = { title: entry.title, detail: `Live layer query · ${scope} · ${new Date().toLocaleTimeString()}` }
   if (request.kind === 'browse') {
     if (request.limit != null && (!Number.isFinite(request.limit) || request.limit < 1)) throw new Error('Ask for at least one ranked row.')

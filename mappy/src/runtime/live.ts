@@ -383,8 +383,11 @@ export class LiveMap {
   /** Drawing right now: on, every group above it on. */
   isVisible (e: LayerEntry): boolean { return this.isOn(e) && !this.hiddenBy(e) }
 
-  /** What Mappy can look inside: a visible layer or table, not a group. */
+  /** What a word search looks inside: a visible layer or table, not a group. */
   canSee (e: LayerEntry): boolean { return !e.isGroup && this.isVisible(e) }
+
+  /** What he can answer questions about: any layer or table in the map, drawing or not (its records are the same either way). */
+  canAsk (e: LayerEntry): boolean { return !e.isGroup }
 
   status (e: LayerEntry): LayerStatus {
     if (!this.isOn(e)) return 'off'

@@ -840,7 +840,7 @@ test('Mind: where are the parks, list the parks, labels, map blank, data info, c
   assert.equal(parks.labelsVisible, true)
   assert.match((await mind.respond('when was the parks data updated')).text, /\*\*Parks\*\*: last edited on \*\*October 1, 2026\*\*; source: City of Grand Junction Parks/)
   assert.match((await mind.respond('is this map accurate')).text, /general reference/)
-  assert.match((await mind.respond('largest park')).text, /Parks/)
+  assert.match((await mind.respond('largest park')).text, /The largest park is \*\*/)
   assert.match((await mind.respond('ok')).text, /^(?:Okay!|Got it\.|👍|Right on\.|Sure thing\.)$/)
   assert.match((await mind.respond('cancel')).text, /^(?:Okay\.|No problem\.|Sure thing\.)$/)
   assert.match((await mind.respond('there is a pothole on my street')).text, /report/i)

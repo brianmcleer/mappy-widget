@@ -71,6 +71,9 @@ import { suggestAddresses } from './geocoder'
 import { toLatLon as projectToLatLon, warmProjection, needsProjection } from './project'
 import { readKeepsakes, emptyKeepsakes, remember, stampLine, keepsake, keepsakeHello, keepsakeSummary, usual } from '../brain/keepsakes'
 import type { Keepsakes, Moment } from '../brain/keepsakes'
+import { readAsk, mentionedLayer, askWhere, askSaid, namedFeature, fieldFor } from '../brain/ask'
+import type { Ask } from '../brain/ask'
+import { schemaOf, loadValues, runAsk, probeText } from './ask'
 import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, privacyText } from '../brain/care'
 import type { Contact, Miss } from '../brain/care'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
@@ -131,7 +134,7 @@ class LayerChoice extends Error {
 }
 
 /** Intents whose words ("there", "this") look like a place but are about the app or the conversation. */
-const NOT_PLACE = new Set(['help', 'about', 'mapBlank', 'hasLayer', 'today', 'download', 'listLayers', 'listWidgets', 'listPages', 'listBookmarks', 'tour', 'tourNext', 'tourStop', 'changes', 'tryAgain', 'mapSummary', 'whoami', 'diagnostics'])
+const NOT_PLACE = new Set(['help', 'about', 'mapBlank', 'hasLayer', 'today', 'download', 'listLayers', 'listFeatures', 'listWidgets', 'listPages', 'listBookmarks', 'tour', 'tourNext', 'tourStop', 'changes', 'tryAgain', 'mapSummary', 'whoami', 'diagnostics'])
 
 /** The service url of a layer, when it has one. */
 function live_url (live: LiveMap, e: LayerEntry): string { try { return String(live.target(e)?.url || '') } catch (err) { return '' } }
@@ -153,6 +156,11 @@ export class Mind {
   private stuckRun = 0
   private missMemory: Miss[] = []
   private keepMemory: Keepsakes = emptyKeepsakes()
+  /** The last data question he read against the layers, for "show them" and "only show them on the map". */
+  private lastAsk: { ask: Ask, key: string } | null = null
+  /** The reply that answered it: follow-ups ("who owns it", "which ones are over 5 acres") apply while it is the latest thing said. */
+  private lastAskReply: Reply | null = null
+  private lastAskAt = 0
   /** This turn was keepsake talk (the passport, our story): it earns nothing itself. */
   private keepsakeTurn = false
   /** Guided tour: the widget docs still to visit, and the one being shown. */
@@ -267,7 +275,7 @@ export class Mind {
     if (!this.ctx.featureSearch) return { text: 'Data queries are disabled by the app author.', mood: 'confused' }
     const entry = this.ctx.live.find(t.request.layer)
     if (!entry) { this.dataTask = null; return stale }
-    if (!this.ctx.live.canSee(entry)) return this.offReply(entry)
+    if (!this.ctx.live.canAsk(entry)) return this.offReply(entry)
     let request: AnalysisRequest
     try { request = operation === 'refresh' ? { ...t.request } : reviseTask(t.request, operation) } catch (error) {
       return { text: error instanceof Error ? error.message : 'That change does not apply to this task.', mood: 'confused' }
@@ -437,8 +445,11 @@ export class Mind {
         const { keep, earned, levelUp } = remember(this.keepsakes(), m, this.bond())
         this.keepKeepsakes(keep)
         const line = stampLine(earned, Object.keys(keep.stamps).length)
-        if (line && good) reply.text = `${reply.text}\n\n${line}`
-        if (levelUp && good) reply.text = `${reply.text}\n\n${levelUp}`
+        // One aside per answer at most; the answer comes first.
+        // One aside per answer at most, after the answer. A new level is only said after a real answer, never mid-joke.
+        const data = !!(reply.table || reply.chart || reply.results?.length || reply.sources?.length || reply.actions?.length)
+        const aside = !good || /\n\n(?:That was our|Question \d+|\d+ questions|One hundred|One thousand)/.test(reply.text) ? '' : (line || (data && !m.fun ? levelUp : ''))
+        if (aside) reply.text = `${reply.text}\n\n${aside}`
       } catch (e) { }
     }
     // Stuck: keep the question for the people who run the app, and after two in a row offer a person.
@@ -459,6 +470,13 @@ export class Mind {
     const sa = this.ctx.serverAssistant
     if (sa && !control && (reply.table || reply.chart) && reply.sources?.[0]?.title !== sa.label && reply.mood !== 'confused' && !(reply.suggest || []).some(x => new RegExp(`^ask ${sa.label}`, 'i').test(x))) {
       reply.suggest = [...(reply.suggest || []).slice(0, 4), `Ask ${sa.label} about this`]
+    }
+    // An answer from a layer that is turned off still stands; one click shows the layer.
+    if (!control && (reply.table || reply.chart || reply.results?.length) && this.lastLayer && reply.mood !== 'confused') {
+      try {
+        const e = this.ctx.live.entries().find(x => x.path === this.lastLayer)
+        if (e && !e.isGroup && !e.isTable && !this.ctx.live.isVisible(e) && !(reply.actions || []).some(a => a.type === 'layerOn')) reply.actions = [...(reply.actions || []).slice(0, 3), { type: 'layerOn', id: e.key, label: `Turn on ${e.title}` }]
+      } catch (e) { }
     }
     // A server hiccup: one chip runs the same request again.
     if (reply.mood === 'alert' && this.lastInput && !control && !(reply.suggest || []).some(x => /try again/i.test(x))) reply.suggest = ['Try again', ...(reply.suggest || [])].slice(0, 5)
@@ -564,10 +582,14 @@ export class Mind {
     if (fb) return this.rateClaude(fb[1] === 'up', Number(fb[2]))
     const cared = this.care(input)
     if (cared) { this.lastReply = cared; return cared }
+    const followed = await this.followAsk(input)
+    if (followed) { this.lastReply = followed; return followed }
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
     else reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, await this.respondRead(text)) : await this.offerServer(text, await this.respondRead(text))
+    // Stuck on a question about one address ("when did 250 Oak St sell", "land use of 250 Oak St"): look the field up on its parcel.
+    if (['confused', 'think'].includes(reply.mood || '') && !/^__/.test(input)) { const a = await this.addressAttr(text); if (a) { reply = a; this.lastReply = a } }
     // Stuck: offer the closest requests he can do, the way Clippy asked "It looks like you're...".
     if (reply.mood === 'confused' && this.ctx.typoFix !== false && !/^__/.test(input) && input.length < 120) {
       try {
@@ -613,6 +635,184 @@ export class Mind {
       const back = welcomeBack(this.bond(), now)
       return [back, hello.line].filter(Boolean).join(' ')
     } catch (e) { return '' }
+  }
+
+  // ------------------------------------------------------------ data questions, read against the layers
+
+  /**
+   * A question about the data, read against what the layers really hold (names, fields, values):
+   * "how many parcels are zoned R-4", "most expensive parcel", "average acres by zoning". Null
+   * when it is not one, so the other readings get their turn.
+   */
+  private async dataQuestion (raw: string, intent: string, only?: Array<Ask['kind']>): Promise<Reply | null> {
+    const live = this.ctx.live
+    if (!this.ctx.featureSearch || !live.ready || /^__/.test(raw)) return null
+    if (['layerOff', 'allOff', 'allOn', 'pan', 'close', 'basemap', 'opacity', 'opacityStep', 'mapFilter', 'mapUnfilter', 'mapFilters', 'saveView', 'listViews', 'deleteView', 'undo', 'redo', 'help', 'tour', 'listLayers', 'listWidgets', 'mapSummary', 'diagnostics', 'compareLayers', 'difference', 'density', 'fields', 'dataInfo', 'dataIdeas', 'layerDiagnosis', 'whichLayer', 'hasLayer', 'styleAsk', 'labels', 'download', 'pin', 'locateMe', 'whereami', 'scale', 'scaleInfo', 'rotate', 'threeD', 'home', 'goBack', 'preset', 'listPresets', 'favorites', 'reveal', 'solo'].includes(intent)) return null
+    if (/\b(?:in chat|table)\b/i.test(raw)) return null
+    const entries = live.entries().filter(e => !e.isGroup && typeof live.target(e)?.queryFeatures === 'function')
+    if (!entries.length) return null
+    let schemas = entries.map(e => schemaOf(live, e))
+    // The older, exact syntax keeps its own reading: "where", a raw field name, "summarize", "check data quality".
+    const fieldNames = new Set(schemas.flatMap(x => x.fields.map(f => f.name)).filter(n => /^[A-Z][A-Z0-9_]{2,}$/.test(n)))
+    if (/\bwhere\b|^(?:summari[sz]e|check|filter|describe)\b/i.test(raw) || raw.split(/[^A-Za-z0-9_]+/).some(w => fieldNames.has(w))) return null
+    const last = entries.find(e => e.path === this.lastLayer)
+    const why: { ungrounded?: boolean } = {}
+    const read = (): Ask | null => { try { return readAsk(raw, schemas, { fallback: last?.key, why }) } catch (e) { return null } }
+    // "Zoom to Maple St", "show me Compass Park": a thing on the map called by its own name.
+    let ask = read()
+    if ((!ask || (ask.unknown.length > 0 && !ask.clauses.length)) && !only && ['zoom', 'goto', 'layerOn', 'showLayer', 'open', 'find', 'ask'].includes(intent)) {
+      const phrase = raw.replace(/^(?:please\s+)?(?:zoom(?: in)?(?: to| on)?|go to|take me to|show me|show|find|where(?:'s| is| are)|locate|fly to|center on|pan to|jump to|bring up|pull up|highlight)\s+/i, '').replace(/[?.!]+$/, '').replace(/\s+on (?:the )?map$/i, '').trim()
+      if (phrase && phrase !== raw.trim() && phrase.split(/\s+/).length <= 6 && !entries.some(e => { const a = e.title.toLowerCase().replace(/[^a-z0-9]+/g, ''); const b = phrase.toLowerCase().replace(/[^a-z0-9]+/g, ''); return a === b || a === b + 's' || a + 's' === b })) {
+        let hit = namedFeature(phrase, schemas)
+        if (!hit) { try { await Promise.all(entries.filter(e => live.isVisible(e)).slice(0, 6).map(e => loadValues(live, e))) } catch (e) { } schemas = entries.map(e => schemaOf(live, e)); hit = namedFeature(phrase, schemas) }
+        const e = hit ? entries.find(x => x.key === hit!.layer.key) : null
+        if (hit && e) {
+          const reply = await this.answerAsk({ layer: e.key, kind: 'list', clauses: [{ field: hit.field, sql: `${hit.field.name} = '${hit.value.replace(/'/g, "''")}'`, said: `${fieldLabel(hit.field)} ${hit.value}` }], unknown: [] }, e)
+          if (reply.results?.length) { try { await live.show(reply.results[0]) } catch (err) { } reply.text = `Here is **${hit.value}**, in ${e.title}.`; reply.mood = 'pleased'; reply.actions = (reply.actions || []).filter(a => a.type === 'layerOn'); return reply }
+        }
+      }
+    }
+    if (['zoom', 'goto'].includes(intent)) return null
+    // First with what is already known; the layer's values are read (once) only when the words need them.
+    const named = mentionedLayer(raw, schemas)
+    const asking = /^(?:how (?:many|much|big|long|old|tall|wide)|which|what|who|whose|list|show|find|get|give|count|number|average|avg|mean|total|sum|top|biggest|largest|smallest|oldest|newest|most|least|cheapest|highest|lowest|longest|shortest|tallest|chart|graph|pie|break)\b/i.test(raw) && raw.trim().split(/\s+/).length >= 2
+    const unread = (a: Ask): boolean => { const e = entries.find(x => x.key === a.layer); return !!e && !schemaOf(live, e).values }
+    if (ask ? (ask.unknown.length > 0 || (!!ask.loose && unread(ask))) : (asking && !!why.ungrounded)) {
+      const mine = ask ? entries.filter(e => e.key === ask!.layer) : []
+      const need = named ? entries.filter(e => e.key === named.layer.key) : [...mine, ...(last ? [last] : []), ...entries.filter(e => live.isVisible(e) && e !== last)].slice(0, 5)
+      try { await Promise.all(need.map(e => loadValues(live, e))) } catch (e) { }
+      schemas = entries.map(e => schemaOf(live, e))
+      ask = read()
+    }
+    if (!ask || (only && !only.includes(ask.kind))) return null
+    const entry = entries.find(e => e.key === ask!.layer)
+    if (!entry) return null
+    // A command that also reads as a plain layer ("show parcels") stays a command; a filter in it makes it a question.
+    if (['layerOn', 'showLayer', 'open'].includes(intent) && ((!ask.clauses.length && ask.kind === 'list') || ask.unknown.length)) return null
+    if (ask.unknown.length) {
+      // Words that are not a field or a known value: a name, an owner, a street? Look for them as text.
+      let found: Awaited<ReturnType<typeof probeText>> = null
+      try { found = await probeText(live, entry, ask.unknown.join(' '), askWhere(ask)) } catch (e) { }
+      if (found) { ask.clauses.push(found); ask.unknown = []; if (ask.kind === 'attr' && !ask.field) ask.kind = 'list' } else {
+        // Not grounded. A plain "show ..." or "what ..." goes to the other readings; a count or a ranking must not ignore words.
+        if ((ask.kind === 'list' || ask.kind === 'attr') && !ask.clauses.length) return null
+        if (parseAnalysis(raw)) return null
+        const fields = schemas.find(x => x.key === entry.key)!.fields.filter(f => !/oid|geometry|global/i.test(f.type || '') && !/^shape|objectid|globalid/i.test(f.name)).slice(0, 10).map(f => fieldLabel(f))
+        this.lastLayer = entry.path
+        return { text: `I looked in **${entry.title}** but could not match “${ask.unknown.join(' ')}” to anything there, so I did not guess. It has: ${fields.join(', ')}.`, mood: 'confused', suggest: [`What fields does ${entry.title} have?`, `How many ${entry.title}?`] }
+      }
+    }
+    // A field asked about with nothing to narrow it ("what are the land uses") is its list of values; anything vaguer is not a data question.
+    if (ask.kind === 'attr' && !ask.clauses.length) { if (!/^(?:what|which)\b/i.test(raw)) return null; ask.kind = 'distinct' }
+    return await this.answerAsk(ask, entry)
+  }
+
+  private async answerAsk (ask: Ask, entry: LayerEntry): Promise<Reply> {
+    const live = this.ctx.live
+    try {
+      const reply = await runAsk(live, entry, ask, this.ctx.maxResults)
+      this.lastLayer = entry.path
+      this.lastAsk = { ask, key: entry.key }
+      this.lastAskReply = reply
+      this.lastAskAt = Date.now()
+      this.lastAnalysis = null; this.dataTask = null; this.tablePage = null
+      this.lastResults = reply.results || []
+      const some = reply.mood !== 'think'
+      const actions: MappyAction[] = [...(reply.actions || [])]
+      if (some && ask.clauses.length && (ask.kind === 'count' || ask.kind === 'stat')) actions.push({ type: 'ask', q: '__ask:list', label: 'Show them' })
+      if (some && ask.clauses.length && ['count', 'list', 'stat', 'attr'].includes(ask.kind) && !entry.isTable) actions.push({ type: 'ask', q: '__ask:map', label: 'Only show them on the map' })
+      if (some && ask.kind === 'list' && ask.clauses.length) reply.suggest = ['How many of those?', 'Show them in a table']
+      // The layer is off: the answer still stands, and one click shows it.
+      if (!entry.isTable && !live.isVisible(entry)) actions.push({ type: 'layerOn', id: entry.key, label: `Turn on ${entry.title}` })
+      if (actions.length) reply.actions = actions.slice(0, 4)
+      return reply
+    } catch (error) {
+      return { text: error instanceof Error ? error.message : `**${entry.title}** did not answer. Try again in a moment.`, mood: 'confused' }
+    }
+  }
+
+  /**
+   * A follow-up to the data answer just given, said with a pronoun: "who owns it", "when was it
+   * installed", "which ones are over 5 acres", "how many acres is that", "zoom to it", "only show
+   * them on the map". It keeps the earlier filter (or the one record a ranking found) and adds to it.
+   */
+  private async followAsk (input: string): Promise<Reply | null> {
+    // Still the thing being talked about: asked within ten minutes, and no other data answer or place since.
+    if (!this.lastAsk || this.lastAnalysis || /^__/.test(input) || Date.now() - this.lastAskAt > 600000 || (this.lastPlace && this.lastPlace.at > this.lastAskAt)) return null
+    const live = this.ctx.live
+    const entry = live.entries().find(e => e.key === this.lastAsk!.key)
+    if (!entry || !live.ready) return null
+    const t = input.trim().toLowerCase().replace(/[’`]/g, "'").replace(/[?.!]+$/, '').replace(/\s+/g, ' ')
+    if (/^(?:only )?(?:show|display|see|put|filter)(?: me)?(?: only)? (?:them|those|these|that)(?: only)? (?:on|in) (?:the )?map$|^map (?:them|those|these)$|^filter (?:the map )?to (?:them|those|these)$/.test(t)) return await this.askAgain('map')
+    const one = this.lastResults.length === 1 ? this.lastResults[0] : null
+    if (one && /^(?:zoom|go|fly|pan|take me|jump|center)(?: in)?(?: to| on)? (?:it|that|that one|this one|there)$|^(?:where is (?:it|that)|show (?:me )?(?:it|that)(?: on the map)?)$/.test(t)) {
+      try { await live.show(one) } catch (e) { }
+      return { text: `Here is **${one.label}**.`, mood: 'acknowledge', results: [one] }
+    }
+    if (!/\b(?:it|its|it's|that|that one|this one|them|those|these|they|their|theirs|ones?)\b/.test(t)) return null
+    if (resultCountFollowup(input) || resultTableFollowup(input) || /^(?:show|list) (?:them|those|these)(?: all)?$/.test(t)) return null
+    if (['layerOn', 'layerOff', 'zoom', 'goto', 'open', 'close', 'opacity', 'opacityStep', 'undo', 'redo', 'reveal', 'solo', 'pin', 'thanks', 'ack', 'repeat', 'copyAnswer', 'speak', 'explainLast', 'tryAgain', 'mapFilter', 'mapUnfilter', 'saveView', 'forget'].includes(parseIntent(input).name)) return null
+    const schemas = live.entries().filter(e => !e.isGroup && typeof live.target(e)?.queryFeatures === 'function').map(e => schemaOf(live, e))
+    if (mentionedLayer(t, schemas)) return null
+    try { await loadValues(live, entry) } catch (e) { }
+    const mine = schemaOf(live, entry)
+    const words = t.replace(/\b(?:it's|its|it|that one|this one|that|them|those|these|they|their|theirs|ones?)\b/g, ' ').replace(/\b(?:of|about|for|on|in)\s*$/, ' ').replace(/\s+/g, ' ').trim()
+    let ask: Ask | null = null
+    try { ask = readAsk(`${words} ${entry.title}`, [mine], { fallback: entry.key }) } catch (e) { return null }
+    if (!ask || ask.unknown.length) return null
+    // What the earlier answer was about: its filter, or the single record it found.
+    const prior = this.lastAsk.ask
+    const target = live.target(entry)
+    const id = one?.graphic?.attributes?.[target?.objectIdField]
+    const carried = one && (prior.kind === 'top' || this.lastResults.length === 1) && Number.isFinite(Number(id)) && target?.objectIdField
+      ? [{ field: { name: target.objectIdField, type: 'oid' } as any, sql: `${target.objectIdField} = ${Number(id)}`, said: one.label }]
+      : prior.clauses.filter(c => !ask!.clauses.some(n => n.field.name === c.field.name))
+    if (!carried.length && !ask.clauses.length && ask.kind !== 'attr') return null
+    ask.clauses = [...carried, ...ask.clauses]
+    if (ask.kind === 'distinct' && ask.clauses.length) ask.kind = 'attr'
+    return await this.answerAsk(ask, entry)
+  }
+
+  /** One field of the parcel at an address, for the fields the place answers do not cover (sale date, value, land use, any field by its name). */
+  private async addressAttr (input: string): Promise<Reply | null> {
+    const live = this.ctx.live
+    if (!this.ctx.featureSearch || !live.ready) return null
+    const m = input.match(/\b(\d{1,6}\s+(?:[nsew]\.?\s+)?[a-z0-9.' ]{2,40}?\s(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|way|ct|court|pl|place|hwy|highway|pkwy|parkway|cir|circle|ter|terrace|trl|trail))\b\.?/i)
+    if (!m) return null
+    const entry = live.parcelLayers()[0]
+    if (!entry || typeof live.target(entry)?.queryFeatures !== 'function') return null
+    const schema = schemaOf(live, entry)
+    const addr = fieldFor('address', schema.fields, 'text')
+    if (!addr || !/^[a-z_][a-z0-9_.]*$/i.test(addr.name)) return null
+    const rest = input.replace(m[0], ' ').replace(/\b(?:of|at|for|on|is|was|did|does|the)\b/gi, ' ').replace(/\s+/g, ' ').trim()
+    let ask: Ask | null = null
+    try { ask = readAsk(`${rest} ${entry.title}`, [schema], { fallback: entry.key }) } catch (e) { return null }
+    if (!ask || ask.kind !== 'attr' || !ask.field || ask.unknown.length || ask.clauses.length) return null
+    const street = m[1].replace(/\s+/g, ' ').trim().replace(/[%_']/g, ' ')
+    ask.clauses = [{ field: addr, sql: `UPPER(${addr.name}) LIKE '%${street.toUpperCase()}%'`, said: street }]
+    const reply = await this.answerAsk(ask, entry)
+    return reply.mood === 'think' || reply.mood === 'confused' ? null : reply
+  }
+
+  /** The buttons under a data answer: the same question as a list, a count, or a filter on the map. */
+  private async askAgain (what: string): Promise<Reply> {
+    const live = this.ctx.live
+    const entry = this.lastAsk ? live.entries().find(e => e.key === this.lastAsk!.key) : null
+    if (!this.lastAsk || !entry) return { text: 'That question is no longer in front of me. Ask it again and I will pick it up.', mood: 'confused' }
+    const ask = this.lastAsk.ask
+    if (what === 'list') return await this.answerAsk({ ...ask, kind: 'list', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry)
+    if (what === 'count') return await this.answerAsk({ ...ask, kind: 'count', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry)
+    if (what === 'map') {
+      const where = askWhere(ask); const said = askSaid(ask)
+      if (!where) return { text: 'There is no filter in that question to show on the map.', mood: 'think' }
+      if (!live.setFilter(entry, where, said)) return { text: `**${entry.title}** cannot be filtered on this map.`, mood: 'confused' }
+      if (!live.isVisible(entry)) live.setVisible(entry, true)
+      let count: number | null = null
+      try { count = await live.count(entry, false) } catch (err) { count = null }
+      this.lastLayer = entry.path
+      return { text: `**${entry.title}** now shows only the ones that match (${said})${count !== null ? `: ${count.toLocaleString()}` : ''}. The rest are hidden on the map until you clear the filter.`, mood: 'pleased', actions: [{ type: 'ask', q: `clear the filter on ${entry.title}`, label: 'Clear filter' }, { type: 'ask', q: `zoom to ${entry.title}`, label: 'Zoom to them' }] }
+    }
+    return { text: 'I do not know that button.', mood: 'confused' }
   }
 
   // ------------------------------------------------------------ keepsakes: stamps, the usual, a birthday
@@ -1280,7 +1480,7 @@ export class Mind {
     if (!live.view || !pq.thing) return null
     const e = live.matchTitle(pq.thing) || this.resolveLayer(pq.thing, true)
     if (!e || e.isGroup || e.isTable) return null
-    if (!live.canSee(e)) return this.offReply(e)
+    if (!live.canAsk(e)) return this.offReply(e)
     if (!pq.place && !pq.here) {
       this.awaitingPlace = { question: q, mine: false }
       const actions: MappyAction[] = [{ type: 'ask', q: 'here', label: 'Middle of the map' }]
@@ -2180,7 +2380,26 @@ export class Mind {
     }
     const follow = input.trim().match(/^(?:what about|how about|and)\s+(.+?)[?!]*$/i)
     const countFollow = resultCountFollowup(input)
-    const tableFollow = resultTableFollowup(input)
+    const tableFollow = resultTableFollowup(input) || /^(?:show|list) (?:them|those|these)(?: all)?[.!?]*$/i.test(input.trim())
+    // The same follow-ups after a question read against the layers.
+    if (this.lastAsk && !this.lastAnalysis && (countFollow || tableFollow)) {
+      const a = this.lastAsk.ask
+      const e = this.ctx.live.entries().find(x => x.key === this.lastAsk!.key)
+      const summarized = ['top', 'group', 'distinct', 'stat'].includes(a.kind) && !(a.kind === 'stat' && a.clauses.length)
+      let reply: Reply
+      if (!e) reply = { text: 'That layer is no longer in the map. Ask again using the current layers.', mood: 'confused' }
+      else if (countFollow && a.kind === 'top') reply = { text: `I showed ${this.lastResults.length} ranked ${this.lastResults.length === 1 ? 'row' : 'rows'}. That is the displayed subset, not the full layer count.`, mood: 'talk' }
+      else if (countFollow) reply = await this.askAgain('count')
+      else if (summarized) reply = { text: 'That was a ranked or summarized result, so there is no single set of rows to open. Ask for the layer itself, for example “show table” and its name.', mood: 'talk' }
+      else {
+        const request: AnalysisRequest = { kind: 'browse', layer: e.key, inView: false, where: askWhere(a) || undefined, said: askSaid(a) || undefined }
+        const keep = this.lastAsk
+        try { reply = await analyzeLayer(this.ctx.live, e, request, this.ctx.maxResults); this.lastLayer = e.path } catch (error) { reply = { text: error instanceof Error ? error.message : 'The layer query failed.', mood: 'confused' } }
+        this.lastAsk = keep
+      }
+      this.lastReply = reply
+      return reply
+    }
     if (this.lastAnalysis?.kind === 'quality' && (countFollow || tableFollow)) return { text: 'The quality report counts nulls separately for each field; one record can be missing several fields. Choose a “Missing” action for a specific field, or “Browse checked records” to inspect the full checked dataset.', mood: 'talk' }
     if (this.lastAnalysis?.limit && countFollow) {
       const reply: Reply = { text: `I showed ${this.lastAnalysisRows} ranked ${this.lastAnalysisRows === 1 ? 'row' : 'rows'}. That is the displayed subset, not the full layer count.`, mood: 'talk' }
@@ -2233,6 +2452,7 @@ export class Mind {
     if (raw.startsWith('__doc:')) return this.aboutDoc(raw.slice(6))
     if (raw === '__zoomsel') return await this.zoomToSelected()
     if (raw.startsWith('__table:')) return this.runTableJob(raw.slice(8))
+    if (raw.startsWith('__ask:')) return await this.askAgain(raw.slice(6))
     // Easter eggs: jokes, riddles, dances, games. Only exact little phrases, never a real question.
     if (this.ctx.fun !== false) this.fun.setPlace(this.ctx.place)
     const fun = this.ctx.fun === false ? null : this.fun.reply(raw)
@@ -2242,6 +2462,8 @@ export class Mind {
     }
     // "What is a parcel", "what does RM-8 mean": meanings, from the map's own code lists or the glossary.
     const it = parseIntent(raw)
+    // "What zoning types are there", "list the land uses": the values a field really holds, before the glossary.
+    if (/\b(?:types|kinds|values|categories|options|districts|classes)\b|\bare there\b|^list\b/i.test(raw)) { const d = await this.dataQuestion(raw, it.name, ['distinct']); if (d) return d }
     const def = definitionAsk(raw)
     const ownAnswer = (words: string) => (this.ctx.index.search(words, { limit: 1, kinds: ['faq', 'note'] })[0]?.score || 0) >= 4
     if (def && (def.code || ['ask', 'howto'].includes(it.name)) && !ownAnswer(def.phrase)) { const r = this.define(def.phrase, def.code); if (r) return withAct(r, 'explain') }
@@ -2256,9 +2478,12 @@ export class Mind {
       // "... in chat": rows in the conversation, not the Table widget.
       const inChat = /\s+in (?:the )?chat$/i.test(raw) && /^show table\b/i.test(raw)
       // Map filters, charts and saved views have their own readings; the data-question reading would take their words for a layer name.
+      // "Find Smith in parcels" is a word search in a named layer; that reading keeps it.
+      const asked = it.name === 'find' && it.scope ? null : await this.dataQuestion(raw, it.name)
+      if (asked) return asked
       const analysis = ['mapFilter', 'mapUnfilter', 'mapFilters', 'chart', 'chartLast', 'saveView', 'listViews', 'deleteView', 'avgSize', 'density', 'compareLayers', 'difference'].includes(it.name) ? null : parseAnalysis(inChat ? raw.replace(/\s+in (?:the )?chat$/i, '') : raw)
       if (analysis) {
-        this.lastAnalysis = null
+        this.lastAnalysis = null; this.lastAsk = null
         this.lastReadIntent = ''; this.lastReadScope = ''
         this.lastResults = []; this.tablePage = null
         if (!this.ctx.featureSearch) return { text: 'Data queries are disabled by the app author.', mood: 'confused' }
@@ -2273,7 +2498,7 @@ export class Mind {
         }
         const e = this.resolveLayer(analysis.layer)
         if (!e) return { text: `I cannot identify "${analysis.layer}". Use its full layer name.`, mood: 'confused', suggest: ['List layers'] }
-        if (!this.ctx.live.canSee(e)) return this.offReply(e)
+        if (!this.ctx.live.canAsk(e)) return this.offReply(e)
         this.lastLayer = e.path
         // "Show table parcels": open it in the app's own Table widget when there is one.
         if (analysis.kind === 'browse' && this.ctx.openInTable && !inChat && !analysis.limit && !analysis.field) {
@@ -2440,13 +2665,13 @@ export class Mind {
         case 'avgSize': {
           const e = this.ctx.live.parcelLayers()[0]
           if (!e) return { text: 'This map has no parcel layer to measure.', mood: 'confused', suggest: ['List layers'] }
-          if (!this.ctx.live.canSee(e)) return this.offReply(e)
+          if (!this.ctx.live.canAsk(e)) return this.offReply(e)
           try { const r = await analyzeLayer(this.ctx.live, e, { kind: 'stats', layer: e.key, field: '*size*', inView: false }, this.ctx.maxResults); this.lastLayer = e.path; return r } catch (err) { return { text: err instanceof Error ? err.message : 'The layer query failed.', mood: 'confused' } }
         }
         case 'density': return this.needMap(async () => {
           const e = this.resolveLayer(it.target!)
           if (!e) return { text: V.noLayer(it.target!), mood: 'confused' }
-          if (!this.ctx.live.canSee(e)) return this.offReply(e)
+          if (!this.ctx.live.canAsk(e)) return this.offReply(e)
           const n = await this.ctx.live.count(e, true)
           const area = this.ctx.live.viewAreaSqMiles()
           if (n === null || !area) return { text: 'I could not count them in the current view.', mood: 'confused' }
@@ -2675,7 +2900,7 @@ export class Mind {
   help (): Reply {
     const hasMap = this.ctx.live.ready
     return {
-      text: `I use ${this.ctx.appTitle}'s tools, help and map metadata to answer locally.${this.ctx.serverAssistant ? ` When I am stuck, ${this.ctx.serverAssistant.label} answers here with the GIS data.` : ' No AI account or model needed.'} Use exact layer and field names for analysis. Join up to five commands with "then"; follow up with "zoom to it" or "how many in view". Say "undo" to reverse my layer visibility and opacity changes.`,
+      text: `I use ${this.ctx.appTitle}'s tools, help and map metadata to answer locally.${this.ctx.serverAssistant ? ` When I am stuck, ${this.ctx.serverAssistant.label} answers here with the GIS data.` : ' No AI account or model needed.'} Ask about the data in plain words (“how many parcels are zoned R-4”, “most expensive parcel”, “who owns it”). Join up to five commands with "then"; follow up with "zoom to it" or "how many in view". Say "undo" to reverse my layer visibility and opacity changes.`,
       mood: 'wave',
       list: [
         ...(this.ctx.serverAssistant ? [{ label: `Ask ${this.ctx.serverAssistant.label}`, detail: `Harder questions go to ${this.ctx.serverAssistant.label}, who answers here with the GIS data · ask ${this.ctx.serverAssistant.label} which zones have the most parcels` }] : this.ctx.assistant ? [{ label: `Ask ${this.ctx.assistant.label}`, detail: `What I cannot answer opens in ${this.ctx.assistant.label} with your question written · ask ${this.ctx.assistant.label} ...` }] : []),
@@ -2683,6 +2908,7 @@ export class Mind {
         { label: 'Take the tour', detail: 'Show me around · next · stop tour', action: { type: 'ask', q: 'Show me around' } },
         { label: 'Explore the app', detail: 'List tools · open print · list pages · list bookmarks', action: { type: 'ask', q: 'List tools' } },
         { label: 'Control layers', detail: 'Turn on parcels · only show zoning · set parcels opacity to 50%', action: { type: 'ask', q: 'List layers' } },
+        { label: 'Ask about the data', detail: 'How many parcels are zoned R-4 · most expensive parcel · average acres by zoning · hydrants installed before 1990 · then: who owns it · which ones are over 5 acres · only show them on the map' },
         { label: 'Find and count', detail: 'Find Smith in parcels · count parcels in view' },
         { label: 'Analyze fields', detail: 'Summarize acres in parcels · count parcels by zoning' },
         { label: 'Browse table rows', detail: 'List tables · show table parcels · next page', action: { type: 'ask', q: 'List tables' } },
@@ -2727,7 +2953,7 @@ export class Mind {
     const e = this.resolveLayer(target)
     if (!e) return { text: `I cannot identify “${target}”. Choose a layer from Explore data.`, mood: 'confused', suggest: ['Explore data'] }
     if (e.isGroup) return this.fields(target, target)
-    if (!live.canSee(e)) return this.offReply(e)
+    if (!live.canAsk(e)) return this.offReply(e)
     this.lastLayer = e.path
     if (!this.ctx.featureSearch) return { text: `Data queries are disabled by the app author. You can still inspect **${e.title}**’s fields.`, mood: 'talk', actions: [{ type: 'ask', q: `fields in ${e.key}`, label: 'Describe fields' }] }
     const view = live.view
@@ -2797,7 +3023,7 @@ export class Mind {
     const live = this.ctx.live
     const e = live.parcelLayers()[0]
     if (!e) return { text: 'This map has no parcel layer to add up owners from.', mood: 'confused', suggest: ['List layers'] }
-    if (!live.canSee(e)) return this.offReply(e)
+    if (!live.canAsk(e)) return this.offReply(e)
     const owner = (live.info(e).fields || []).find(f => /owner|taxpayer/i.test(`${f.name} ${f.alias || ''}`) && !/addr|city|state|zip|type/i.test(`${f.name} ${f.alias || ''}`) && !/id$/i.test(`${f.name} ${f.alias || ''}`))
     if (!owner) return { text: `**${e.title}** has no owner field I can group by.`, mood: 'confused', suggest: [`Fields in ${e.title}`] }
     const request: AnalysisRequest = byCount ? { kind: 'group', layer: e.key, field: owner.name, inView: false, limit: 10, order: 'desc' } : { kind: 'group', layer: e.key, field: owner.name, inView: false, stat: 'sum', valueField: '*size*' }
@@ -3509,7 +3735,7 @@ export class Mind {
         actions: [{ type: 'reveal', id: e.key, label: 'Show in the layer list' }]
       }
     }
-    if (!live.canSee(e)) return this.offReply(e)
+    if (!live.canAsk(e)) return this.offReply(e)
     const t = live.target(e)
     try { if (t.load && !t.loaded) await t.load() } catch (err) { }
     const info = live.info(e)
@@ -3609,7 +3835,7 @@ export class Mind {
     if (!e || e.isGroup) return null
     const f = flat(target).replace(/\b(?:layer|layers|all|the)\b/g, ' ').trim()
     if (!(flat(e.title) === f || flat(e.title).replace(/s$/, '') === f.replace(/s$/, ''))) return null
-    if (!live.canSee(e)) return this.offReply(e)
+    if (!live.canAsk(e)) return this.offReply(e)
     try {
       const reply = await analyzeLayer(live, e, { kind: 'browse', layer: e.key, inView: false, limit: Math.max(10, this.ctx.maxResults) }, Math.max(10, this.ctx.maxResults))
       const t = live.target(e)
@@ -3692,7 +3918,7 @@ export class Mind {
     if (!e) return this.ask(raw, raw)
     if (e.isTable && inView) return { text: 'Standalone tables have no map geometry. Count this table without "in view".', mood: 'confused' }
     if (e.isGroup) return this.fields(target, raw)
-    if (!this.ctx.live.canSee(e)) return this.offReply(e)
+    if (!this.ctx.live.canAsk(e)) return this.offReply(e)
     const n = await this.ctx.live.count(e, inView)
     if (n == null) return { text: `I couldn't count ${e.title}; it doesn't answer queries.`, mood: 'confused' }
     return { text: V.count(n, e.title, inView ? 'view' : undefined), mood: 'acknowledge', actions: inView ? undefined : [{ type: 'ask', q: `how many ${e.title} in view`, label: 'Just in view' }] }

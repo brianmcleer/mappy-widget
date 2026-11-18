@@ -131,11 +131,12 @@ test('query setting disables new analysis paths', async () => {
   assert.match(reply.text, /disabled/)
   assert.equal(queries.length, 0)
 })
-test('hidden layers are never queried by analytics', async () => {
-  const { mind, queries } = fixture()
+test('a layer that is turned off still answers data questions, and offers to turn on', async () => {
+  const { mind, queries, layer } = fixture()
   const reply = await mind.respond('summarize ACRES in parcels')
-  assert.equal(reply.mood, 'confused')
-  assert.equal(queries.length, 0)
+  assert.ok(reply.table); assert.equal(queries.length, 1)
+  assert.ok(reply.actions.some(a => a.type === 'layerOn' && a.label === 'Turn on Parcels'))
+  assert.equal(layer.visible, false, 'asking never turns a layer on by itself')
 })
 test('map switch drops conversation context', async () => {
   const { mind, live } = fixture()
@@ -549,7 +550,7 @@ test('data ideas respect statistics, ordering and standalone table capabilities'
 })
 test('exploration does not bypass hidden layers or disabled queries', async () => {
   const { mind, layer, queries } = fixture()
-  assert.match((await mind.respond('explore parcels')).text, /isn't drawing/)
+  assert.match((await mind.respond('explore parcels')).text, /questions for \*\*Parcels\*\*/)
   layer.visible = true; mind.ctx.featureSearch = false
   const reply = await mind.respond('give me ideas for parcels')
   assert.match(reply.text, /queries are disabled/)
@@ -747,7 +748,8 @@ test('incomplete layer commands collect a target before acting', async () => {
   await m2.respond('show table')
   assert.equal(q2.length, 0)
   const picked = await m2.respond('Parcels')
-  assert.match(picked.text, /isn't drawing/)
+  assert.ok(picked.table, 'a table from a layer that is off still opens')
+  assert.ok(picked.actions.some(a => a.type === 'layerOn'))
 })
 
 test('incomplete layer choices expire on cancel, map changes, and new requests', async () => {
@@ -1176,11 +1178,11 @@ test('dates, several conditions, value lists, percent and grouped statistics', a
   assert.equal(pct.actions[0].label, 'Show them')
   layer.queryFeatures = async q => { queries.push(q); return { features: [{ attributes: { ZONING: 'R-4', mappy_count: 3, mappy_value: 2.5 } }, { attributes: { ZONING: 'C-1', mappy_count: 2, mappy_value: 9 } }] } }
   const g = await mind.respond('average acres by zoning in parcels')
-  assert.match(g.text, /\*\*C-1\*\* has the highest average Lot Area \(9\); the lowest is \*\*R-4\*\* \(2\.5\)/)
-  assert.deepEqual(g.table.columns, ['Zoning', 'Count', 'Average Lot Area'])
+  assert.match(g.text, /Average \*\*Lot Area\*\* by \*\*Zoning\*\*: \*\*C-1\*\* is highest at 9, and \*\*R-4\*\* is lowest at 2\.5/)
+  assert.deepEqual(g.table.columns, ['Zoning', 'Parcels', 'Average Lot Area'])
   assert.deepEqual(queries[queries.length - 1].outStatistics.map(s => s.statisticType), ['count', 'avg'])
   const ed = await mind.respond('how many parcels were edited in the last 7 days')
-  assert.match(ed.text, /matching records in \*\*Parcels\*\*/)
+  assert.match(ed.text, /parcels match \(edited in the last 7 days\)/)
   assert.match(queries[queries.length - 1].where, /last_edited_date >= TIMESTAMP '/)
 })
 
@@ -1440,7 +1442,7 @@ test('map filters: only show, hide, clear, undo; charts; saved views; zoom steps
   const c = await mind.respond('chart parcels by zoning')
   assert.deepEqual(c.chart.rows, [{ label: 'R-4', value: 30 }, { label: 'C-1', value: 12 }])
   const c2 = await mind.respond('count parcels by zoning')
-  assert.ok(!c2.chart)
+  assert.ok(c2.table)
   assert.deepEqual((await mind.respond('chart that')).chart.rows.length, 2)
 
   // Saved views live in the store.
@@ -2097,6 +2099,89 @@ test('keepsakes: passport stamps, the usual, a birthday, a nickname and a promis
   layer.visible = false
   assert.doesNotMatch((await plainMind.respond('turn on parcels')).text, /stamp/)
   assert.doesNotMatch((await plainMind.respond('my stamps')).text, /passport/)
+})
+
+test('plain questions are read against what the layers hold: names, fields and values', async () => {
+  const { readAsk, fieldFor, namedFeature } = require('../src/brain/ask.ts')
+  const S = (n, a) => ({ name: n, alias: a, type: 'esriFieldTypeString' }); const N = (n, a, t = 'esriFieldTypeDouble') => ({ name: n, alias: a, type: t }); const D = (n, a) => ({ name: n, alias: a, type: 'esriFieldTypeDate' })
+  const layers = [
+    { key: 'hydrants', title: 'Fire Hydrants', displayField: 'FACILITYID', fields: [S('FACILITYID', 'Facility ID'), N('INSTALL_YEAR', 'Install Year', 'esriFieldTypeInteger'), S('STATUS', 'Status'), N('FLOW_GPM', 'Flow (GPM)', 'esriFieldTypeInteger'), D('LAST_INSPECTED', 'Last Inspected')], values: { STATUS: ['Active', 'Out of service'] } },
+    { key: 'streets', title: 'Streets', displayField: 'NAME', fields: [S('NAME', 'Street Name'), S('SURFACE', 'Surface'), N('LANES', 'Lanes', 'esriFieldTypeInteger'), N('SPEED_LIMIT', 'Speed Limit', 'esriFieldTypeInteger')], values: { NAME: ['Maple St', 'Oak St'], SURFACE: ['Asphalt', 'Chip seal'] } },
+    { key: 'parks', title: 'Parks', displayField: 'NAME', fields: [S('NAME', 'Park Name'), N('ACRES', 'Acres'), S('PLAYGROUND', 'Playground'), N('OPENED', 'Year Opened', 'esriFieldTypeInteger')], values: { NAME: ['Compass Park', 'Fold Field'], PLAYGROUND: ['Yes', 'No'] } },
+    { key: 'parcels', title: 'Parcels', displayField: 'ADDRESS', fields: [S('ADDRESS', 'Address'), S('OWNER', 'Owner'), N('ACRES', 'Acres'), S('ZONING', 'Zoning'), S('LAND_USE', 'Land Use'), N('YEAR_BUILT', 'Year Built', 'esriFieldTypeInteger'), D('SALE_DATE', 'Sale Date'), N('ASSESSED_VALUE', 'Assessed Value', 'esriFieldTypeInteger')], values: { OWNER: ['Rivera', 'Town of Mapleton'], ZONING: ['R-4', 'R-8', 'C-1', 'MU'], LAND_USE: ['Residential', 'Commercial', 'Civic'] } },
+    { key: 'zoning', title: 'Zoning', displayField: 'ZONE', fields: [S('ZONE', 'Zone'), N('MAX_HEIGHT_FT', 'Max Height (ft)', 'esriFieldTypeInteger')], values: { ZONE: ['R-4', 'R-8', 'C-1', 'MU'] } }
+  ]
+  const now = new Date(2026, 10, 17)
+  const read = (q, fallback) => { const a = readAsk(q, layers, { now, fallback }); return a && { layer: a.layer, kind: a.kind, where: a.clauses.map(c => c.sql).join(' AND '), field: a.field && a.field.name, stat: a.stat, group: a.group && a.group.name, order: a.order, limit: a.limit, unknown: a.unknown.join(' ') } }
+  const is = (q, want, fallback) => { const got = read(q, fallback); for (const k of Object.keys(want)) assert.equal(got && got[k], want[k], `${q}: ${k} (${JSON.stringify(got)})`) }
+  // Values people say are matched to the field that holds them.
+  is('how many parcels are zoned R-4', { layer: 'parcels', kind: 'count', where: "ZONING = 'R-4'" })
+  is('how many R-4 parcels', { kind: 'count', where: "ZONING = 'R-4'" })
+  is('which parcels are commercial', { kind: 'list', where: "LAND_USE = 'Commercial'" })
+  is('hydrants out of service', { layer: 'hydrants', where: "STATUS = 'Out of service'" })
+  is('parcels not zoned R-4', { where: "ZONING <> 'R-4'" })
+  is("how many parcels aren't residential", { kind: 'count', where: "LAND_USE <> 'Residential'" })
+  is('comercial parcels', { where: "LAND_USE = 'Commercial'" })
+  is('parcels owned by Rivera', { kind: 'list', where: "OWNER = 'Rivera'" })
+  is('show me everything owned by Town of Mapleton', { layer: 'parcels', where: "OWNER = 'Town of Mapleton'" })
+  // Numbers land on the field the words point at, not on the first number field.
+  is('parcels worth more than 500000', { where: 'ASSESSED_VALUE > 500000' })
+  is('parcels over $500,000', { where: 'ASSESSED_VALUE > 500000' })
+  is('commercial parcels worth more than 600k', { where: "ASSESSED_VALUE > 600000 AND LAND_USE = 'Commercial'" })
+  is('parcels between 2 and 5 acres', { where: '(ACRES >= 2 AND ACRES <= 5)' })
+  is('parcels bigger than 5 acres in R-4', { where: "ACRES > 5 AND ZONING = 'R-4'" })
+  is('which streets have 4 lanes', { layer: 'streets', where: 'LANES = 4' })
+  is('streets with speed limit over 25', { layer: 'streets', where: 'SPEED_LIMIT > 25' })
+  is('hydrants with flow under 1000 gpm', { layer: 'hydrants', where: 'FLOW_GPM < 1000' })
+  // Time: verbs pick the date or year field.
+  is('parcels built before 1960', { where: 'YEAR_BUILT < 1960' })
+  is('hydrants installed after 2010', { where: 'INSTALL_YEAR >= 2011' })
+  is('how many parcels were built in the 1950s', { kind: 'count', where: '(YEAR_BUILT >= 1950 AND YEAR_BUILT <= 1959)' })
+  is('parcels older than 50 years', { where: 'YEAR_BUILT < 1976' })
+  assert.match(read('parcels sold in 2025').where, /^\(SALE_DATE >= TIMESTAMP '2025-01-01 00:00:00' AND SALE_DATE < TIMESTAMP '2026-01-01 00:00:00'\)$/)
+  // Yes and no fields.
+  is('parks with a playground', { layer: 'parks', where: "PLAYGROUND = 'Yes'" })
+  is('parks without a playground', { where: "PLAYGROUND = 'No'" })
+  // Rankings, totals and averages.
+  is('biggest parcel', { kind: 'top', field: 'ACRES', order: 'desc', limit: 1 })
+  is('most expensive parcel', { kind: 'top', field: 'ASSESSED_VALUE', order: 'desc' })
+  is('cheapest parcel', { kind: 'top', field: 'ASSESSED_VALUE', order: 'asc' })
+  is('oldest hydrant', { layer: 'hydrants', kind: 'top', field: 'INSTALL_YEAR', order: 'asc' })
+  is('top 5 parcels by assessed value', { kind: 'top', field: 'ASSESSED_VALUE', limit: 5 })
+  is('average assessed value', { layer: 'parcels', kind: 'stat', stat: 'avg', field: 'ASSESSED_VALUE' })
+  is('total acres of parcels', { kind: 'stat', stat: 'sum', field: 'ACRES' })
+  is('how many acres are zoned R-4', { kind: 'stat', stat: 'sum', field: 'ACRES', where: "ZONING = 'R-4'" })
+  // Groups and value lists.
+  is('parcels by land use', { kind: 'group', group: 'LAND_USE' })
+  is('average acres by zoning in parcels', { kind: 'group', group: 'ZONING', stat: 'avg', field: 'ACRES' })
+  is('which zoning has the most parcels', { layer: 'parcels', kind: 'group', group: 'ZONING', order: 'desc' })
+  is('which land use has the highest average value', { kind: 'group', group: 'LAND_USE', stat: 'avg', field: 'ASSESSED_VALUE' })
+  is('least common land use', { kind: 'group', group: 'LAND_USE', order: 'asc' })
+  is('who owns the most land', { layer: 'parcels', kind: 'group', group: 'OWNER', stat: 'sum', field: 'ACRES' })
+  is('what zoning types are there', { layer: 'zoning', kind: 'distinct', field: 'ZONE' })
+  is('how many different owners are there', { kind: 'distinct', field: 'OWNER' })
+  // One field of the records that match; a field named outright keeps its words ("max" is not a ranking here).
+  is('what is the max height in MU', { layer: 'zoning', kind: 'attr', field: 'MAX_HEIGHT_FT', where: "ZONE = 'MU'" })
+  is("what's the speed limit on Oak St", { layer: 'streets', kind: 'attr', field: 'SPEED_LIMIT', where: "NAME = 'Oak St'" })
+  // Follow-ups with no layer said use the one in hand.
+  is('what about the smallest', { layer: 'parcels', kind: 'top', field: 'ACRES', order: 'asc' }, 'parcels')
+  is('which are out of service', { layer: 'hydrants', where: "STATUS = 'Out of service'" }, 'hydrants')
+  // A word that lands on nothing is reported, never dropped.
+  is('how many haunted parcels', { kind: 'count', unknown: 'haunted' })
+  // Not data questions: commands, places, percent, small talk, a bare layer name.
+  for (const q of ['turn on parcels', 'zoom to parcels', 'parcels', 'show parcels', 'what parks are there', 'closest hydrant to City Hall', 'hydrants within 500 feet of City Hall', 'what percent of parcels are over 5 acres', 'how many parcels in view', 'hello', 'what can you do', 'how do I print']) assert.equal(readAsk(q, layers, { now }), null, q)
+  assert.equal(fieldFor('zoned mu', layers[3].fields), null, 'a field word plus a value is not a field name')
+  assert.equal(namedFeature('Maple St', layers).layer.key, 'streets'); assert.equal(namedFeature('the moon', layers), null)
+
+  // In the chat: the number first, how it was read, and what to do next.
+  const { mind, layer, queries } = fixture()
+  const n = await mind.respond('how many parcels')
+  assert.match(n.text, /^There are \*\*42\*\* parcels\./); assert.equal(queries.length, 1)
+  assert.ok(n.actions.some(a => a.label === 'Turn on Parcels'), 'a layer that is off still answers, and offers to turn on')
+  assert.equal(layer.visible, false)
+  const stuck = await mind.respond('how many haunted parcels')
+  // (This fixture answers every text search, so the word is found as text here; a real layer reports it.)
+  assert.ok(/parcels match|could not match/.test(stuck.text))
 })
 
 test('census and place-in-numbers questions answer from the saved facts', async () => {

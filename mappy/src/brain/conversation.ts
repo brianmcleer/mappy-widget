@@ -21,7 +21,8 @@ export function splitCommands (input: string): string[] {
     if (quote) { if (ch === quote) quote = ''; continue }
     // Apostrophes inside words are not quoted strings.
     if (ch === '"' || (ch === "'" && !/\w/.test(input[i - 1] || ''))) { quote = ch; continue }
-    const separator = input.slice(i).match(/^(?:;|\s+(?:and then|then)\s+)/i)
+    // "turn on hydrants and zoom to City Hall": "and" splits when a command verb follows it.
+    const separator = input.slice(i).match(/^(?:;|\s+(?:and then|then)\s+|\s+and\s+(?=(?:turn (?:on|off)|switch (?:on|off)|zoom (?:to|in|out)|go to|take me to|open the|open|close the|hide the|hide|pan (?:left|right|up|down|north|south|east|west)|clear the|reset the)\b))/i)
     if (!separator) continue
     parts.push(input.slice(start, i).trim())
     i += separator[0].length - 1

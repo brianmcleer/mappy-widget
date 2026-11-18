@@ -96,7 +96,7 @@ const RULES: Rule[] = [
   // What Mappy has changed on the map this session
   [/^(?:what (?:did|have) (?:i|you|we) (?:change|changed|do|done)(?: so far| to the map| on the map)?|what changed|what(?:'s| is| has) (?:been )?changed|changes|history|show (?:my |the )?(?:changes|history))[!.?]*$/i, (m, raw) => ({ name: 'changes', raw })],
   // The whole picture in one answer
-  [/^(?:what(?:'s|s| is) on the map(?: right now)?|what am i looking at|describe (?:the|this) map|summari[sz]e (?:the|this) map|map summary|what(?:'s|s| is) (?:showing|visible|turned on)(?: right now)?|overview)[!.?]*$/i, (m, raw) => ({ name: 'mapSummary', raw })],
+  [/^(?:what(?:'s|s| is) on the map(?: right now)?|what am i looking at|what (?:can|do) i see(?: (?:here|on (?:this|the) map))?|what(?:'s|s| is) (?:on|in) this map|what does this map (?:show|have)|describe (?:the|this) map|summari[sz]e (?:the|this) map|map summary|what(?:'s|s| is) (?:showing|visible|turned on)(?: right now)?|overview)[!.?]*$/i, (m, raw) => ({ name: 'mapSummary', raw })],
   // Fewer interruptions
   [/^(?:fewer tips|less tips|no more tips|stop (?:the )?tips|turn off tips|no tips|quit (?:the )?tips|stop (?:bugging|interrupting|bothering) me|stop popping up|don'?t (?:bug|interrupt|bother) me|leave me be)[!.?]*$/i, (m, raw) => ({ name: 'fewerTips', raw })],
   // Copy or save the conversation

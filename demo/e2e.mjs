@@ -42,7 +42,7 @@ await step('turns a layer on, and the map follows', async () => { assert.equal(a
 await step('reads past typos', async () => { await say('trun off zonign', /Zoning/); assert.equal(await layerOn('zoning'), false) })
 await step('finds an address and its owner', async () => { await say('who owns 250 Oak St', /Town of Mapleton/); assert.ok(await page.evaluate(() => window.mappyDemo.view.graphics.items.length > 0), 'something is drawn on the map') })
 await step('remembers the place for a follow-up', async () => { await say('what zoning is this in', /C-1/) })
-await step('counts and groups', async () => { await say('how many parcels', /36/); await say('count parcels by zoning', /grouped by Zoning/i) })
+await step('counts and groups', async () => { await say('how many parcels', /36/); await say('count parcels by zoning', /has the most parcels: 16/) })
 await step('filters the map and clears it', async () => {
   const all = await page.evaluate(() => window.mappyDemo.town.layers.find(l => l.id === 'parcels').drawn().length)
   await say('only show parcels over 7 acres on the map', /parcels/i)
@@ -51,7 +51,7 @@ await step('filters the map and clears it', async () => {
   await say('clear the filter')
   assert.equal(await page.evaluate(() => window.mappyDemo.town.layers.find(l => l.id === 'parcels').drawn().length), all)
 })
-await step('will not look inside a layer that is off, and offers to turn it on', async () => { await say('closest fire hydrant to City Hall', /isn't drawing/); assert.ok(await page.$('.mappy-bubble button:has-text("Turn on Fire Hydrants")')) })
+await step('answers from a layer that is off, and offers to turn it on', async () => { await say('closest fire hydrant to City Hall', /H-\d+/); assert.ok(await page.$('.mappy-bubble button:has-text("Turn on Fire Hydrants")')) })
 await step('finds the closest hydrant with no server', async () => { await say('turn on fire hydrants', /Fire Hydrants/); await say('closest fire hydrant to City Hall', /H-\d+/); await say('turn off fire hydrants') })
 await step('has feelings', async () => { await say('hug', /hug|crease|corners/i); assert.equal(await mood(), 'hug') })
 await step('remembers a name', async () => { await say('call me Sam', /Sam/); await say('what is my name', /You are Sam/) })
@@ -80,6 +80,16 @@ await step('a question in Spanish is answered in Spanish', async () => { const g
 await step('keeps private numbers in the browser', async () => { await say('ask Claude about card 4111 1111 1111 1111', /did not send it/) })
 await step('hands off to a person and is plain about privacy', async () => { await say('talk to a person', /Mapleton map desk/); await say('what do you know about me', /Kept in this browser only/) })
 await step('keeps a passport and learns the usual', async () => { await say('my stamps', /Your passport has \*?\*?\d+ of 23/); await say('our story', /We met on/) })
+await step('reads plain questions against the data', async () => {
+  // The chat keeps its last 60 messages; start a fresh one so new answers can be counted.
+  await page.click('.mappy-bubble button:has-text("New chat")'); await page.waitForTimeout(600)
+  await say('how many parcels are zoned R-4', /8 parcels match \(Zoning R-4\)/)
+  await say('which ones are over 5 acres', /5 parcels match \(Zoning R-4, Acres over 5\)/)
+  await say('most expensive parcel', /The most expensive parcel is 110 Maple St/)
+  await say('who owns it', /110 Maple St: Owner is/)
+  await say('oldest hydrant', /The oldest fire hydrant is H-107/)
+  await say('parcels not zoned R-4', /28 parcels match \(Zoning not R-4\)/)
+})
 await step('undo works', async () => { await say('turn on fire hydrants'); assert.equal(await layerOn('hydrants'), true); await say('undo'); assert.equal(await layerOn('hydrants'), false) })
 await step('no errors in the page', async () => assert.deepEqual(problems, []))
 
