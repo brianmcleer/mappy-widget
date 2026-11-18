@@ -25,11 +25,10 @@ jobs:
       - name: Browser test
         working-directory: demo
         run: |
-          npm i --no-save --no-audit --no-fund playwright@1
+          # Both in one install: a second --no-save install would remove the first.
+          npm i --no-save --no-audit --no-fund playwright@1 axe-core@4
           npx playwright install --with-deps chromium
           node e2e.mjs
       - name: Accessibility test
         working-directory: demo
-        run: |
-          npm i --no-save --no-audit --no-fund axe-core@4
-          node a11y.mjs
+        run: node a11y.mjs
