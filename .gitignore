@@ -23,3 +23,7 @@ language/report.md
 
 # The server voice's model files are downloaded, never committed
 mcp-server/voice/
+
+# Python caches
+__pycache__/
+*.pyc
