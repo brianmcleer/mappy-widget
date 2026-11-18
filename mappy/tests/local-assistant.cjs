@@ -2213,6 +2213,43 @@ test('read aloud: what is said, how it is cut, and which voice is picked', () =>
   assert.equal(speakUrl('http://gis.example.org/gis-mcp/mcp'), ''); assert.equal(speakUrl('https://gis.example.org/other'), ''); assert.equal(speakUrl(''), '')
 })
 
+test('questions land on the right field when names are short forms with no aliases (assessor and utility layers)', () => {
+  const { readAsk } = require('../src/brain/ask.ts')
+  const { fieldLabel } = require('../src/brain/fields.ts')
+  const f = (name, type = 'string', alias) => ({ name, alias: alias || name, type })
+  const layers = [
+    { key: 'parcels', title: 'Parcels', displayField: 'STRNAME', fields: [f('OBJECTID', 'oid'), f('PARCEL_NUM'), f('LOCATION'), f('OWNER'), f('JTOWNER'), f('STRNAME'), f('SPRICE', 'double'), f('SDATE', 'date'), f('PROPTYPE'), f('AYB1ST', 'integer'), f('EFFYRBLT1ST', 'integer'), f('TOTHTSQF', 'double'), f('BDRMS1ST', 'integer'), f('LNDUSE'), f('LNDVALCUR', 'double'), f('IMPVALCUR', 'double'), f('TOTVALCUR', 'double'), f('LNDVALPRE', 'double'), f('TOTVALPRE', 'double'), f('ZONING'), f('Acres', 'double'), f('created_date', 'date'), f('last_edited_date', 'date')] },
+    { key: 'sewer', title: 'Sewer Lines', displayField: 'PIPE_ID', fields: [f('OBJECTID', 'oid'), f('PIPE_ID', 'string', 'Pipe ID'), f('PIPE_DIA', 'integer', 'Dia/Height (in)'), f('PIPE_DT_CONS', 'date', 'Date Constructed'), f('PIPE_LENGTH', 'double', 'Length (ft)'), f('PIPE_SLOPE', 'double', 'Slope %')] },
+    { key: 'parks', title: 'Parks', displayField: 'Name', fields: [f('OBJECTID', 'oid'), f('Name'), f('Acreage', 'double'), f('ADACompliant', 'small-integer'), f('Installed', 'date'), f('Type')] }
+  ]
+  // Short forms read as words.
+  for (const [name, label] of [['SPRICE', 'Sale Price'], ['SDATE', 'Sale Date'], ['TOTVALCUR', 'Total Value Current'], ['LNDVALCUR', 'Land Value Current'], ['LNDUSE', 'Land Use'], ['PROPTYPE', 'Property Type'], ['AYB1ST', 'Actual Year Built 1st'], ['BDRMS1ST', 'Bedrooms 1st']]) assert.equal(fieldLabel({ name }), label, name)
+  const now = new Date(2026, 10, 17)
+  const is = (q, want) => { const a = readAsk(q, layers, { now }); const got = a && { layer: a.layer, kind: a.kind, where: a.clauses.map(c => c.sql).join(' AND '), field: a.field && a.field.name, group: a.group && a.group.name, order: a.order }; for (const k of Object.keys(want)) assert.equal(got && got[k], want[k], `${q}: ${k} (${JSON.stringify(got)})`) }
+  // Value means the total, current one; size means acres, not heated square feet; old means year built.
+  is('most expensive parcel', { kind: 'top', field: 'TOTVALCUR', order: 'desc' })
+  is('average parcel value', { kind: 'stat', field: 'TOTVALCUR' })
+  is('parcels worth more than 1000000', { where: 'TOTVALCUR > 1000000' })
+  is('biggest parcel', { kind: 'top', field: 'Acres' })
+  is('oldest parcel', { kind: 'top', field: 'AYB1ST', order: 'asc' })
+  is('parcels built before 1950', { where: 'AYB1ST < 1950' })
+  // Sales have their own price and date.
+  is('parcels sold for more than 500000', { where: 'SPRICE > 500000' })
+  is('highest sale price', { kind: 'top', field: 'SPRICE' })
+  assert.match(readAsk('parcels sold in 2025', layers, { now }).clauses[0].sql, /^\(SDATE >= TIMESTAMP '2025-01-01/)
+  is('parcels with more than 4 bedrooms', { where: 'BDRMS1ST > 4' })
+  is('parcels by land use', { kind: 'group', group: 'LNDUSE' })
+  is('parcels owned by Smith Family Trust', { where: "UPPER(OWNER) LIKE '%SMITH FAMILY TRUST%'" })
+  // Pipes: inches mean diameter, a field's word then a number is "equals".
+  is('sewer lines over 12 inches', { layer: 'sewer', where: 'PIPE_DIA > 12' })
+  is('sewer lines with diameter 8', { where: 'PIPE_DIA = 8' })
+  is('longest sewer line', { kind: 'top', field: 'PIPE_LENGTH' })
+  is('oldest sewer line', { kind: 'top', field: 'PIPE_DT_CONS', order: 'asc' })
+  // A flag stored as 1 and 0.
+  is('which parks are ADA compliant', { layer: 'parks', kind: 'list', where: 'ADACompliant = 1' })
+  is('total acreage of parks', { kind: 'stat', field: 'Acreage' })
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

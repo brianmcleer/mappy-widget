@@ -11,7 +11,7 @@
 */
 import { fieldLabel } from './fields'
 import { parseWhen, dateClause, yearClause } from './dates'
-import { numericField, dateField, dateFieldFor } from './analysis'
+import { numericField, dateField, dateFieldFor, sizeField } from './analysis'
 import type { QueryField } from './analysis'
 
 export interface AskLayer {
@@ -67,7 +67,8 @@ const hidden = (f: QueryField): boolean => /geometry|blob|raster|xml|oid|global-
 /** Everyday words and the kind of field they mean. */
 const SYNONYMS: Array<[RegExp, RegExp]> = [
   [/^(?:acres?|acreage|area|size|sized|big|bigger|biggest|large|larger|largest|small|smaller|smallest|sqft|footage)$/, /acre|\barea\b|sq_?f|sqft|size/i],
-  [/^(?:value|valued|values|worth|price|priced|cost|costs|assessed|assessment|appraised|appraisal|market|expensive|cheap|cheapest|valuable|priciest|dollars?)$/, /assess|apprais|value|price|cost|market|amount/i],
+  [/^(?:value|valued|values|worth|cost|costs|assessed|assessment|appraised|appraisal|market|expensive|cheap|cheapest|valuable|priciest|dollars?)$/, /assess|apprais|value|\bval\b|cost|market|amount/i],
+  [/^(?:price|priced|prices)$/, /price|value|cost|amount/i],
   [/^(?:built|constructed|age|old|older|oldest|new|newer|newest)$/, /year.?built|yr.?built|built|construct|install|open/i],
   [/^(?:installed|install|installation)$/, /install/i],
   [/^(?:opened|open|opening|established)$/, /open|establish/i],
@@ -76,7 +77,7 @@ const SYNONYMS: Array<[RegExp, RegExp]> = [
   [/^(?:use|used|uses|landuse)$/, /land.?use|use.?(?:code|type|desc)|\buse\b/i],
   [/^(?:long|longer|longest|short|shorter|shortest|length)$/, /length|\blen\b|miles|feet/i],
   [/^(?:tall|taller|tallest|height|heights|high|higher)$/, /height|\bht\b|elev/i],
-  [/^(?:wide|wider|widest|narrow|narrowest|width|diameter)$/, /width|diam/i],
+  [/^(?:wide|wider|widest|narrow|narrowest|width|diameter|diameters|dia|inch|inches)$/, /width|\bdia(?:m|meter)?\b|_dia\b/i],
   [/^(?:fast|faster|fastest|slow|slowest|speed|mph)$/, /speed|mph/i],
   [/^(?:name|names|named|called)$/, /name/i],
   [/^(?:address|addresses|addr|located|location)$/, /addr|situs|location/i],
@@ -85,7 +86,8 @@ const SYNONYMS: Array<[RegExp, RegExp]> = [
   [/^(?:material|materials|made)$/, /material|matl|surface/i],
   [/^(?:flow|gpm|pressure)$/, /flow|gpm|press/i],
   [/^(?:population|people|residents)$/, /\bpop/i],
-  [/^(?:sold|sale|sales|selling|sell|sells)$/, /sale|sold/i],
+  [/^(?:sold|sale|sales|selling|sell|sells)$/, /sale|sold|sdate|sprice/i],
+  [/^(?:bedrooms?|beds?)$/, /bedroom|bdrm|\bbeds?\b/i], [/^(?:bathrooms?|baths?)$/, /bathroom|bth|\bbaths?\b/i], [/^(?:pressure|psi)$/, /press|psi/i], [/^(?:neighborhood|neighbourhood)$/, /neighbo|nbhd/i],
   [/^(?:inspected|inspection|inspections)$/, /inspect/i],
   [/^(?:lanes?)$/, /lane/i],
   [/^(?:year|years)$/, /year|\byr\b/i]
@@ -96,19 +98,29 @@ export function fieldFor (phrase: string, fields: QueryField[], want?: 'number' 
   const words = phrase.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !/^(?:the|a|an|of|its|their|in|is|are)$/.test(w))
   if (!words.length) return null
   const key = words.join('')
-  const pool = fields.filter(f => !hidden(f) && (want === 'number' ? numericField(f) : want === 'text' ? isText(f) : want === 'date' ? dateField(f) || /year|\byr\b/i.test(`${f.name} ${f.alias || ''}`) : true))
+  const pool = fields.filter(f => !hidden(f) && (want === 'number' ? numericField(f) : want === 'text' ? isText(f) : want === 'date' ? dateField(f) || (numericField(f) && /year|\byr\b/i.test(`${f.name} ${f.alias || ''} ${fieldLabel(f)}`)) : true))
   let best: QueryField | null = null; let top = 0
   for (const f of pool) {
     const names = [f.name, f.alias || '', fieldLabel(f)]
     const tokens = new Set(names.join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean).map(stem))
+    const label = `${f.name} ${f.alias || ''} ${fieldLabel(f)}`
+    const shown = fieldLabel(f)
+    // Several fields of the same kind (land, improvement and total value; this year's and last year's):
+    // the plain one is meant unless the words say otherwise.
+    let bias = -tokens.size * 0.005
+    if (/\btotal\b/i.test(shown) && !/\b(?:number|count|units|buildings|rooms)\b/i.test(shown)) bias += 0.12
+    if (/current|actual|market/i.test(shown)) bias += 0.06
+    if (/previous|prior|effective|adjust|school/i.test(shown)) bias -= 0.25
+    if (/\b(?:land|improvement)\b/i.test(shown) && /value/i.test(shown) && !words.some(w => /^(?:land|improvements?)$/.test(w))) bias -= 0.15
+    if (/\b(?:sale|price)\b/i.test(shown) && !words.some(w => /^(?:sold|sale|sales|price|priced|prices|sell|selling)$/.test(w))) bias -= 0.1
     let score = 0
     if (names.some(n => nk(n) === key)) score = 5
     else if (names.some(n => stem(nk(n)) === stem(key))) score = 4.5
-    else if (words.every(w => tokens.has(stem(w)))) score = 3 + words.length * 0.2 - tokens.size * 0.01
+    else if (words.every(w => tokens.has(stem(w)))) score = 3 + words.length * 0.2 + bias
     else {
       // Every word has to point at this field, by its own name or by an everyday word for it.
-      const hits = words.filter(w => SYNONYMS.some(([q, fld]) => q.test(w) && fld.test(`${f.name} ${f.alias || ''}`)))
-      if (hits.length && words.every(w => hits.includes(w) || tokens.has(stem(w)))) score = 1.5 + hits.length * 0.3 + (words.some(w => tokens.has(stem(w))) ? 1 : 0)
+      const hits = words.filter(w => SYNONYMS.some(([q, fld]) => q.test(w) && fld.test(label)))
+      if (hits.length && words.every(w => hits.includes(w) || tokens.has(stem(w)))) score = 1.5 + hits.length * 0.3 + (words.some(w => tokens.has(stem(w))) ? 1 : 0) + bias
     }
     if (score > top) { top = score; best = f }
   }
@@ -261,9 +273,9 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
     for (let n = Math.min(words.length, 7); n >= 1 && !done; n--) {
       const range = parseWhen(words.slice(0, n).join(' '), now)
       if (!range) continue
-      const df = dateFieldFor(fields, v[1])
+      const df = fieldFor(v[1], fields.filter(dateField)) || dateFieldFor(fields, v[1])
       const yf = fields.filter(numericField).find(f => /year|\byr\b/i.test(`${f.name} ${f.alias || ''}`) && (fieldFor(v[1], [f]) || fields.filter(numericField).filter(x => /year|\byr\b/i.test(`${x.name} ${x.alias || ''}`)).length === 1))
-      const f = df && fieldFor(v[1], [df]) ? df : yf || df
+      const f = df && fieldFor(v[1], [df]) ? df : yf || fieldFor(v[1], fields, 'date') || df
       if (!f) break
       clauses.push({ field: f, sql: dateField(f) ? dateClause(sqlName(f), range) : yearClause(sqlName(f), range), said: `${v[1]} ${words.slice(0, n).join(' ')}` })
       t = t.replace(`${v[1]} ${words.slice(0, n).join(' ')}`, ' ')
@@ -273,13 +285,14 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
   }
 
   // ---- numbers: "over 5 acres", "worth more than 500000", "between 2 and 5 acres", "4 lanes", "built before 1960"
-  const UNIT = '(acres?|ac|sq ?ft|square feet|feet|foot|ft|miles?|mi|lanes?|mph|gpm|years? old|years?|stories|floors|units|people|dollars?|%)'
+  const UNIT = '(acres?|ac|sq ?ft|square feet|feet|foot|ft|inch(?:es)?|in|miles?|mi|lanes?|mph|gpm|psi|years? old|years?|stories|floors|units|bedrooms?|beds?|bathrooms?|baths?|people|dollars?|%)'
   const unitField = (unit: string, before: string, money: boolean): QueryField | null => {
     const u = unit.replace(/s$/, '')
-    const tries = [before.split(' ').slice(-3).join(' '), before.split(' ').slice(-2).join(' '), before.split(' ').slice(-1).join(' ')].filter(Boolean)
+    const bw = before.split(' ').filter(w => w && !/^(?:for|at|of|is|are|was|were|with|a|an|the|that|which|have|has|having|and)$/.test(w))
+    const tries = [bw.slice(-3).join(' '), bw.slice(-2).join(' '), bw.slice(-1).join(' ')].filter(Boolean)
     for (const p of tries) { const f = fieldOf(p, 'number'); if (f) return f }
     if (money) return fieldFor('value', fields, 'number')
-    if (u) return fieldFor(/^(?:ac|acre)$/.test(u) ? 'acres' : /sq ?ft|square/.test(u) ? 'area' : /^(?:feet|foot|ft|mile|mi)$/.test(u) ? 'length' : /years? old|year/.test(unit) ? 'year' : u, fields, 'number')
+    if (u) return fieldFor(/^(?:ac|acre)$/.test(u) ? 'acres' : /sq ?ft|square/.test(u) ? 'area' : /^(?:feet|foot|ft|mile|mi)$/.test(u) ? 'length' : /^(?:inch|inche|in)$/.test(u) ? 'diameter' : /years? old|year/.test(unit) ? 'year' : /^bed/.test(u) ? 'bedrooms' : /^bath/.test(u) ? 'bathrooms' : u, fields, 'number')
     return null
   }
   const OPS: Array<[string, string, string]> = [
@@ -325,6 +338,11 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
   if ((m = t.match(new RegExp(`\\b(?:(${VERBS}|built)\\s+)?(?:in|during|from) the (\\d{3})0s\\b`)))) {
     const f = (m[1] && fieldFor(m[1], fields, 'date')) || fieldFor('year', fields, 'number')
     if (f && numericField(f)) { const y = Number(m[2]) * 10; clauses.push({ field: f, sql: `(${sqlName(f)} >= ${y} AND ${sqlName(f)} <= ${y + 9})`, said: `${fieldLabel(f)} in the ${y}s` }); t = t.replace(m[0], ' ') }
+  }
+  // "diameter 8", "with a speed limit of 30": a number field's own word, then a number.
+  if ((m = t.match(/\b([a-z]{3,}(?: [a-z]{3,})?|fld[a-z]x)\s+(?:of |is |= ?|equal to )?(\d[\d.]*)\b(?!\s*(?:st|nd|rd|th|ave|street)\b)/))) {
+    const f = fieldOf(m[1], 'number') || fieldOf(m[1].split(' ').pop() as string, 'number')
+    if (f && !/year|\byr\b/i.test(`${f.name} ${f.alias || ''} ${fieldLabel(f)}`) && !clauses.some(c => c.field === f)) { clauses.push({ field: f, sql: `${sqlName(f)} = ${Number(m[2])}`, said: `${fieldLabel(f)} ${Number(m[2])}` }); t = t.replace(m[0], ' ') }
   }
   // "4 lanes", "4-lane", "2 stories": a whole number right before a field's own word.
   if ((m = t.match(/\b(\d{1,4})[ -]([a-z0-9]{3,})\b/))) {
@@ -430,7 +448,7 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
     if (field) stat = stat || 'avg'; else stat = undefined
   } else if (superlative) {
     kind = 'top'
-    field = rankField || (supDate ? (fieldFor(supClass, fields, 'date') || fields.find(f => dateField(f)) || null) : fieldFor(supClass, fields, 'number'))
+    field = rankField || (supDate ? (fieldFor(supClass, fields, 'date') || fields.find(f => dateField(f)) || null) : supClass === 'size' ? (sizeField(fields) || fieldFor(supClass, fields, 'number')) : fieldFor(supClass, fields, 'number'))
     if (supDate && !field) field = fieldFor('year', fields, 'number')
     // "biggest" with a number field named: that field. Without one, the layer's size field.
     if (!field) return null
@@ -448,6 +466,8 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
   else if (chart) { field = takeField(); if (!field) return null; kind = 'group' } else {
     // "what is the max height in MU", "speed limit on Oak St": one field of the records that match.
     field = clauses.length || left.length ? takeField() : null
+    // "Which parks are ADA compliant": a yes-or-no flag stored as 1 and 0 is a filter, not a thing to look up.
+    if (field && !clauses.length && !left.length && /small-?integer|esriFieldTypeSmallInteger/i.test(field.type || '') && /\b(?:are|is|have|has)\b/.test(input.toLowerCase())) { clauses.push({ field, sql: `${sqlName(field)} = 1`, said: fieldLabel(field) }); field = null }
     if (field && !clauses.some(c => c.field === field)) kind = 'attr'
     else { field = null; kind = 'list' }
   }

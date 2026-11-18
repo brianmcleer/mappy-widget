@@ -34,7 +34,18 @@ export async function loadValues (live: LiveMap, e: LayerEntry): Promise<void> {
       const out: { [field: string]: string[] } = {}
       try {
         if (t.load && !t.loaded) await withTimeout(t.load(), 8000)
-        const fields = (Array.from(t.fields || []) as any[]).filter(f => isText(f) && !hidden(f) && !f.domain?.codedValues && /^[a-z_][a-z0-9_.]*$/i.test(f.name) && !(f.length > 255)).slice(0, 12)
+        // Fields that hold a short list of kinds (zoning, status, material) come first; names, addresses,
+        // ids and notes are free text and are not worth a query each.
+        const kind = (f: any): number => {
+          const n = `${f.name} ${f.alias || ''} ${fieldLabel(f)}`.toLowerCase()
+          if (/\b(?:id|guid|url|email|phone|notes?|comments?|legal|description|desc|mailing|address|location|user|editor|account|number|num|no|zip|pointer|reception|grantee|grantor|unit)\b|\d(?:st|nd|rd|th)\b/.test(n)) return f.name === t.displayField ? 1 : -1
+          let score = 2
+          if (/zon|land ?use|\buse\b|type|status|class|categor|material|surface|district|kind|condition|rating|owner(?:ship)? type|jurisdiction|ward|neighbou?rhood|city|state|direction|mode|group|code|flag|compliant/.test(n)) score += 3
+          if (f.name === t.displayField) score += 2
+          if (f.length && f.length <= 50) score += 1
+          return score
+        }
+        const fields = (Array.from(t.fields || []) as any[]).filter(f => isText(f) && !hidden(f) && !f.domain?.codedValues && /^[a-z_][a-z0-9_.]*$/i.test(f.name) && !(f.length > 255)).map(f => ({ f, k: kind(f) })).filter(x => x.k > 0).sort((a, b) => b.k - a.k).slice(0, 14).map(x => x.f)
         await Promise.all(fields.map(async f => {
           try {
             const q: any = t.createQuery ? t.createQuery() : { where: t.definitionExpression || '1=1' }
@@ -133,7 +144,9 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
     const f = ask.field
     if (target.capabilities?.query?.supportsOrderBy === false) throw new Error(`**${entry.title}** cannot be sorted, so I cannot rank it.`)
     const limit = Math.max(1, ask.limit || 1)
-    const q = fresh(); q.where = `(${full}) AND ${f.name} IS NOT NULL`; withShape(q)
+    // A year of 0 is "not recorded" in many layers, so it never counts as the oldest.
+    const real = numericField(f) && yearish(f) ? ` AND ${f.name} > 0` : ''
+    const q = fresh(); q.where = `(${full}) AND ${f.name} IS NOT NULL${real}`; withShape(q)
     q.orderByFields = [`${f.name} ${ask.order === 'asc' ? 'ASC' : 'DESC'}`, ...(target.objectIdField ? [target.objectIdField + ' ASC'] : [])]
     q.num = Math.max(limit, 3)
     const res: any = await withTimeout(target.queryFeatures(q), 12000)

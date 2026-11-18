@@ -21,7 +21,13 @@ const ABBR: { [k: string]: string } = {
   sz: 'Size', len: 'Length', wid: 'Width', ht: 'Height', depth: 'Depth', yb: 'Year Built', eff: 'Effective', act: 'Actual',
   mail: 'Mailing', st: 'St', apt: 'Apt', ste: 'Suite', strname: 'Street Name', stname: 'Street Name', stnum: 'Street Number',
   pdir: 'Prefix Direction', sdir: 'Suffix Direction', sfx: 'Suffix', pfx: 'Prefix', rec: 'Reception', recpt: 'Reception', plat: 'Plat',
-  esmt: 'Easement', blt: 'Built', auth: 'Authority', bld: 'Built', ownrshp: 'Ownership', lgl: 'Legal', sub: 'Sub', twp: 'Township', rng: 'Range', sec: 'Section', row: 'ROW', lu: 'Land Use', luc: 'Land Use Code', ayb: 'Actual Year Built', eyb: 'Effective Year Built'
+  esmt: 'Easement', blt: 'Built', auth: 'Authority', bld: 'Built', ownrshp: 'Ownership', lgl: 'Legal', sub: 'Sub', twp: 'Township', rng: 'Range', sec: 'Section', row: 'ROW', lu: 'Land Use', luc: 'Land Use Code', ayb: 'Actual Year Built', eyb: 'Effective Year Built',
+  // Assessor and utility short forms seen in many counties' and cities' layers.
+  lnd: 'Land', imp: 'Improvement', cur: 'Current', curr: 'Current', pre: 'Previous', prev: 'Previous', prop: 'Property', nbhd: 'Neighborhood', nbrhd: 'Neighborhood',
+  bdrms: 'Bedrooms', bdrm: 'Bedrooms', beds: 'Bedrooms', bths: 'Bathrooms', bth: 'Bathrooms', rms: 'Rooms', sqf: 'Sq Ft', htsqf: 'Heated Sq Ft', str: 'Street',
+  bldgs: 'Buildings', sch: 'School', ass: 'Assessed', assoc: 'Associated', par: 'Parcel', econ: 'Economic', qual: 'Qualification', adj: 'Adjustment',
+  sprice: 'Sale Price', sdate: 'Sale Date', saledt: 'Sale Date', saleprc: 'Sale Price', squal: 'Sale Qualification', sreason: 'Sale Reason', sadj: 'Sale Adjustment', snotes: 'Sale Notes', scount: 'Sale Count', srecpt: 'Sale Reception',
+  arch: 'Architecture', cons: 'Constructed', constr: 'Constructed', repl: 'Replacement', press: 'Pressure', mdl: 'Model', sys: 'System', ty: 'Type', hyd: 'Hydrant', mh: 'Manhole', seg: 'Segment', surf: 'Surface', spd: 'Speed', lim: 'Limit', lns: 'Lanes'
 }
 
 /** Words written in capitals. */
@@ -45,7 +51,8 @@ const VOCAB = ('parcel parcels owner owners name names joint mailing mail addres
   'global unique identifier object shape geometry latitude longitude x y z elevation measure distance feet foot meters miles percent ' +
   'average minimum maximum min max sum mean median rank score priority risk rating grade level levels floor floors room rooms bed beds ' +
   'bath baths garage pool fence fences sign signs signal signals light lights pole poles tree trees species diameter canopy height crown ' +
-  'photo photos image images link links document documents drawing drawings plan plans sheet sheets book date time hour minute second').split(/\s+/)
+  'photo photos image images link links document documents drawing drawings plan plans sheet sheets book date time hour minute second ' +
+  'sale sales price sold current previous property heated bedrooms bathrooms units grantee grantor architecture constructed replacement pressure flow rate model system surface speed lanes classification').split(/\s+/)
 const WORDS = new Set(VOCAB)
 
 function titleWord (w: string, first: boolean): string {
