@@ -2184,6 +2184,35 @@ test('plain questions are read against what the layers hold: names, fields and v
   assert.ok(/parcels match|could not match/.test(stuck.text))
 })
 
+test('read aloud: what is said, how it is cut, and which voice is picked', () => {
+  const { sayable, sentences, pickVoice, voiceScore, speakUrl } = require('../src/brain/speech.ts')
+  // The answer without markup, links, emoji or asides; units a voice can read.
+  assert.equal(sayable('**8** parcels match (Zoning R-4). That is 22% of the 36 in the layer.\n\nNew stamp in your passport: 🔢 **Bean Counter**.'), '8 parcels match (Zoning R-4). That is 22 percent of the 36 in the layer.')
+  assert.equal(sayable('City Hall is **610 ft** from the library 🎉 see https://example.org/x\n\n(I read that as “city hall”.)'), 'City Hall is 610 feet from the library see link')
+  assert.equal(sayable('♥♥♡♡♡ We are **Pen Pals** now.'), '')
+  assert.equal(sayable('Owner: **Smith** · Parcel MP-1010\nscale 1:2,400'), 'Owner: Smith, Parcel MP-1010. scale 1 to 2,400')
+  // Sentence-sized pieces, never longer than asked.
+  assert.deepEqual(sentences('One. Two! Three?', 8), ['One.', 'Two!', 'Three?'])
+  assert.deepEqual(sentences('One. Two! Three?', 40), ['One. Two! Three?'])
+  const long = sentences('a'.repeat(30) + ', ' + 'b '.repeat(60) + '. Short one.', 60)
+  assert.ok(long.length >= 3 && long.every(p => p.length <= 60), JSON.stringify(long.map(p => p.length)))
+  assert.deepEqual(sentences('', 50), [])
+  // A natural voice beats the default; the right language beats a nicer voice in another one; a preferred name wins.
+  const voices = [{ name: 'Microsoft David - English (United States)', lang: 'en-US', default: true, localService: true }, { name: 'Microsoft Aria Online (Natural) - English (United States)', lang: 'en-US', localService: false }, { name: 'Microsoft Denise Online (Natural) - French (France)', lang: 'fr-FR', localService: false }, { name: 'Google UK English Female', lang: 'en-GB', localService: false }, { name: 'Zarvox', lang: 'en-US', localService: true }, { name: 'Samantha (Enhanced)', lang: 'en-US', localService: true }]
+  // Online voices send the words to the browser's maker, so they are used only when the builder allows it.
+  assert.equal(pickVoice(voices, 'en-US').name, 'Samantha (Enhanced)')
+  assert.equal(pickVoice(voices, 'en-US', 'Google UK English Female').name, 'Samantha (Enhanced)')
+  assert.match(pickVoice(voices, 'en-US', undefined, true).name, /Aria Online \(Natural\)/)
+  assert.match(pickVoice(voices, 'fr-CA', undefined, true).name, /Denise/)
+  assert.equal(pickVoice(voices, 'en-US', 'Google UK English Female', true).name, 'Google UK English Female')
+  assert.equal(pickVoice(voices.slice(0, 1).concat(voices.slice(4, 5)), 'en-US').name, 'Microsoft David - English (United States)')
+  assert.ok(voiceScore(voices[4], 'en-US') < voiceScore(voices[0], 'en-US'))
+  assert.equal(pickVoice([], 'en-US'), null)
+  // The voice lives beside the MCP address, https only.
+  assert.equal(speakUrl('https://gis.example.org/gis-mcp/mcp'), 'https://gis.example.org/gis-mcp/speak')
+  assert.equal(speakUrl('http://gis.example.org/gis-mcp/mcp'), ''); assert.equal(speakUrl('https://gis.example.org/other'), ''); assert.equal(speakUrl(''), '')
+})
+
 test('census and place-in-numbers questions answer from the saved facts', async () => {
   const { live } = fixture()
   const facts = ["The Census Bureau estimates Springfield's population at 65,560. (US Census ACS)", 'The median age in Springfield is 38.9. (US Census ACS)', 'The median home value in Springfield is about $331,000. (US Census ACS)', 'Springfield sees about 22 inches of snow in a typical year. (Open-Meteo)', 'Springfield sits at about 4,583 feet (1,397 m) above sea level. (Wikidata)']

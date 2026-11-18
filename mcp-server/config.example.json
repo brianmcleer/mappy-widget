@@ -81,5 +81,14 @@
     "ca_bundle": "",
     "apps_only": true,
     "feedback": true
+  },
+  "voice": {
+    "enabled": false,
+    "model": "voice/kokoro-v1.0.int8.onnx",
+    "voices": "voice/voices-v1.0.bin",
+    "voice": "af_heart",
+    "speed": 1.0,
+    "max_chars": 600,
+    "per_person_per_hour": 400
   }
 }

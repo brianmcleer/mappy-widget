@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.13.1'
+VERSION = '1.14.0'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -118,6 +118,21 @@ DEFAULTS = {
         'retry_wait_seconds': 1.5,
         'org_name': '',
         'extra_instructions': ''
+    },
+    # A natural voice for "read aloud" (POST /speak), from the open-source Kokoro model running on
+    # this server. Off unless enabled here, kokoro-onnx is installed and the two model files are
+    # in place. Nothing is sent anywhere: the text is turned into sound on this machine.
+    'voice': {
+        'enabled': False,
+        'model': 'voice/kokoro-v1.0.int8.onnx',
+        'voices': 'voice/voices-v1.0.bin',
+        'voice': 'af_heart',
+        'speed': 1.0,
+        'lang': 'en-us',
+        'max_chars': 600,
+        'per_person_per_hour': 400,
+        'cache_items': 200,
+        'require_token': False
     }
 }
 
@@ -152,6 +167,7 @@ def load_config(path):
     cfg['allowed_origins'] = [o.rstrip('/') for o in cfg.get('allowed_origins') or []]
     cfg['max_results'] = max(1, min(100, int(cfg.get('max_results') or 25)))
     cfg['assistant'] = dict(DEFAULTS['assistant'], **(cfg.get('assistant') or {}))
+    cfg['voice'] = dict(DEFAULTS['voice'], **(cfg.get('voice') or {}))
     for key in ('portal_url', 'locator_url'):
         cfg[key] = (cfg.get(key) or '').rstrip('/')
     return cfg
@@ -2362,6 +2378,7 @@ class Server:
         self.layers = Layers(cfg, self.gis)
         self.tools = Tools(cfg, self.gis, self.layers)
         self.assistant = Assistant(cfg, self.tools, self.layers)
+        self.voice = Voice(cfg)
         self.upstreams = []
         for spec in cfg.get('upstream_servers') or []:
             if spec.get('enabled') is False:
@@ -2477,6 +2494,166 @@ class Server:
 
 # ---------------------------------------------------------------- HTTP (Streamable HTTP transport)
 
+
+class VoiceError(Exception):
+    def __init__(self, message, status=503):
+        Exception.__init__(self, message)
+        self.status = status
+
+
+class Voice:
+    """Turns a sentence into speech with the open-source Kokoro model (kokoro-onnx), on this server.
+
+    The model is loaded the first time someone asks, kept in memory, and used one sentence at a
+    time. Sentences already spoken are kept (answers repeat: "Okay", "Turned on Parcels").
+    """
+
+    def __init__(self, cfg, base_dir=None):
+        self.v = dict(DEFAULTS['voice'], **(cfg.get('voice') or {}))
+        self.base = base_dir or os.path.dirname(os.path.abspath(__file__))
+        self.engine = None
+        self.error = ''
+        self.lock = threading.Lock()
+        self.running = threading.Lock()
+        self.cache = {}
+        self.order = []
+        self.hits = {}
+        self.names = []
+
+    def _path(self, key):
+        p = str(self.v.get(key) or '')
+        return p if os.path.isabs(p) else os.path.join(self.base, p)
+
+    def status(self):
+        if not self.v.get('enabled'):
+            return 'off'
+        if self.error:
+            return 'error: ' + self.error
+        if self.engine is not None:
+            return 'ready'
+        try:
+            import importlib.util
+            if importlib.util.find_spec('kokoro_onnx') is None:
+                return 'needs the kokoro-onnx package (pip install kokoro-onnx)'
+        except Exception:
+            return 'needs the kokoro-onnx package (pip install kokoro-onnx)'
+        missing = [k for k in ('model', 'voices') if not os.path.isfile(self._path(k))]
+        if missing:
+            return 'needs the model files: ' + ', '.join(os.path.basename(self._path(k)) for k in missing)
+        return 'ready'
+
+    def _load(self):
+        if self.engine is not None:
+            return self.engine
+        with self.lock:
+            if self.engine is not None:
+                return self.engine
+            state = self.status()
+            if state != 'ready':
+                raise VoiceError('The voice is not set up on this server (%s).' % state)
+            try:
+                from kokoro_onnx import Kokoro
+                started = time.time()
+                self.engine = Kokoro(self._path('model'), self._path('voices'))
+                try:
+                    self.names = sorted(self.engine.get_voices())
+                except Exception:
+                    self.names = []
+                log.info('Voice model loaded in %.1fs (%d voices)', time.time() - started, len(self.names))
+            except Exception as e:
+                self.error = str(e)[:200]
+                log.exception('Voice model failed to load')
+                raise VoiceError('The voice model could not be loaded on this server.')
+        return self.engine
+
+    def allowed(self, who):
+        """One person's sentences this hour, so a stuck page cannot keep the processor busy."""
+        limit = int(self.v.get('per_person_per_hour') or 0)
+        if limit <= 0:
+            return True
+        now = time.time()
+        with self.lock:
+            recent = [t for t in self.hits.get(who, []) if now - t < 3600]
+            if len(recent) >= limit:
+                self.hits[who] = recent
+                return False
+            recent.append(now)
+            self.hits[who] = recent
+            if len(self.hits) > 5000:
+                self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 3600}
+        return True
+
+    @staticmethod
+    def clean(text):
+        """What is said: no markup, no web addresses, no symbols a voice would spell out."""
+        t = str(text or '')
+        t = re.sub(r'https?://\S+', ' link ', t)
+        t = re.sub(r'[*_`#>|~]+', ' ', t)
+        t = re.sub(r'[\U0001F000-\U0001FAFF☀-➿️‍]', ' ', t)
+        t = t.replace('&', ' and ').replace('%', ' percent').replace('·', ', ')
+        return re.sub(r'\s+', ' ', t).strip()
+
+    def wav(self, text, voice=None, speed=None):
+        """One sentence (or a few) as a WAV file's bytes."""
+        said = self.clean(text)
+        if not said:
+            raise VoiceError('There is nothing to say.', 400)
+        limit = int(self.v.get('max_chars') or 600)
+        if len(said) > limit:
+            raise VoiceError('Send at most %d characters at a time.' % limit, 413)
+        engine = self._load()
+        name = voice if (voice and voice in self.names) else self.v.get('voice') or 'af_heart'
+        try:
+            rate = max(0.6, min(1.6, float(speed if speed is not None else self.v.get('speed') or 1.0)))
+        except (TypeError, ValueError):
+            rate = 1.0
+        key = '%s|%.2f|%s' % (name, rate, said)
+        with self.lock:
+            if key in self.cache:
+                return self.cache[key]
+        started = time.time()
+        try:
+            # The model runs one request at a time: it already uses every core.
+            with self.running:
+                samples, rate_hz = engine.create(said, voice=name, speed=rate, lang=self.v.get('lang') or 'en-us')
+        except Exception:
+            log.exception('Voice failed on a sentence')
+            raise VoiceError('The voice could not say that.', 500)
+        data = self.encode(samples, int(rate_hz))
+        log.info('Voice: %d characters, %.1fs of sound in %.1fs', len(said), len(samples) / float(rate_hz or 1), time.time() - started)
+        keep = int(self.v.get('cache_items') or 0)
+        if keep > 0 and len(data) < 2000000:
+            with self.lock:
+                self.cache[key] = data
+                self.order.append(key)
+                while len(self.order) > keep:
+                    self.cache.pop(self.order.pop(0), None)
+        return data
+
+    @staticmethod
+    def encode(samples, rate_hz):
+        """Float samples (-1 to 1) as a 16-bit mono WAV."""
+        import io
+        import wave
+        try:
+            import numpy as np
+            pcm = (np.clip(np.asarray(samples, dtype='float32'), -1.0, 1.0) * 32767.0).astype('<i2').tobytes()
+        except ImportError:
+            import array
+            a = array.array('h', (int(max(-1.0, min(1.0, float(x))) * 32767) for x in samples))
+            if sys.byteorder == 'big':
+                a.byteswap()
+            pcm = a.tobytes()
+        out = io.BytesIO()
+        w = wave.open(out, 'wb')
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate_hz)
+        w.writeframes(pcm)
+        w.close()
+        return out.getvalue()
+
+
 ALLOW_HEADERS = 'content-type, accept, authorization, mcp-session-id, mcp-protocol-version, last-event-id'
 EXPOSE_HEADERS = 'Mcp-Session-Id, WWW-Authenticate'
 
@@ -2539,6 +2716,7 @@ def create_app(cfg):
     def health():
         return json_res({'ok': True, 'version': VERSION, 'layers': len(server.layers.by_name), 'notes': server.layers.notes[:20],
                          'assistant': {'label': server.assistant.label, 'status': server.assistant.status(), 'model': server.assistant.a.get('model'), 'today': server.assistant.today(), 'this_month': server.assistant.this_month()},
+                         'voice': {'status': server.voice.status(), 'voice': server.voice.v.get('voice'), 'engine': 'Kokoro (open source, runs on this server)'},
                          'upstream': [{'name': u.name, 'label': u.label, 'prefix': u.prefix, 'auth': u.auth, 'status': u.status, 'server': u.server_title} for u in server.upstreams]})
 
     @app.route(base + '/mcp', methods=['OPTIONS'])
@@ -2587,6 +2765,48 @@ def create_app(cfg):
             return with_cors(Response(status=202), origin)
         return json_res(reply, 200, origin)
 
+    # A natural voice for "read aloud": one sentence in, a WAV file out. The text never leaves this server.
+    @app.route(base + '/speak', methods=['OPTIONS'])
+    def speak_preflight():
+        ok, origin = origin_ok()
+        if not ok:
+            return json_res({'error': 'origin not allowed'}, 403)
+        return with_cors(Response(status=204), origin)
+
+    @app.route(base + '/speak', methods=['GET'])
+    def speak_info():
+        ok, origin = origin_ok()
+        if not ok:
+            return json_res({'error': 'origin not allowed'}, 403)
+        v = server.voice
+        return json_res({'status': v.status(), 'voice': v.v.get('voice'), 'voices': v.names, 'max_chars': int(v.v.get('max_chars') or 600)}, 200, origin)
+
+    @app.route(base + '/speak', methods=['POST'])
+    def speak():
+        ok, origin = origin_ok()
+        if not ok:
+            return json_res({'error': 'Origin not allowed'}, 403)
+        v = server.voice
+        if not v.v.get('enabled'):
+            return json_res({'error': 'The voice is not turned on for this server.'}, 404, origin)
+        token = token_from_request()
+        if (v.v.get('require_token') or cfg.get('require_token')) and not token:
+            return json_res({'error': 'Sign in required'}, 401, origin)
+        try:
+            body = json.loads(request.get_data(cache=False, as_text=True) or 'null') or {}
+        except ValueError:
+            return json_res({'error': 'Send JSON: {"text": "..."}'}, 400, origin)
+        if not isinstance(body, dict) or not isinstance(body.get('text'), str):
+            return json_res({'error': 'Send JSON: {"text": "..."}'}, 400, origin)
+        client = (request.headers.get('X-Forwarded-For') or '').split(',')[-1].strip() or request.remote_addr or ''
+        if not v.allowed(client):
+            return json_res({'error': 'That is a lot of reading aloud for one hour. Try again later.'}, 429, origin)
+        try:
+            data = v.wav(body['text'], body.get('voice') if isinstance(body.get('voice'), str) else None, body.get('speed'))
+        except VoiceError as e:
+            return json_res({'error': str(e)}, e.status, origin)
+        return with_cors(Response(data, status=200, mimetype='audio/wav'), origin)
+
     # Read the service folders in the background at start, so /health shows what was found.
     if cfg.get('service_folders') and not cfg.get('_no_startup_refresh'):
         def warm():
@@ -2595,6 +2815,15 @@ def create_app(cfg):
             except Exception:
                 log.exception('Startup layer refresh failed')
         threading.Thread(target=warm, daemon=True).start()
+    # Load the voice model in the background at start, so the first sentence does not wait for it.
+    if cfg.get('voice', {}).get('enabled') and not cfg.get('_no_startup_refresh'):
+        def warm_voice():
+            try:
+                if server.voice.status() == 'ready':
+                    server.voice._load()
+            except Exception:
+                log.exception('Voice warm-up failed')
+        threading.Thread(target=warm_voice, daemon=True).start()
     app.mcp_server = server
     return app
 
@@ -2630,6 +2859,8 @@ def main():
     p.add_argument('--ask', metavar='QUESTION', help='Ask Claude one question from the command line (tests the API key and tools), then exit.')
     p.add_argument('--eval', metavar='FILE', help='Ask Claude every question in a text file (one per line) and write the answers, tools, seconds and tokens to a CSV, then exit.')
     p.add_argument('--usage', action='store_true', help='Print questions, tokens and estimated cost by day and month, then exit.')
+    p.add_argument('--say', metavar='TEXT', help='Say a sentence with the server voice and save it as a WAV file (tests the voice setup), then exit.')
+    p.add_argument('--out', metavar='FILE', default='say.wav', help='Where --say writes its WAV file.')
     p.add_argument('--desktop-config', action='store_true', help='Print the Claude Desktop config that connects it to this server, then exit.')
     a = p.parse_args()
     cfg = load_config(a.config)
@@ -2643,6 +2874,19 @@ def main():
         for n in s.layers.notes:
             print('Note: ' + n)
         print('Tools: ' + ', '.join(t['name'] for t in s.tools.definitions()))
+        return
+    if a.say:
+        v = Voice(dict(cfg, voice=dict(cfg.get('voice') or {}, enabled=True)), here)
+        print('Voice: ' + v.status())
+        try:
+            started = time.time()
+            data = v.wav(a.say)
+            with open(a.out, 'wb') as f:
+                f.write(data)
+            print('Wrote %s (%d KB) in %.1f seconds. Voices: %s' % (a.out, len(data) // 1024, time.time() - started, ', '.join(v.names[:12]) + (' ...' if len(v.names) > 12 else '')))
+        except VoiceError as e:
+            print(str(e))
+            sys.exit(1)
         return
     if a.desktop_config:
         url = (cfg.get('public_url') or 'https://YOUR-SERVER/gis-mcp').rstrip('/') + '/mcp'

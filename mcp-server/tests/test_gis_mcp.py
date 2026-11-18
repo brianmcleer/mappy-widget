@@ -7,6 +7,7 @@ Starts the fake ArcGIS server and the MCP app in this process (no network beyond
 and talks to the MCP endpoint the way a browser client does.
 """
 import json
+import math
 import os
 import sys
 import tempfile
@@ -627,6 +628,66 @@ class GisMcpTest(unittest.TestCase):
         self.assertEqual(meta['resource'], 'https://gis.example.org/gis-mcp/mcp')
         r = app.post('/mcp', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}), headers={'Content-Type': 'application/json', 'Origin': ORIGIN})
         self.assertIn('resource_metadata="https://gis.example.org/gis-mcp/.well-known/oauth-protected-resource"', r.headers['WWW-Authenticate'])
+
+
+class VoiceTest(unittest.TestCase):
+    """The server voice: one sentence in, a WAV out, with the model stood in for by a tone."""
+
+    class Tone:
+        def __init__(self):
+            self.said = []
+
+        def get_voices(self):
+            return ['af_heart', 'am_adam']
+
+        def create(self, text, voice='af_heart', speed=1.0, lang='en-us'):
+            self.said.append((text, voice, speed))
+            return [math.sin(i / 10.0) * 0.5 for i in range(2400)], 24000
+
+    def app(self, **voice):
+        cfg = dict(gis_mcp.DEFAULTS, allowed_origins=['https://maps.example.org'], _no_startup_refresh=True, voice=dict(gis_mcp.DEFAULTS['voice'], **voice))
+        app = gis_mcp.create_app(cfg)
+        return app, app.test_client()
+
+    def test_off_by_default_and_says_what_is_missing(self):
+        app, c = self.app()
+        self.assertEqual(c.get('/health').get_json()['voice']['status'], 'off')
+        self.assertEqual(c.post('/speak', json={'text': 'Hello'}).status_code, 404)
+        app2, c2 = self.app(enabled=True, model='nowhere/model.onnx', voices='nowhere/voices.bin')
+        status = c2.get('/health').get_json()['voice']['status']
+        self.assertTrue(status.startswith('needs'), status)
+        r = c2.post('/speak', json={'text': 'Hello'})
+        self.assertEqual(r.status_code, 503)
+        self.assertIn('not set up', r.get_json()['error'])
+
+    def test_speaks_cleans_caches_and_limits(self):
+        app, c = self.app(enabled=True, per_person_per_hour=3, max_chars=80)
+        tone = self.Tone()
+        app.mcp_server.voice.engine = tone
+        app.mcp_server.voice.names = tone.get_voices()
+        r = c.post('/speak', json={'text': '**8** parcels match (Zoning R-4). 22% & more https://example.org/x 🎉', 'voice': 'am_adam', 'speed': 1.2}, headers={'Origin': 'https://maps.example.org'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.mimetype, 'audio/wav')
+        self.assertEqual(r.data[:4], b'RIFF')
+        self.assertEqual(r.headers['Access-Control-Allow-Origin'], 'https://maps.example.org')
+        self.assertEqual(len(r.data), 44 + 2400 * 2)
+        self.assertEqual(tone.said[0], ('8 parcels match (Zoning R-4). 22 percent and more link', 'am_adam', 1.2))
+        # The same sentence again comes from memory; an unknown voice falls back to the configured one.
+        c.post('/speak', json={'text': '**8** parcels match (Zoning R-4). 22% & more https://example.org/x 🎉', 'voice': 'am_adam', 'speed': 1.2})
+        self.assertEqual(len(tone.said), 1)
+        c.post('/speak', json={'text': 'Okay.', 'voice': 'nobody'})
+        self.assertEqual(tone.said[1][1], 'af_heart')
+        # Too long, empty and malformed are refused plainly; then the hourly limit.
+        self.assertEqual(c.post('/speak', json={'text': 'x' * 81}).status_code, 429)
+        app2, c2 = self.app(enabled=True, max_chars=80)
+        app2.mcp_server.voice.engine = self.Tone()
+        self.assertEqual(c2.post('/speak', json={'text': 'x ' * 60}).status_code, 413)
+        self.assertEqual(c2.post('/speak', json={'text': '***'}).status_code, 400)
+        self.assertEqual(c2.post('/speak', data='nope', content_type='application/json').status_code, 400)
+        self.assertEqual(c2.post('/speak', json={'text': 'Hello'}, headers={'Origin': 'https://evil.example'}).status_code, 403)
+        info = c2.get('/speak').get_json()
+        self.assertEqual(info['status'], 'ready')
+        self.assertEqual(info['max_chars'], 80)
 
 
 if __name__ == '__main__':

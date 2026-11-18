@@ -31,6 +31,7 @@ import { extractApp } from '../brain/extract'
 import { adminDocs } from '../brain/admin'
 import type { FaqEntry } from '../brain/admin'
 import { cleanContact } from '../brain/care'
+import { Speaker } from './speech'
 import { parseIntent } from '../brain/intents'
 import { V, pick } from '../brain/voice'
 import { season, dayFeel } from '../brain/fun'
@@ -375,17 +376,18 @@ export default function Widget (props: Props): any {
     pointTimer.current = setTimeout(() => { setLookAt(null); setPointDir(null) }, 2800)
   }, [])
 
+  // One speaker for the widget: the server's open-source voice when the builder chose it, else the browser's best.
+  const speakerOpts = React.useRef<any>({})
+  speakerOpts.current = {
+    voice: plain<any>(cfg.voice) || null,
+    mcpUrl: plain<any>(cfg.mcp)?.url || '',
+    headers: async () => { const m = plain<any>(cfg.mcp) || {}; const h: { [k: string]: string } = {}; if (m.auth === 'arcgis') { try { const t = SessionManager.getInstance().getMainSession()?.token; if (t) h.authorization = 'Bearer ' + t } catch (e) { } } if (m.auth === 'header' && m.headerName && m.headerValue && /^x-[a-z0-9-]+$/i.test(m.headerName)) h[m.headerName] = m.headerValue; return h }
+  }
+  const speaker = React.useMemo(() => new Speaker(() => speakerOpts.current), [])
   const speak = React.useCallback((text: string) => {
     if (!readAloud || cfg.allowReadAloud === false) return
-    try {
-      const synth = (window as any).speechSynthesis
-      if (!synth) return
-      synth.cancel()
-      const u = new (window as any).SpeechSynthesisUtterance(String(text).replace(/\*\*/g, '').replace(/https?:\/\/\S+/g, 'link'))
-      u.rate = 1.05
-      synth.speak(u)
-    } catch (e) { }
-  }, [readAloud, cfg.allowReadAloud])
+    void speaker.speak(text)
+  }, [readAloud, cfg.allowReadAloud, speaker])
 
   const messagesRef = React.useRef<ChatMsg[]>([]); messagesRef.current = messages
   const copyText = (text: string) => {
@@ -422,7 +424,7 @@ export default function Widget (props: Props): any {
 
   const closeChat = React.useCallback((returnFocus = true) => {
     setOpen(false)
-    try { (window as any).speechSynthesis?.cancel() } catch (e) { }
+    speaker.stop()
     if (returnFocus) setTimeout(() => { try { charRef.current?.focus() } catch (e) { } }, 30)
   }, [])
 
@@ -490,7 +492,7 @@ export default function Widget (props: Props): any {
       if (reply.mood === 'goodbye') setTimeout(() => closeChat(true), 1500)
       // Things he does to himself: hold still, speak, grow or shrink, change corner.
       if (reply.effect === 'pause' || reply.effect === 'resume') { const v = reply.effect === 'pause'; setPaused(v); store('mappy-paused', v ? '1' : null) }
-      if (reply.effect === 'speak' && cfg.allowReadAloud !== false) { try { const synth = (window as any).speechSynthesis; if (synth) { synth.cancel(); const u = new (window as any).SpeechSynthesisUtterance(reply.text.replace(/^Reading that aloud: /, '').replace(/\*\*/g, '')); synth.speak(u) } } catch (e) { } }
+      if (reply.effect === 'speak' && cfg.allowReadAloud !== false) void speaker.speak(reply.text)
       if (reply.effect === 'smaller' || reply.effect === 'bigger') setSizeStep(s => { const next = Math.max(-2, Math.min(2, s + (reply.effect === 'smaller' ? -1 : 1))); store('mappy-size-step', next ? String(next) : null); return next })
       if (reply.effect === 'left' || reply.effect === 'right' || reply.effect === 'otherCorner') { const cur = sideRef.current; const want = reply.effect === 'otherCorner' ? (cur === 'right' ? 'left' : 'right') : reply.effect; if (want !== cur) swapRef.current(false) }
     } catch (e) {
@@ -740,7 +742,7 @@ export default function Widget (props: Props): any {
     { id: 'tip', label: __t('menuTip'), onSelect: () => { const t = mind.tip(); if (t) { say(t.text, t); openChat(false) } } },
     ...(floating ? [{ id: 'move', label: __t('menuMove'), separatorBefore: true, onSelect: () => swapCorner() }, { id: 'reset', label: __t('menuReset'), onSelect: resetPos }] : []),
     { id: 'pause', label: __t('menuPause'), checked: paused, separatorBefore: true, onSelect: () => { const v = !paused; setPaused(v); store('mappy-paused', v ? '1' : null) } },
-    ...(cfg.allowReadAloud !== false && typeof window !== 'undefined' && (window as any).speechSynthesis ? [{ id: 'read', label: __t('menuReadAloud'), checked: readAloud, onSelect: () => { const v = !readAloud; setReadAloud(v); store('mappy-read-aloud', v ? '1' : null); if (!v) { try { (window as any).speechSynthesis.cancel() } catch (e) { } } } }] : []),
+    ...(cfg.allowReadAloud !== false && typeof window !== 'undefined' && speaker.available() ? [{ id: 'read', label: __t('menuReadAloud'), checked: readAloud, onSelect: () => { const v = !readAloud; setReadAloud(v); store('mappy-read-aloud', v ? '1' : null); if (!v) speaker.stop() } }] : []),
     ...(cfg.tipsEnabled !== false ? [{ id: 'tips', label: __t('menuTips'), checked: !tipsOff, onSelect: () => setTips(!tipsOff) }] : []),
     { id: 'hide', label: __t('menuHide', { name }), separatorBefore: true, onSelect: hide }
   ]
@@ -751,7 +753,7 @@ export default function Widget (props: Props): any {
     try { if (cfg.telemetry === true) beaconRef.current = beacon.init(props as any) } catch (e) { }
     mind.ctx.beacon = beaconRef.current
     const t = setTimeout(() => setPhase('shown'), 800)
-    return () => { clearTimeout(t); clearTimeout(moodTimer.current); clearTimeout(pointTimer.current); live.unbind(); try { (window as any).speechSynthesis?.cancel() } catch (e) { } }
+    return () => { clearTimeout(t); clearTimeout(moodTimer.current); clearTimeout(pointTimer.current); live.unbind(); speaker.stop() }
   }, [])
 
   React.useEffect(() => { mind.ctx.beacon = beaconRef.current }, [mind])

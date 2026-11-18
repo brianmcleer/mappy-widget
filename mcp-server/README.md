@@ -211,3 +211,7 @@ Set the key for IIS: `Set-WebConfigurationProperty` or the app pool's environmen
 ## Protocol
 
 MCP Streamable HTTP (2025-11-25 and 2025-06-18; 2025-03-26 and 2024-11-05 also accepted). Stateless, with JSON responses. `GET /mcp` answers 405 because no server-initiated stream is offered. Tested with the official MCP SDK client and with Mappy.
+
+## A voice for read aloud (optional)
+
+gis-mcp 1.14 can turn sentences into speech for the widget's "Read answers aloud", with the open-source Kokoro model running on this server. It is off until you install `requirements-voice.txt`, put two model files in a `voice` folder and set `"voice": { "enabled": true }`. `python gis_mcp.py --say "Hello"` tests it. Steps and settings: [mappy/docs/voice.md](../mappy/docs/voice.md).

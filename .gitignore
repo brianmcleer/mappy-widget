@@ -20,6 +20,6 @@ Thumbs.db
 language/.cache/
 issues.json
 language/report.md
-__pycache__/
-*.pyc
-language/.cache/
+
+# The server voice's model files are downloaded, never committed
+mcp-server/voice/

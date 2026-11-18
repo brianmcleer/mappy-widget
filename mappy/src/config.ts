@@ -44,6 +44,12 @@ export interface Config {
   typewriter?: boolean
   /** Offer "Read answers aloud" in his menu (browser speech). Undefined means on. */
   allowReadAloud?: boolean
+  /**
+   * The voice for read aloud: source 'browser' (the most natural voice the browser has) or 'server'
+   * (the open-source voice on the GIS server, POST /speak beside the MCP address), name (a browser
+   * voice to prefer), serverVoice and rate. See brain/speech.ts and docs/voice.md.
+   */
+  voice?: any
   /** Fix typos before reading a request ("trun on parcles"). Undefined means on. Turn off for apps used mostly in other languages. */
   typoFix?: boolean
   /** A newer language pack pulled in settings ("Get language updates"); used when newer than the bundled one. */
