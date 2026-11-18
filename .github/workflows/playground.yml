@@ -28,3 +28,8 @@ jobs:
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium
           node e2e.mjs
+      - name: Accessibility test
+        working-directory: demo
+        run: |
+          npm i --no-save --no-audit --no-fund axe-core@4
+          node a11y.mjs

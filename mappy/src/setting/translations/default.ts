@@ -79,6 +79,8 @@ export default {
   chips: 'Suggestion chips',
   chipsHint: 'Comma separated. Empty uses smart defaults.',
   telemetry: 'Usage telemetry',
+  telemetryMisses: 'Send questions he could not answer',
+  telemetryMissesHint: 'Each question he could not answer goes to the usage table as a row with the action "miss", so you can see what people ask across the whole app. Numbers of three or more digits are masked, and questions with a card, Social Security, phone number or email are never sent. The words of the question are sent, so leave this off if people may type things that should stay in their browser.',
   telemetryHint: 'Optional counts and errors through the shared Beacon module. Off by default; requires explicit opt-in and a configured sink. Reload the app after changing this setting.'
 }
 

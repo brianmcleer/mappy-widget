@@ -80,6 +80,8 @@ A second way for Mappy to help: connect a Model Context Protocol server in **MCP
 
 ## Keyboard and accessibility (WCAG 2.2 AA)
 
+What is tested, how to run the tests, and what has not been checked: [docs/accessibility.md](docs/accessibility.md).
+
 | Key | Does |
 | --- | --- |
 | Alt+Shift+M | From anywhere: show Mappy, open the chat, put the cursor in the question box |
@@ -210,7 +212,7 @@ The deep scan result is stored in the widget config (capped near 900 KB; the lea
 
 ## Usage telemetry
 
-When explicitly enabled, this widget records anonymous usage counts and errors so the GIS Division can see which widgets and versions are in use and which errors users hit. It records the app id and title, widget name and version, the action name, a truncated error message, the site host name and browser family. It never records usernames, coordinates, addresses, attribute values, questions users type or URLs with query strings. Where the data goes: on page load the widget asks the app's portal for a public item tagged `exb-beacon-sink` and posts to that table. If your portal has no such item, nothing is sent anywhere. To turn it off for an app, switch off **Usage telemetry** in the settings panel (or set `"telemetry": false` in the widget's config), or users can enable Do Not Track in their browser. The shared module is `src/shared/beacon.ts`.
+When explicitly enabled, this widget records anonymous usage counts and errors so the GIS Division can see which widgets and versions are in use and which errors users hit. It records the app id and title, widget name and version, the action name, a truncated error message, the site host name and browser family. It never records usernames, coordinates, addresses, attribute values or URLs with query strings, and it does not record questions users type unless the builder also turns on "Send questions he could not answer". With that on, each question Mappy could not answer is recorded as a `miss` row with the question's words (numbers of three or more digits masked; questions holding a card, Social Security or phone number or an email are skipped), so the people who run the app can see what to teach him. Where the data goes: on page load the widget asks the app's portal for a public item tagged `exb-beacon-sink` and posts to that table. If your portal has no such item, nothing is sent anywhere. To turn it off for an app, switch off **Usage telemetry** in the settings panel (or set `"telemetry": false` in the widget's config), or users can enable Do Not Track in their browser. The shared module is `src/shared/beacon.ts`.
 
 ## Experience Builder 1.21 TypeScript editor setup (Visual Studio)
 

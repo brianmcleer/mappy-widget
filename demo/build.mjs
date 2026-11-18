@@ -12,7 +12,21 @@ const here = dirname(fileURLToPath(import.meta.url))
 // --fragment: also write dist/fragment.html, the page without its html, head and body tags, for hosts that add their own.
 const cdn = process.argv.includes('--cdn') || process.argv.includes('--fragment')
 const LIBS = '<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>\n<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>\n'
+// A hosted page (--fragment) may not offer file downloads: the save buttons are already hidden there
+// (noDownloads), and this takes the unused download code out of the bundle as well.
+const noDownloads = {
+  name: 'no-downloads',
+  setup (b) {
+    b.onLoad({ filter: /ChatBubble\.tsx$/ }, args => {
+      const src = readFileSync(args.path, 'utf8')
+      const out = src.replace(/function download \(text: string, name: string, type: string\): void \{[\s\S]*?\n\}/, 'function download (text: string, name: string, type: string): void { }')
+      if (out === src) throw new Error('demo/build.mjs: the download helper in ChatBubble.tsx was not found; update the no-downloads plugin.')
+      return { contents: out, loader: 'tsx' }
+    })
+  }
+}
 const result = await build({
+  plugins: process.argv.includes('--fragment') ? [noDownloads] : [],
   entryPoints: [resolve(here, 'src/main.tsx')],
   bundle: true,
   minify: !process.argv.includes('--readable'),

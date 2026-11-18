@@ -36,7 +36,7 @@ export function cleanContact (raw: any): Contact | null {
   return out.email || out.phone || out.url ? out : null
 }
 
-export type CareAsk = 'person' | 'privacy' | 'forgetAll' | 'missed' | 'clearMissed'
+export type CareAsk = 'person' | 'privacy' | 'forgetAll' | 'missed' | 'clearMissed' | 'saveMissed'
 
 const plain = (text: string): string => String(text || '').toLowerCase().replace(/[’`]/g, "'").replace(/^(?:hey |hi |ok |okay |please |mappy,? )+/, '').replace(/(?:,? please)?[!?.,]+$/g, '').replace(/\s+/g, ' ').trim()
 
@@ -53,6 +53,7 @@ export function parseCare (input: string): CareAsk | null {
   if (/^(?:forget everything|forget all(?: of it| about me)?|erase (?:everything|my data|it all|all of it)|delete (?:everything|my data|my (?:info|information|history))|clear (?:everything|my data|my (?:info|information|history)|all (?:my )?data)|wipe (?:everything|my data)|reset (?:everything|your memory|memory)|forget everything (?:about me|you know(?: about me)?))$/.test(t)) return 'forgetAll'
   if (/^(?:privacy|privacy (?:policy|notice|info|statement)|is this (?:private|confidential|anonymous|secure|safe)|(?:is|are) (?:this|my (?:chat|chats|questions?|conversation|data|info|information)) (?:private|saved|stored|recorded|logged|tracked|shared|safe|secure|kept|being (?:saved|stored|recorded|logged|tracked|shared))|(?:do|are) you (?:save|store|record|log|track|keep|share|sell|collect|saving|storing|recording|logging|tracking|keeping|sharing|selling|collecting) (?:this|me|my .+|what i .+|anything|everything|data|information|any (?:data|information))|what (?:do you|does (?:this|mappy)) (?:know|remember|store|save|keep|collect|have|track) (?:about|on) me|what (?:data|information|info) do you (?:keep|store|save|collect|have|track|share)(?: (?:about|on) me)?|(?:who|what) (?:can see|sees|reads|gets) (?:this|my (?:chat|chats|questions?|conversation|data))|where (?:does|do) (?:this|my (?:chat|chats|questions?|data|info|information)) go|(?:are|is) (?:you|this|mappy) (?:tracking|recording|watching|listening to|spying on) me|do you use (?:cookies|ai|my data)|is (?:this|my data) (?:used|sent) (?:to|for) (?:ai|train|training).*)$/.test(t)) return 'privacy'
   if (/^(?:clear|erase|delete|forget|empty) (?:the |your |my )?(?:missed|unanswered) (?:questions?|list)$/.test(t)) return 'clearMissed'
+  if (/^(?:save|download|export|get) (?:the |your |my )?(?:missed|unanswered) (?:questions?|list)(?: (?:as|to) (?:a )?(?:csv|file|spreadsheet|excel))?$/.test(t)) return 'saveMissed'
   if (/^(?:what (?:did|have|couldn'?t|could you not|can'?t) you (?:miss(?:ed)?|answer|not (?:answer|know|understand))|what (?:didn'?t|did not|don'?t) you (?:know|understand|get|answer)|(?:show |list )?(?:the |your |my )?(?:missed|unanswered) questions?|what (?:stumped|confused) you|what should you learn)$/.test(t)) return 'missed'
   return null
 }
@@ -132,6 +133,20 @@ export function missesText (list: Miss[]): string {
   return list.map(m => `${new Date(m.at).toISOString().slice(0, 10)}  ${m.n > 1 ? `(x${m.n}) ` : ''}${m.q}`).join('\n')
 }
 
+/**
+ * The missed questions as a CSV for a spreadsheet: date, times asked, question. Cells that start
+ * like a formula are made harmless.
+ */
+export function missesCsv (list: Miss[]): string {
+  const cell = (v: string): string => { const s = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+  return ['Last asked,Times asked,Question', ...list.map(m => [new Date(m.at).toISOString().slice(0, 10), String(m.n), cell(m.q)].join(','))].join('\r\n') + '\r\n'
+}
+
+/** A missed question as it may leave the browser for the usage table: house and other long numbers masked. */
+export function maskNumbers (q: string): string {
+  return clip(String(q || '').replace(/\d{3,}/g, '#').replace(/\s+/g, ' ').trim(), 120)
+}
+
 /** A mailto link that carries the missed questions to the person who runs the app. */
 export function missesMail (contact: Contact, list: Miss[], app?: string): string {
   if (!contact.email || !list.length) return ''
@@ -153,6 +168,8 @@ export interface PrivacyFacts {
   misses?: number
   savedViews?: number
   telemetry?: boolean
+  /** The builder also sends questions he could not answer to the usage table. */
+  sharesMisses?: boolean
   locator?: boolean
   sharePicture?: boolean
   feed?: boolean
@@ -178,7 +195,7 @@ export function privacyText (f: PrivacyFacts): string {
   if (f.helper === 'claude') leaves.push(`a question I cannot answer goes to ${f.helperLabel || 'an AI assistant'} through that server, with a line about where the map is${f.sharePicture ? ' and, for questions about the screen, a small picture of the map' : ''}. A question with a card or Social Security number in it is never sent`)
   if (f.helper === 'assistant') leaves.push(`nothing goes to ${f.helperLabel || 'the AI assistant'} unless you click its link, which opens it with your question written in`)
   lines.push(`**What leaves the browser:** ${leaves.join('; ')}.`)
-  lines.push(f.telemetry ? '**Usage counts:** the app builder turned on anonymous usage counts (which features are used, and errors). No names and no question text.' : '**Usage tracking:** off.')
+  lines.push(f.telemetry ? (f.sharesMisses ? '**Usage counts:** the app builder turned on anonymous usage counts (which features are used, and errors), and a question I could not answer is sent along so the people who run this app can teach me. No names; long numbers are masked.' : '**Usage counts:** the app builder turned on anonymous usage counts (which features are used, and errors). No names and no question text.') : '**Usage tracking:** off.')
   lines.push(`I am a program, not a person${f.helper === 'claude' || f.helper === 'assistant' ? '' : ', and I do not use AI'}. I do not sell or share anything.`)
   return lines.join('\n\n')
 }

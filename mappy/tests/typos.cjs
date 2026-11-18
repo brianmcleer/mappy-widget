@@ -81,9 +81,12 @@ test('Mind fixes typos, acts, and says how he read it', async () => {
   const plain = await mind.respond('turn off parcels')
   assert.doesNotMatch(plain.text, /I read that as/)
   assert.ok(!plain.actions.some(a => a.label === 'Undo'), 'one undo button, not two')
-  const stuck = await mind.respond('zmo in')
-  assert.match(stuck.text, /Did you mean “zoom in”\?/)
-  assert.ok(stuck.actions.some(a => a.q === 'zoom in'))
+  // Two slips in the first word, and the next word says what it is: he acts and says how he read it.
+  const two = await mind.respond('zmo in')
+  assert.match(two.text, /I read that as “zoom in”/)
+  for (const [typed, fixed] of [['cuot parcels', 'count parcels'], ['swo me the legend', 'show me the legend'], ['tnr off all the layers', 'turn off all the layers'], ['thk you', 'thank you'], ['hlol', 'hello'], ['zoom to full ezent', 'zoom to full extent'], ['close the legd', 'close the legend']]) assert.equal(read(typed), fixed)
+  // Names and real words in those spots stay as typed.
+  for (const kept of ['tope elementary', 'rood ave', 'hgh st', 'tans', 'holt', 'see you']) assert.equal(read(kept), kept)
   const all = await mind.respond('turn on all teh layers')
   assert.equal(layer.visible, true)
   assert.match(all.text, /Turned on 1 layer/)

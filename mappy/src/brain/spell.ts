@@ -372,6 +372,9 @@ export class Lexicon {
     return out.sort((a, b) => a.cost - b.cost || a.tier - b.tier).slice(0, 4)
   }
 
+  /** A command, app or map word (not just any English word). */
+  tierKnows (w: string): boolean { const t = this.tierOf(w); return t !== undefined && t <= 2 }
+
   /** Names in this app, flattened ("fire hydrants"), for judging whether a reading makes sense. */
   names = new Set<string>()
 
@@ -441,6 +444,30 @@ function keepCase (typed: string, fixed: string): string {
  * Read a request the way a forgiving person would. `app` holds the names in this app at
  * tier 1 (see wordsOf). Returns the fixed text and what was changed.
  */
+const LEAD_AFTER = /^(?:only|just|please|pls|and|then|now)$/
+/** What a single unknown word on its own most likely is. */
+const ALONE = ['hello', 'thanks', 'help']
+
+/**
+ * A word two slips away, for spots where only a few words fit. Same first letter, at most one
+ * typed letter that is not in the word, and no second word nearly as close.
+ */
+function looseMatch (typed: string, words: Iterable<string>): string | null {
+  let best: { w: string, c: number } | null = null
+  let second = Infinity
+  for (const w of words) {
+    if (w[0] !== typed[0] || w === typed || Math.abs(w.length - typed.length) > 2) continue
+    const pool = w.split('')
+    let extra = 0
+    for (const ch of typed) { const at = pool.indexOf(ch); if (at < 0) extra++; else pool.splice(at, 1) }
+    if (extra > 1) continue
+    const c = typoCost(typed, w, 2.1)
+    if (c > 2.1 + 1e-9) continue
+    if (!best || c < best.c) { second = best ? best.c : second; best = { w, c } } else if (c < second) second = c
+  }
+  return best && second - best.c >= 0.25 ? best.w : null
+}
+
 export function correctTypos (input: string, lex: Lexicon): Correction {
   const swaps: Array<[string, string]> = []
   const text = String(input || '')
@@ -478,6 +505,8 @@ export function correctTypos (input: string, lex: Lexicon): Correction {
     if (lost >= 2 && lost * 2 > unknown) return { text, changed: false, swaps }
   }
 
+  /** What was typed, for words the first pass changed. */
+  const typedAs = new Map<number, string>()
   let mode: 'free' | 'value' | 'locked' = 'free'
   let first = true
   const lockAt = (() => { const m = text.slice(1).match(CONDITION); return m ? m.index! + 1 : Infinity })()
@@ -505,6 +534,7 @@ export function correctTypos (input: string, lex: Lexicon): Correction {
     }
     const now = (fixed || low)
     if (fixed && fixed !== low) {
+      typedAs.set(i, typed)
       swaps.push([typed, fixed])
       parts[i] = keepCase(typed, fixed)
     }
@@ -520,6 +550,26 @@ export function correctTypos (input: string, lex: Lexicon): Correction {
     const typed = parts[live[k]]
     const fix = AFTER[verb]?.[typed.toLowerCase()]
     if (fix && offset[live[k]] < lockAt) { swaps.push([typed, fix]); parts[live[k]] = fix }
+  }
+  // Two slips in a short word, where the words around it say what it must be: the first word of a
+  // request followed by something he knows ("zmo in", "cuot parcels", "swo me the legend"), a
+  // greeting on its own ("hlo", "thwks"), "thk you", "full ezent". A name is not expected in these
+  // spots, and the typed letters must nearly all be in the word, so "tope elementary" stays as typed.
+  for (let k = 0; k < live.length; k++) {
+    const i = live[k]
+    if (offset[i] >= lockAt) break
+    const typed = typedAs.get(i) || parts[i]
+    const low = typed.toLowerCase()
+    const prev = k > 0 ? parts[live[k - 1]].toLowerCase() : ''
+    const next = k + 1 < live.length ? parts[live[k + 1]].toLowerCase() : ''
+    let fix: string | null = null
+    if (next === 'you' && /^t/.test(low) && low !== 'thank' && low.length <= 6 && (k === 0 || LEAD_AFTER.test(prev)) && !lex.tierKnows(low)) fix = looseMatch(low, ['thank'])
+    else if (parts[i].toLowerCase() !== low || low.length < 3 || low.length > 6 || lex.knows(low)) continue
+    else if (k === 0 && live.length === 1) fix = looseMatch(low, ALONE)
+    else if ((k === 0 || LEAD_AFTER.test(prev)) && next && lex.knows(next)) fix = looseMatch(low, LEADS)
+    else if (prev === 'full') fix = looseMatch(low, ['extent'])
+    else if (/^(?:the|a|show|open|close|hide)$/.test(prev) && k === live.length - 1) fix = looseMatch(low, ['legend'])
+    if (fix && fix !== parts[i].toLowerCase()) { swaps.push([typed, fix]); parts[i] = keepCase(typed, fix) }
   }
   const out = parts.join('').replace(/ {2,}/g, ' ')
   return { text: out, changed: swaps.length > 0, swaps }

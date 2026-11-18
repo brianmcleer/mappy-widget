@@ -244,6 +244,7 @@ export default function Widget (props: Props): any {
     serverAssistant: helper === 'claude' && mcp ? { label: (plain<any>(cfg.assistant)?.label || '').trim() || 'Claude', shareSelection: plain<any>(cfg.assistant)?.shareSelection !== false, sharePicture: plain<any>(cfg.assistant)?.sharePicture === true, note: plain<any>(cfg.assistant)?.note === undefined ? 'AI answer from the GIS data. Check anything important before relying on it.' : String(plain<any>(cfg.assistant)?.note || '') } : null,
     contact: cleanContact(plain<any>(cfg.contact)),
     telemetry: cfg.telemetry === true,
+    shareMisses: cfg.telemetry === true && (cfg as any).telemetryMisses === true,
     waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,
     fun: cfg.fun !== false,

@@ -225,7 +225,7 @@ export default function Setting (props: SettingProps): any {
           </div>
         </SettingRow>
         <SettingRow label={__t('maxLayers')}>
-          <NumericInput size='sm' style={{ width: 90 }} min={10} max={2000} value={opts.maxLayers} onChange={(v: number) => setOpts({ ...opts, maxLayers: Number(v) || 400 })} />
+          <NumericInput size='sm' style={{ width: 90 }} aria-label={__t('maxLayers')} min={10} max={2000} value={opts.maxLayers} onChange={(v: number) => setOpts({ ...opts, maxLayers: Number(v) || 400 })} />
         </SettingRow>
 
         <Sub>{__t('folderTitle')}</Sub>
@@ -362,7 +362,7 @@ export default function Setting (props: SettingProps): any {
         </SettingRow>
         {config.tipsEnabled !== false && (
           <SettingRow label={__t('tipInterval')}>
-            <NumericInput size='sm' style={{ width: 90 }} min={30} max={3600} value={config.tipIntervalSec || 180} onChange={(v: number) => set('tipIntervalSec', Number(v) || 180)} />
+            <NumericInput size='sm' style={{ width: 90 }} aria-label={__t('tipInterval')} min={30} max={3600} value={config.tipIntervalSec || 180} onChange={(v: number) => set('tipIntervalSec', Number(v) || 180)} />
           </SettingRow>
         )}
         <SettingRow tag='label' label={__t('showInLayerList')}>
@@ -401,7 +401,7 @@ export default function Setting (props: SettingProps): any {
           <Switch checked={config.featureSearch !== false} onChange={(e: any) => set('featureSearch', e.target.checked)} />
         </SettingRow>
         <SettingRow label={__t('maxResults')}>
-          <NumericInput size='sm' style={{ width: 90 }} min={1} max={25} value={config.maxResults || 8} onChange={(v: number) => set('maxResults', Number(v) || 8)} />
+          <NumericInput size='sm' style={{ width: 90 }} aria-label={__t('maxResults')} min={1} max={25} value={config.maxResults || 8} onChange={(v: number) => set('maxResults', Number(v) || 8)} />
         </SettingRow>
         <SettingRow flow='wrap' label={__t('chips')}>
           <TextInput
@@ -417,6 +417,12 @@ export default function Setting (props: SettingProps): any {
           <Switch checked={config.telemetry === true} onChange={(e: any) => set('telemetry', e.target.checked)} />
         </SettingRow>
         <Hint>{__t('telemetryHint')}</Hint>
+        {config.telemetry === true && <>
+          <SettingRow tag='label' label={__t('telemetryMisses')}>
+            <Switch checked={(config as any).telemetryMisses === true} onChange={(e: any) => set('telemetryMisses', e.target.checked)} />
+          </SettingRow>
+          <Hint>{__t('telemetryMissesHint')}</Hint>
+        </>}
       </SettingSection>
       </Group>
     </div>

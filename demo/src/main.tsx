@@ -276,7 +276,7 @@ function App (): any {
         <MappyCharacter id='mappy-demo' mood={visibleMood} px={size} label={open ? 'Mappy. Close the chat' : 'Mappy. Open the chat'} expanded={open} controls='mappy-demo-chat' still={false} phase='shown' hat={undefined} lookAt={null} pointDir={null} buttonRef={charRef} onActivate={() => { if (open) setOpen(false); else openChat() }} />
       </div>
       {open && placement && <ChatBubble id='mappy-demo-chat' name='Mappy' messages={messages as any} busy={busy} waitNote={busy ? waitNote : ''} chips={messages.length < 2 ? ['What can you do?', 'List layers', 'Tell me a joke'] : []} vars={CLASSIC as any} placement={placement} bubbleRef={bubbleRef} typewriter
-        onSend={(t: string) => { void ask(t) }} onAction={onAction} onResult={(r: any) => { setMood('pleased'); void live.show(r) }} onClose={() => setOpen(false)}
+        onSend={(t: string) => { void ask(t) }} onAction={onAction} onResult={(r: any) => { setMood('pleased'); void live.show(r) }} onClose={() => { setOpen(false); setTimeout(() => { try { document.getElementById('mappy-demo')?.focus() } catch (e) { } }, 30) }}
         onReset={() => { if (!busyRef.current) { setMessages([]); void mind.respond('forget context'); greeted.current = false; openChat() } }} onMenu={() => {}} onTyping={(typing: boolean) => { if (!busyRef.current) setMoodState(typing ? 'listen' : 'idle') }}
         complete={(p: string, signal?: AbortSignal) => mind.completeAsync(p, signal)} noDownloads={HOSTED} inputRef={inputRef} size={null} onResize={() => {}} />}
     </div>

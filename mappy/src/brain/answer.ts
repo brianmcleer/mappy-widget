@@ -38,6 +38,8 @@ export interface Reply {
   list?: ListRow[]
   /** Element Mappy should point at while saying this (a widget, the layer list, the map). */
   pointAt?: HTMLElement | null
+  /** A small file the person can save with one click (the questions he missed, as a CSV). */
+  save?: { name: string, text: string, type: string, label: string }
   /** Something the widget itself should do: pause or resume motion, speak, resize or move Mappy. */
   effect?: 'pause' | 'resume' | 'speak' | 'smaller' | 'bigger' | 'left' | 'right' | 'otherCorner' | 'copy' | 'export' | 'quietTips' | 'forgetAll'
 }

@@ -1725,6 +1725,13 @@ test('Claude usage: how many are left is said before the limit, and on request',
   limits = { left_today: 30, left_month: 200, warn_at: 5 }
   r = await mind.respond('ask claude why did the zoning change uptown')
   assert.equal(r.note, 'Answered by AI.', 'quiet when there is plenty left')
+  // Right after a Claude answer, a question he can answer from the layers stays his and costs nothing.
+  { const before = calls.filter(c => c.name === 'ask_assistant').length
+    live.jmv.view.map.layers[0].visible = true
+    const own = await mind.respond('how many parcels are there')
+    assert.match(own.text, /parcels/i); assert.equal(calls.filter(c => c.name === 'ask_assistant').length, before, own.text)
+    await mind.respond('why is that the case for downtown')
+    assert.equal(calls.filter(c => c.name === 'ask_assistant').length, before + 1, 'other follow-ups still go to Claude') }
   r = await mind.respond('how many Claude questions do I have left?')
   assert.match(r.text, /47 of 50 questions today/)
   assert.equal(calls.pop().name, 'assistant_usage', 'the count comes from the server, and asking it costs nothing')
@@ -2042,6 +2049,24 @@ test('a person to ask, privacy in plain words, forget everything and the missed 
   const missed = await mind.respond('what did you miss')
   assert.equal(missed.list.length, 2); assert.match(missed.list[0].detail, /asked 2 times/)
   assert.match(decodeURIComponent(missed.actions[0].url), /moon base tower/)
+  // One click saves them as a spreadsheet file; formulas are made harmless.
+  assert.equal(missed.save.label, 'Save as a spreadsheet file'); assert.match(missed.save.name, /^missed-questions-\d{4}-\d\d-\d\d\.csv$/)
+  assert.match(missed.save.text, /^Last asked,Times asked,Question\r\n\d{4}-\d\d-\d\d,2,where is the moon base located\r\n/)
+  assert.equal((await mind.respond('save missed questions')).save.text, missed.save.text)
+  { const { missesCsv, maskNumbers, parseCare: pc } = require('../src/brain/care.ts')
+    assert.match(missesCsv([{ q: '=cmd("x"), now', at: 0, n: 1 }]), /1970-01-01,1,"'=cmd\(""x""\), now"/)
+    assert.equal(maskNumbers('who owns 2501  Oak St, parcel 2945-143-00-012'), 'who owns # Oak St, parcel #-#-00-#')
+    assert.equal(pc('export the missed questions as a csv'), 'saveMissed') }
+  // Sent to the usage table only when the builder turned that on, with long numbers masked.
+  { const sent = []
+    const quiet = new Mind({ ...base, store: { get: () => null, set: () => {} }, beacon: { action: (n, d) => sent.push([n, d]), error: () => {} } })
+    await quiet.respond('where is moon base 4471 located')
+    assert.ok(!sent.some(x => x[0] === 'miss'), 'off by default')
+    const loud = new Mind({ ...base, store: { get: () => null, set: () => {} }, shareMisses: true, beacon: { action: (n, d) => sent.push([n, d]), error: () => {} } })
+    await loud.respond('where is moon base 4471 located')
+    assert.deepEqual(sent.filter(x => x[0] === 'miss'), [['miss', 'where is moon base # located']])
+    await loud.respond('my card is 4111 1111 1111 1111 where is it')
+    assert.equal(sent.filter(x => x[0] === 'miss').length, 1, 'private numbers never leave') }
   // Privacy: what is kept here, what leaves, and no claim of AI for a local helper.
   await mind.respond('call me Sam')
   const privacy = await mind.respond('what do you know about me')

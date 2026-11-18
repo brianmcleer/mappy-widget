@@ -10,7 +10,8 @@ import { numericField, dateField } from '../brain/analysis'
 import type { QueryField } from '../brain/analysis'
 import type { Reply } from '../brain/answer'
 import type { LayerEntry, LiveMap } from './live'
-import { withTimeout } from './live'
+import { withTimeout, feetBetween } from './live'
+import { toLatLon } from './project'
 import { fieldLabel } from '../brain/fields'
 
 const VALUES = new WeakMap<object, { [field: string]: string[] }>()
@@ -94,6 +95,80 @@ const listOut = (items: string[]): string => items.length <= 1 ? items.join('') 
 
 export interface AskRun { reply: Reply, count?: number }
 
+/**
+ * "How long is Maple St" on a line layer with no length field: measured along the lines themselves.
+ * Null when the layer is not lines, nothing matches, or the shapes cannot be read as latitude and longitude.
+ */
+export async function lineLength (live: LiveMap, entry: LayerEntry, ask: Ask): Promise<{ feet: number, pieces: number, capped: boolean } | null> {
+  const target = live.target(entry)
+  if (!target || typeof target.queryFeatures !== 'function' || !/polyline|line/i.test(String(target.geometryType || ''))) return null
+  const q: any = target.createQuery ? target.createQuery() : { where: target.definitionExpression || '1=1' }
+  const where = askWhere(ask)
+  if (!where) return null
+  q.where = q.where && q.where !== '1=1' ? `(${q.where}) AND (${where})` : where
+  q.outFields = target.objectIdField ? [target.objectIdField] : []
+  q.returnGeometry = true
+  q.outSpatialReference = { wkid: 4326 }
+  q.num = 500
+  const res: any = await withTimeout(target.queryFeatures(q), 12000)
+  const features = Array.from(res?.features || []) as any[]
+  if (!features.length) return null
+  let feet = 0
+  for (const g of features) {
+    const geom = g.geometry
+    const sr = geom?.spatialReference || res?.spatialReference || { wkid: 4326 }
+    for (const path of Array.isArray(geom?.paths) ? geom.paths : []) {
+      let before: [number, number] | null = null
+      for (const v of path) {
+        const at = Array.isArray(v) ? toLatLon({ x: v[0], y: v[1], spatialReference: sr }) : null
+        if (!at) return null
+        if (before) feet += feetBetween(before, at)
+        before = at
+      }
+    }
+  }
+  return feet > 0 ? { feet, pieces: features.length, capped: !!res?.exceededTransferLimit || features.length >= 500 } : null
+}
+
+/**
+ * "Longest street" on a line layer with no length field: every line measured, pieces with the same
+ * name added up, longest (or shortest) first. Null when it cannot be measured or the layer is too big to read whole.
+ */
+export async function rankLines (live: LiveMap, entry: LayerEntry, order: 'asc' | 'desc'): Promise<Array<{ label: string, feet: number }> | null> {
+  const target = live.target(entry)
+  if (!target || typeof target.queryFeatures !== 'function' || !/polyline|line/i.test(String(target.geometryType || ''))) return null
+  const name = String(target.displayField || '')
+  if (!name || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name)) return null
+  const q: any = target.createQuery ? target.createQuery() : { where: target.definitionExpression || '1=1' }
+  q.where = q.where || '1=1'
+  q.outFields = [name]
+  q.returnGeometry = true
+  q.outSpatialReference = { wkid: 4326 }
+  q.num = 2000
+  const res: any = await withTimeout(target.queryFeatures(q), 15000)
+  const features = Array.from(res?.features || []) as any[]
+  if (!features.length || res?.exceededTransferLimit || features.length >= 2000) return null
+  const sums = new Map<string, number>()
+  for (const g of features) {
+    const label = String(g.attributes?.[name] ?? '').trim()
+    if (!label) continue
+    const sr = g.geometry?.spatialReference || res?.spatialReference || { wkid: 4326 }
+    let feet = 0
+    for (const path of Array.isArray(g.geometry?.paths) ? g.geometry.paths : []) {
+      let before: [number, number] | null = null
+      for (const v of path) {
+        const at = Array.isArray(v) ? toLatLon({ x: v[0], y: v[1], spatialReference: sr }) : null
+        if (!at) return null
+        if (before) feet += feetBetween(before, at)
+        before = at
+      }
+    }
+    sums.set(label, (sums.get(label) || 0) + feet)
+  }
+  const rows = Array.from(sums, ([label, feet]) => ({ label, feet })).filter(r => r.feet > 0)
+  return rows.length ? rows.sort((a, b) => order === 'asc' ? a.feet - b.feet : b.feet - a.feet) : null
+}
+
 /** Runs the question. Throws with a plain sentence when the layer cannot answer it. */
 export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: number): Promise<Reply> {
   const target = live.target(entry)
@@ -155,10 +230,10 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
     const word = ask.superlative || (ask.order === 'asc' ? `lowest ${fieldLabel(f)}` : `highest ${fieldLabel(f)}`)
     if (limit === 1) {
       const first = features[0]
-      const tied = features.filter(g => g.attributes?.[f.name] === first.attributes?.[f.name])
-      const next = features.slice(1, 3).map(g => `${labelOf(g)} (${sayValue(f, g.attributes?.[f.name])})`)
+      const tied = features.filter((g, i) => g.attributes?.[f.name] === first.attributes?.[f.name] && (i === 0 || labelOf(g) !== labelOf(first)))
+      const next = features.slice(1).filter(g => labelOf(g) !== labelOf(first)).slice(0, 2).map(g => `${labelOf(g)} (${sayValue(f, g.attributes?.[f.name])})`)
       const lead = /^(?:highest|lowest) /.test(word) ? `The ${noun.one} with the ${word}` : `The ${word} ${noun.one}`
-      return { text: `${lead}${said ? ` (${said})` : ''} is **${labelOf(first)}**: ${sayMeasure(f, first.attributes?.[f.name])}.${tied.length > 1 ? ` ${tied.length === features.length ? 'Others tie' : 'It ties'} with ${labelOf(tied[1])}.` : next.length ? ` Next: ${next.join(', ')}.` : ''}`, mood: 'pleased', sources: [source], results: results([first], g => sayMeasure(f, g.attributes?.[f.name])) }
+      return { text: `${lead}${said ? ` (${said})` : ''} is **${labelOf(first)}**: ${sayMeasure(f, first.attributes?.[f.name])}.${tied.length > 1 ? ` Tied with ${listOut(tied.slice(1).map(labelOf))}${tied.length === features.length && features.length >= 3 ? ', and maybe more' : ''}.` : next.length ? ` Next: ${next.join(', ')}.` : ''}`, mood: 'pleased', sources: [source], results: results([first], g => sayMeasure(f, g.attributes?.[f.name])) }
     }
     const shown = features.slice(0, limit)
     return { text: `The ${shown.length} ${noun.many} with the ${/^(?:highest|lowest) /.test(word) ? word : `${ask.order === 'asc' ? 'lowest' : 'highest'} ${fieldLabel(f)}`}${read}, ${ask.order === 'asc' ? 'lowest' : 'highest'} first:`, mood: 'talk', sources: [source], results: results(shown, g => sayMeasure(f, g.attributes?.[f.name])), table: { columns: [display ? fieldLabel(display) : entry.title, fieldLabel(f)], rows: shown.map(g => [labelOf(g), sayValue(f, g.attributes?.[f.name])]) } }
@@ -198,7 +273,16 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
     const cell = (r: typeof rows[0]): string => value ? sayValue(value, r.value) : r.count.toLocaleString()
     let text: string
     if (ask.kind === 'distinct') text = `**${fieldLabel(g)}** has ${rows.length.toLocaleString()} value${rows.length === 1 ? '' : 's'} in ${entry.title}${read}: ${listOut(shown.slice(0, 8).map(r => `**${r.label}** (${r.count.toLocaleString()})`))}${rows.length > 8 ? ', and more in the table' : ''}.`
-    else if (value) text = `${statName} **${fieldLabel(value)}** by **${fieldLabel(g)}**${read}: **${shown[0].label}** is ${ask.order === 'asc' ? 'lowest' : 'highest'} at ${cell(shown[0])}${shown.length > 1 ? `, and **${shown[shown.length - 1].label}** is ${ask.order === 'asc' ? 'highest' : 'lowest'} at ${cell(shown[shown.length - 1])}` : ''}.`
+    else if (value) {
+      // The far end is only named when every group is shown; otherwise it is just where the list stops.
+      const whole = rows.length <= shown.length
+      const rest = shown.length > 1 ? (whole ? `, and **${shown[shown.length - 1].label}** is ${ask.order === 'asc' ? 'highest' : 'lowest'} at ${cell(shown[shown.length - 1])}` : `. Then ${listOut(shown.slice(1, 3).map(r => `${r.label} (${cell(r)})`))}`) : ''
+      text = `${statName} **${fieldLabel(value)}** by **${fieldLabel(g)}**${read}: **${shown[0].label}** is ${ask.order === 'asc' ? 'lowest' : 'highest'} at ${cell(shown[0])}${rest}.`
+    } else if (shown.length > 1 && shown[1].count === shown[0].count) {
+      const even = shown.filter(r => r.count === shown[0].count)
+      const more = even.length === shown.length && rows.length > shown.length
+      text = `${listOut(even.slice(0, 4).map(r => `**${r.label}**`))}${even.length > 4 || more ? ' and others' : ''} tie for the ${ask.order === 'asc' ? 'fewest' : 'most'} ${noun.many}${read}: ${shown[0].count.toLocaleString()} each.`
+    }
     else text = `**${shown[0].label}** has the ${ask.order === 'asc' ? 'fewest' : 'most'} ${noun.many}${read}: ${shown[0].count.toLocaleString()}${shown.length > 1 ? `. Then ${listOut(shown.slice(1, 3).map(r => `${r.label} (${r.count.toLocaleString()})`))}` : ''}.`
     const chartable = shown.length >= 2 && shown.length <= 12
     return {

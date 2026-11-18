@@ -4,10 +4,11 @@
   "description": "A standalone page for trying Mappy on a made-up town, built from the widget's own source.",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node e2e.mjs"
+    "test": "node e2e.mjs",
+    "a11y": "node a11y.mjs"
   },
   "devDependencies": {
-    "esbuild": "0.24.2",
+    "esbuild": "0.25.12",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   }

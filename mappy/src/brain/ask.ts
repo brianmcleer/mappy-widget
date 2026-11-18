@@ -242,6 +242,11 @@ export function readAsk (input: string, layers: AskLayer[], opts: { fallback?: s
       }
       if (score > top) { top = score; layer = l }
     }
+    // "What is the tallest building allowed": no layer or field named, but only one layer measures that.
+    if (top < 1 && supClass && /^(?:tall|long|wide|deep)$/.test(supClass)) {
+      const fit = layers.filter(l => fieldFor(supClass, l.fields, 'number'))
+      if (fit.length === 1) { layer = fit[0]; top = 1; t = t.replace(/\b(?:buildings?|structures?|allowed|permitted|possible|here|in town|in the city)\b/g, ' ').replace(/\s+/g, ' ') }
+    }
     if (top < 1 && ownerRank) layer = layers.find(l => fieldFor('owner', l.fields, 'text')) || null
     // "What about the smallest", "how many": no layer and no field named, so the layer in use.
     const shaped = !!(superlative || stat || counting || rankWords || common)

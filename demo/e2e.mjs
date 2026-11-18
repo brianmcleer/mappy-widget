@@ -91,6 +91,15 @@ await step('reads plain questions against the data', async () => {
   await say('parcels not zoned R-4', /28 parcels match \(Zoning not R-4\)/)
 })
 await step('undo works', async () => { await say('turn on fire hydrants'); assert.equal(await layerOn('hydrants'), true); await say('undo'); assert.equal(await layerOn('hydrants'), false) })
+await step('swaps, lengths and two-slip typos', async () => {
+  await page.click('.mappy-bubble button:has-text("New chat")'); await page.waitForTimeout(600)
+  await say('how many parcels are zoned R-4', /8 parcels match \(Zoning R-4\)/)
+  await say('what about R-8', /16 parcels match \(Zoning R-8\)/)
+  await say('how long is Maple St', /Maple St is about 0\.8 mi/)
+  await say('longest street', /The longest in Streets is/)
+  await say('what is the tallest building allowed', /MU: Max Height \(ft\) 65/)
+  await say('cuot parcels', /There are 36 parcels/)
+})
 await step('no errors in the page', async () => assert.deepEqual(problems, []))
 
 await browser.close()

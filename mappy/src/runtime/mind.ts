@@ -74,8 +74,9 @@ import { readKeepsakes, emptyKeepsakes, remember, stampLine, keepsake, keepsakeH
 import type { Keepsakes, Moment } from '../brain/keepsakes'
 import { readAsk, mentionedLayer, askWhere, askSaid, namedFeature, fieldFor } from '../brain/ask'
 import type { Ask } from '../brain/ask'
-import { schemaOf, loadValues, runAsk, probeText } from './ask'
-import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, privacyText } from '../brain/care'
+import { numericField } from '../brain/analysis'
+import { lineLength, rankLines, schemaOf, loadValues, runAsk, probeText } from './ask'
+import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, missesCsv, maskNumbers, worthKeeping, privacyText } from '../brain/care'
 import type { Contact, Miss } from '../brain/care'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
@@ -107,6 +108,8 @@ export interface MindContext {
   contact?: Contact | null
   /** Anonymous usage counts are on (settings), so the privacy answer can say so. */
   telemetry?: boolean
+  /** Send each question he could not answer (long numbers masked) to the usage table. Builder opt-in, on top of telemetry. */
+  shareMisses?: boolean
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
   serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean, note?: string } | null
   /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
@@ -461,6 +464,8 @@ export class Mind {
       this.stuckRun = stuck ? this.stuckRun + 1 : 0
       if (stuck) {
         this.keepMisses(addMiss(this.misses(), input))
+        // Only when the builder turned it on: the question (long numbers masked) goes to the usage table, so the people who run the app see what is asked across everyone.
+        if (this.ctx.shareMisses && worthKeeping(input)) { try { this.ctx.beacon?.action('miss', maskNumbers(input)) } catch (e) { } }
         const c = this.ctx.contact
         if (c && this.stuckRun >= 2 && !(reply.actions || []).some(a => a.type === 'url' && /^(?:mailto|tel):/i.test(a.url || ''))) {
           reply.text = `${reply.text}\n\n${stuckLine(c)}`
@@ -659,6 +664,25 @@ export class Mind {
     // The older, exact syntax keeps its own reading: "where", a raw field name, "summarize", "check data quality".
     const fieldNames = new Set(schemas.flatMap(x => x.fields.map(f => f.name)).filter(n => /^[A-Z][A-Z0-9_]{2,}$/.test(n)))
     if (/\bwhere\b|^(?:summari[sz]e|check|filter|describe)\b/i.test(raw) || raw.split(/[^A-Za-z0-9_]+/).some(w => fieldNames.has(w))) return null
+    // "How long is Maple St": a named line in a layer with no length field is measured on the map.
+    const lengthOf = only ? null : raw.trim().match(/^(?:how long is|(?:what is |what's |whats )?the length of|length of)\s+(?:the\s+)?(.{3,60}?)[?.!]*$/i)
+    if (lengthOf) {
+      const SHORT: { [w: string]: string } = { street: 'st', avenue: 'ave', road: 'rd', drive: 'dr', boulevard: 'blvd', lane: 'ln', court: 'ct', place: 'pl', highway: 'hwy', parkway: 'pkwy', trail: 'trl', circle: 'cir' }
+      const name = lengthOf[1].trim()
+      const short = name.replace(/\b([a-z]+)$/i, w => SHORT[w.toLowerCase()] || w)
+      for (const e of entries.filter(x => /line/i.test(String(live.target(x)?.geometryType || ''))).slice(0, 4)) {
+        if (schemaOf(live, e).fields.some(f => numericField(f) && /length|\blen\b|miles/i.test(`${f.name} ${f.alias || ''}`) && !/^shape/i.test(f.name))) continue
+        try {
+          const clause = await probeText(live, e, name, '') || (short !== name ? await probeText(live, e, short, '') : null)
+          const measured = clause ? await lineLength(live, e, { layer: e.key, kind: 'list', clauses: [clause], unknown: [] } as any) : null
+          if (!clause || !measured) continue
+          const miles = measured.feet / 5280
+          const size = miles >= 0.2 ? `**${miles >= 10 ? Math.round(miles).toLocaleString() : miles.toFixed(1)} mi** (${Math.round(measured.feet).toLocaleString()} ft)` : `**${Math.round(measured.feet).toLocaleString()} ft**`
+          this.lastLayer = e.path
+          return { text: `**${name.replace(/\b[a-z]/g, c => c.toUpperCase())}** is about ${size} long${measured.pieces > 1 ? `, adding up ${measured.pieces.toLocaleString()} pieces in ${e.title}` : ''}.${measured.capped ? ' There may be more pieces than I could read, so the real length may be longer.' : ''} Measured along the line on the map, so treat it as an estimate.`, mood: 'pleased', sources: [{ title: e.title, detail: 'measured from the line shapes' }] }
+        } catch (err) { }
+      }
+    }
     const last = entries.find(e => e.path === this.lastLayer)
     const why: { ungrounded?: boolean } = {}
     const read = (): Ask | null => { try { return readAsk(raw, schemas, { fallback: last?.key, why }) } catch (e) { return null } }
@@ -687,6 +711,22 @@ export class Mind {
       try { await Promise.all(need.map(e => loadValues(live, e))) } catch (e) { }
       schemas = entries.map(e => schemaOf(live, e))
       ask = read()
+    }
+    // "Longest street", "shortest trail": a line layer with no length field is measured on the map.
+    if (!ask && !only && named && /\b(longest|shortest)\b/i.test(raw) && raw.trim().split(/\s+/).length <= 8) {
+      const e = entries.find(x => x.key === named.layer.key)
+      const order = /shortest/i.test(raw) ? 'asc' : 'desc'
+      let rows: Awaited<ReturnType<typeof rankLines>> = null
+      try { rows = e ? await rankLines(live, e, order) : null } catch (err) { }
+      if (e && rows) {
+        const far = (feet: number): string => feet >= 1056 ? `${(feet / 5280).toFixed(1)} mi` : `${Math.round(feet).toLocaleString()} ft`
+        this.lastLayer = e.path
+        return {
+          text: `The ${order === 'asc' ? 'shortest' : 'longest'} in **${e.title}** is **${rows[0].label}**: about ${far(rows[0].feet)}.${rows.length > 1 ? ` Next: ${rows.slice(1, 3).map(r => `${r.label} (${far(r.feet)})`).join(', ')}.` : ''} Measured along the lines on the map, adding up pieces with the same name, so treat it as an estimate.`,
+          mood: 'pleased', sources: [{ title: e.title, detail: 'measured from the line shapes' }],
+          table: { columns: [e.title, 'Length'], rows: rows.slice(0, 8).map(r => [r.label, far(r.feet)]) }
+        }
+      }
     }
     if (!ask || (only && !only.includes(ask.kind))) return null
     const entry = entries.find(e => e.key === ask!.layer)
@@ -752,6 +792,21 @@ export class Mind {
     if (one && /^(?:zoom|go|fly|pan|take me|jump|center)(?: in)?(?: to| on)? (?:it|that|that one|this one|there)$|^(?:where is (?:it|that)|show (?:me )?(?:it|that)(?: on the map)?)$/.test(t)) {
       try { await live.show(one) } catch (e) { }
       return { text: `Here is **${one.label}**.`, mood: 'acknowledge', results: [one] }
+    }
+    // "what about R-8", "and commercial", "how about the smallest": the same question with one thing swapped.
+    const swap = t.match(/^(?:and |or |now )?(?:(?:what|how) about|and|or|same for|now)\s+(?:just |only )?(?:the ones? |those |in |for |with )?(.{2,60})$/)
+    if (swap && !/\b(?:it|that|them|those|these|they)\b/.test(swap[1])) {
+      const others = live.entries().filter(e => !e.isGroup && typeof live.target(e)?.queryFeatures === 'function').map(e => schemaOf(live, e))
+      if (mentionedLayer(swap[1], others)) return null
+      try { await loadValues(live, entry) } catch (e) { }
+      const mine = schemaOf(live, entry)
+      let next: Ask | null = null
+      try { next = readAsk(`${swap[1]} ${entry.title}`, [mine], { fallback: entry.key }) } catch (e) { next = null }
+      if (!next || next.unknown.length || (!next.clauses.length && next.kind !== 'top')) return null
+      const prior = this.lastAsk.ask
+      const kept = prior.clauses.filter(c => (c.field as any).type !== 'oid' && !next!.clauses.some(n => n.field.name === c.field.name))
+      const ask: Ask = next.kind === 'top' ? { ...next, clauses: [...kept, ...next.clauses] } : { ...prior, clauses: [...kept, ...next.clauses] }
+      return await this.answerAsk(ask, entry)
     }
     if (!/\b(?:it|its|it's|that|that one|this one|them|those|these|they|their|theirs|ones?)\b/.test(t)) return null
     if (resultCountFollowup(input) || resultTableFollowup(input) || /^(?:show|list) (?:them|those|these)(?: all)?$/.test(t)) return null
@@ -889,7 +944,7 @@ export class Mind {
     if (ask === 'privacy') {
       const bond = this.bond()
       return {
-        text: privacyText({ name: this.ctx.name, helper: this.helperKind(), helperLabel: this.ctx.serverAssistant?.label || this.ctx.assistant?.label, serverLabel: this.ctx.mcp?.label, knowsName: bond.name, chats: bond.chats, misses: this.misses().length, extras: keepsakeSummary(this.keepsakes()), savedViews: Object.keys(this.views()).length, telemetry: !!this.ctx.telemetry, locator: !!this.ctx.geocoders?.length, sharePicture: !!this.ctx.serverAssistant?.sharePicture }),
+        text: privacyText({ name: this.ctx.name, helper: this.helperKind(), helperLabel: this.ctx.serverAssistant?.label || this.ctx.assistant?.label, serverLabel: this.ctx.mcp?.label, knowsName: bond.name, chats: bond.chats, misses: this.misses().length, sharesMisses: !!this.ctx.shareMisses, extras: keepsakeSummary(this.keepsakes()), savedViews: Object.keys(this.views()).length, telemetry: !!this.ctx.telemetry, locator: !!this.ctx.geocoders?.length, sharePicture: !!this.ctx.serverAssistant?.sharePicture }),
         mood: 'explain', suggest: ['Forget everything', ...(c ? ['Talk to a person'] : [])]
       }
     }
@@ -904,7 +959,10 @@ export class Mind {
     if (ask === 'clearMissed') { this.keepMisses([]); return { text: list.length ? 'Done. The list of questions I missed is empty.' : 'That list was already empty.', mood: 'acknowledge' } }
     if (!list.length) return { text: 'Nothing on my list. I have answered everything asked in this browser so far.', mood: 'proud' }
     const mail = c ? missesMail(c, list, this.ctx.appTitle) : ''
+    const save = { name: `missed-questions-${new Date().toISOString().slice(0, 10)}.csv`, text: missesCsv(list), type: 'text/csv;charset=utf-8', label: 'Save as a spreadsheet file' }
+    if (ask === 'saveMissed') return { text: `${list.length === 1 ? 'The one question' : `All ${list.length} questions`} I could not answer in this browser, ready to save.`, mood: 'save', save, suggest: ['Clear missed questions'] }
     return {
+      save,
       text: `Here ${list.length === 1 ? 'is the question' : `are the last ${Math.min(list.length, 10)} questions`} I could not answer in this browser. ${c ? `Sending them to ${c.name} helps the app builder teach me.` : 'The app builder can teach me these in my settings, under Questions and answers.'}`,
       mood: 'think',
       list: list.slice(0, 10).map(m => ({ label: m.q, detail: `${new Date(m.at).toISOString().slice(0, 10)}${m.n > 1 ? `, asked ${m.n} times` : ''}`, action: { type: 'ask' as const, q: m.q } })),
@@ -987,6 +1045,11 @@ export class Mind {
     if (!suggested) {
       if (plain.split(/\s+/).length < 3 || parseIntent(plain).name !== 'ask' || parsePlaceQuestion(plain)) return null
       if (!/^(?:and|but|so|ok(?:ay)?,?|what about|how about|why|which|what|who|whose|how|when|where|is|are|was|were|does|do|did|can|could|would|should|tell me|explain|compare|also|only|just|break)\b/i.test(plain) && !/\?\s*$/.test(plain)) return null
+      // A question he can answer himself from the layers stays his: it is quicker, and it does not use up the person's Claude questions.
+      try {
+        const own = await this.dataQuestion(input, 'ask')
+        if (own && !['confused', 'think', 'alert', 'sorry'].includes(own.mood || '')) return own
+      } catch (e) { }
     }
     return this.askServerClaude(input, true)
   }
@@ -2899,7 +2962,7 @@ export class Mind {
       if (!found.results.length) return { text: found.failed ? 'The configured address locators could not complete this search. Check their availability or sign-in and try again.' : `No address matched “${address}”. Try adding a city, state or postal code.`, mood: 'confused' }
       this.addressChoices = { sequence: ++this.addressSequence, view, results: found.results }
       if (found.results.length === 1 && found.results[0].score >= 95) return this.chooseAddress(this.addressSequence, 0)
-      return { text: `I found ${found.results.length} possible address matches. Choose one, or say “show the first result”. Locator scores describe match quality, not guaranteed accuracy.`, mood: 'talk',
+      return { text: found.results.length === 1 ? 'I found one possible match, and it is not an exact one. Choose it if it looks right.' : `I found ${found.results.length} possible address matches. Choose one, or say “show the first result”. Locator scores describe match quality, not guaranteed accuracy.`, mood: 'talk',
         list: found.results.map((r, i) => ({ label: `${i + 1}. ${r.label}`, detail: `${r.source} · match score ${r.score}`, action: { type: 'ask', label: r.label, q: `__address:${this.addressSequence}:${i}` } })),
         sources: Array.from(new Set(found.results.map(r => r.source))).map(title => ({ title, detail: 'Live configured ArcGIS address locator' })) }
     } catch (e) { return { text: 'Address lookup is unavailable. Check the configured locator and your sign-in, then try again.', mood: 'confused' } }

@@ -106,6 +106,8 @@ export interface Config {
   contact?: any
   /** Usage telemetry through the shared Beacon module. Explicit opt-in only. */
   telemetry?: boolean
+  /** With telemetry on: also send each question he could not answer (long numbers masked) to the usage table. Off by default. */
+  telemetryMisses?: boolean
 }
 
 export type IMConfig = ImmutableObject<Config>
