@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 
-VERSION = '1.16.0'
+VERSION = '1.16.1'
 SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0]
 
@@ -1950,7 +1950,8 @@ class Assistant:
     def status(self):
         if not self.a.get('enabled'):
             return 'off'
-        return 'ready' if self.key else 'no key (set %s)' % (self.a.get('api_key_env') or 'ANTHROPIC_API_KEY')
+        # Fixed words only: nothing read from the key or its setting goes into a status line or a log.
+        return 'ready' if self.enabled else 'no key (set the environment variable named in assistant.api_key_env)'
 
     def _day(self):
         """Today's row in the ledger (call with the lock held)."""
