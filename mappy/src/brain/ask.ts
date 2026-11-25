@@ -506,9 +506,9 @@ export function askSaid (ask: Ask): string { return ask.clauses.map(c => c.said)
  * A thing on the map called by its own name: "Maple St", "Compass Park", "H-107". Matches the
  * words against the values of each layer's name field. Null when no layer has exactly that name.
  */
-export function namedFeature (phrase: string, layers: AskLayer[]): { layer: AskLayer, field: QueryField, value: string } | null {
+export function namedFeature (phrase: string, layers: AskLayer[], min = 3): { layer: AskLayer, field: QueryField, value: string } | null {
   const key = nk(phrase.replace(/^(?:the|a|an)\s+/i, ''))
-  if (key.length < 3) return null
+  if (key.length < min) return null
   for (const l of layers) {
     const f = l.fields.find(x => x.name === l.displayField)
     if (!f) continue

@@ -47,6 +47,7 @@ const mind = new Mind({
   name: 'Mappy',
   appTitle: 'the Mapleton map',
   featureSearch: true,
+  notifyLists: true,
   maxResults: 8,
   showInLayerList: false,
   layerListIds: [],
@@ -67,6 +68,7 @@ const MOOD_MS: { [m: string]: number } = { talk: 1600, wave: 2600, happy: 1800, 
 const TRY: Array<[string, string[]]> = [
   ['The map', ['turn on zoning', 'zoom to 250 Oak St', 'who owns 250 Oak St', 'turn on fire hydrants', 'closest fire hydrant to City Hall', 'only show parcels over 7 acres on the map', 'clear the filter']],
   ['The data', ['how many parcels', 'count parcels by zoning', 'chart parcels by land use', 'average acres in parcels', 'parcels sold since 2025', 'oldest hydrant']],
+  ['Across layers', ['parcels within 300 ft of Compass Park', 'how many of those are zoned R-4', 'how many hydrants per zoning district', 'parcels not within 200 ft of a hydrant', 'owners within 300 ft of 250 Oak St', 'what about 150 ft', 'is 250 Oak St in the MU zone']],
   ['Ask Claude (simulated)', ['ask Claude which zoning district has the most parcels', 'ask Claude how many hydrants were installed before 1990', 'ask Claude who owns the most land', '¿cuántos parques hay en la ciudad?']],
   ['Just Mappy', ['how are you', 'call me Sam', 'hug', 'juggle', 'find treasure', 'be a boat', 'tell me a joke', 'show me around']]
 ]
@@ -146,7 +148,7 @@ function MapSvg (props: { tick: number, onPick: (g: Graphic | null) => void }): 
       {view.graphics.items.map((g, i) => {
         const geo: any = g.geometry
         if (!geo) return null
-        if (geo.type === 'polygon') return <path key={i} d={path(geo.rings[0], true)} fill='#00b7eb' fillOpacity={0.14} stroke='#00b7eb' strokeWidth={3} vectorEffect='non-scaling-stroke' />
+        if (geo.type === 'polygon') { const dashed = g.symbol?.outline?.style === 'dash'; return <path key={i} d={geo.rings.map((r: number[][]) => path(r, true)).join(' ')} fill='#00b7eb' fillOpacity={dashed ? 0.06 : 0.14} stroke='#00b7eb' strokeWidth={dashed ? 2 : 3} strokeDasharray={dashed ? '7 5' : undefined} vectorEffect='non-scaling-stroke' /> }
         if (geo.type === 'polyline') return <path key={i} d={path(geo.paths[0], false)} fill='none' stroke='#00b7eb' strokeWidth={3.5} strokeDasharray='8 6' vectorEffect='non-scaling-stroke' />
         const [x, y] = toXY(geo.x, geo.y)
         const ring = g.symbol?.style === 'circle' && Array.isArray(g.symbol?.color) && g.symbol.color[3] === 0

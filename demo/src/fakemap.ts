@@ -51,7 +51,7 @@ export class Polygon {
   spatialReference = SR
   rings: number[][][]
   constructor (p: any) { this.rings = p.rings }
-  get extent (): Extent { return boundsOf(this.rings[0]) }
+  get extent (): Extent { return boundsOf(this.rings.reduce((a, b) => a.concat(b), [] as number[][])) }
   get centroid (): Point { return this.extent.center }
   clone (): Polygon { return new Polygon({ rings: JSON.parse(JSON.stringify(this.rings)) }) }
   toJSON (): any { return { rings: this.rings, spatialReference: { wkid: 4326 } } }
@@ -108,6 +108,51 @@ function distanceTo (p: [number, number], g: any): number {
   let best = Infinity
   for (const line of lines) for (let i = 1; i < line.length; i++) best = Math.min(best, segDist(p, line[i - 1], line[i]))
   return best
+}
+
+// Shape against shape, enough for the questions that cross layers (within a distance, inside, sharing an edge).
+const linesOf = (g: any): number[][][] => g.type === 'polygon' ? g.rings : g.type === 'polyline' ? g.paths : []
+const vertsOf = (g: any): number[][] => g.type === 'point' ? [[g.x, g.y]] : linesOf(g).reduce((a: number[][], b: number[][]) => a.concat(b), [])
+const cross = (o: number[], a: number[], b: number[]): number => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+const onSeg = (p: number[], a: number[], b: number[]): boolean => Math.min(a[0], b[0]) - 1e-12 <= p[0] && p[0] <= Math.max(a[0], b[0]) + 1e-12 && Math.min(a[1], b[1]) - 1e-12 <= p[1] && p[1] <= Math.max(a[1], b[1]) + 1e-12
+function segsMeet (a: number[], b: number[], c: number[], d: number[]): boolean {
+  const d1 = cross(c, d, a); const d2 = cross(c, d, b); const d3 = cross(a, b, c); const d4 = cross(a, b, d)
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true
+  const z = (v: number): boolean => Math.abs(v) < 1e-14
+  return (z(d1) && onSeg(a, c, d)) || (z(d2) && onSeg(b, c, d)) || (z(d3) && onSeg(c, a, b)) || (z(d4) && onSeg(d, a, b))
+}
+/** True when two shapes share any point (edges count). */
+function meet (a: any, b: any): boolean {
+  if (a.type === 'point') return distanceTo([a.x, a.y], b) < 0.3
+  if (b.type === 'point') return distanceTo([b.x, b.y], a) < 0.3
+  for (const la of linesOf(a)) for (let i = 1; i < la.length; i++) for (const lb of linesOf(b)) for (let j = 1; j < lb.length; j++) if (segsMeet(la[i - 1], la[i], lb[j - 1], lb[j])) return true
+  if (b.type === 'polygon' && vertsOf(a).some(v => inRing(v as [number, number], b.rings[0]))) return true
+  if (a.type === 'polygon' && vertsOf(b).some(v => inRing(v as [number, number], a.rings[0]))) return true
+  return false
+}
+/** Meters between two shapes at their closest (0 when they meet). */
+function apart (a: any, b: any): number {
+  if (meet(a, b)) return 0
+  let best = Infinity
+  for (const v of vertsOf(a)) best = Math.min(best, distanceTo(v as [number, number], b))
+  for (const v of vertsOf(b)) best = Math.min(best, distanceTo(v as [number, number], a))
+  return best
+}
+/** The shape pulled a little toward its middle, so shapes that only share an edge no longer meet. */
+function shrunk (g: any): any {
+  if (g.type !== 'polygon') return g
+  const c = g.extent.center
+  return new Polygon({ rings: g.rings.map((r: number[][]) => r.map(v => [v[0] + (c.x - v[0]) * 0.02, v[1] + (c.y - v[1]) * 0.02])) })
+}
+const holds = (outer: any, inner: any): boolean => outer.type === 'polygon' && vertsOf(shrunk(inner)).every(v => inRing(v as [number, number], outer.rings[0]))
+/** A feature's shape against the query's shape, by the query's spatial relation. */
+function related (rel: string, query: any, feature: any): boolean {
+  const r = String(rel || 'intersects').toLowerCase()
+  if (r === 'contains') return holds(query, feature)
+  if (r === 'within') return holds(feature, query)
+  if (r === 'overlaps') return meet(shrunk(query), shrunk(feature)) && !holds(query, feature) && !holds(feature, query)
+  if (r === 'touches') return meet(query, feature) && !meet(shrunk(query), shrunk(feature))
+  return meet(query, feature)
 }
 
 // ---------------------------------------------------------------- a small SQL where-clause reader
@@ -225,10 +270,9 @@ export class FakeLayer {
     if (g) {
       const meters = q.distance ? Number(q.distance) / (/(meter|metre)/i.test(String(q.units || '')) ? 1 : /mile/i.test(String(q.units || '')) ? 1 / 1609.34 : /kilometer/i.test(String(q.units || '')) ? 0.001 : FEET_PER_M) : 0
       if (g.type === 'extent' && !meters) list = list.filter(f => g.intersects(f.geometry.extent))
-      else {
-        const p: [number, number] = g.type === 'point' ? [g.x, g.y] : [g.extent.center.x, g.extent.center.y]
-        list = list.filter(f => distanceTo(p, f.geometry) <= meters + (g.type === 'point' ? 0 : Math.max(g.extent.width * MX, g.extent.height * MY) / 2))
-      }
+      else if (g.type === 'extent') { const box = new Polygon({ rings: [[[g.xmin, g.ymin], [g.xmax, g.ymin], [g.xmax, g.ymax], [g.xmin, g.ymax], [g.xmin, g.ymin]]] }); list = list.filter(f => apart(box, f.geometry) <= meters) }
+      else if (meters) list = list.filter(f => apart(g, f.geometry) <= meters)
+      else list = list.filter(f => related(q.spatialRelationship, g, f.geometry))
     }
     return list
   }

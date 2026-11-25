@@ -400,6 +400,12 @@ export default function Setting (props: SettingProps): any {
         <SettingRow tag='label' label={__t('featureSearch')}>
           <Switch checked={config.featureSearch !== false} onChange={(e: any) => set('featureSearch', e.target.checked)} />
         </SettingRow>
+        {config.featureSearch !== false && <>
+          <SettingRow tag='label' label={__t('notifyLists')}>
+            <Switch checked={(config as any).notifyLists === true} onChange={(e: any) => set('notifyLists', e.target.checked)} />
+          </SettingRow>
+          <Hint>{__t('notifyListsHint')}</Hint>
+        </>}
         <SettingRow label={__t('maxResults')}>
           <NumericInput size='sm' style={{ width: 90 }} aria-label={__t('maxResults')} min={1} max={25} value={config.maxResults || 8} onChange={(v: number) => set('maxResults', Number(v) || 8)} />
         </SettingRow>

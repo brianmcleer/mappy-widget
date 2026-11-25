@@ -938,9 +938,9 @@ export class LiveMap {
    * found, a dashed line to the closest one, and a zoom that fits them. Points are
    * [latitude, longitude]. Cleared like other Mappy highlights.
    */
-  async showPlaces (origin: [number, number] | null, spots: Array<[number, number]>, opts: { line?: boolean, rings?: number[][][], path?: Array<[number, number]> } = {}): Promise<boolean> {
+  async showPlaces (origin: [number, number] | null, spots: Array<[number, number]>, opts: { line?: boolean, rings?: number[][][], path?: Array<[number, number]>, around?: number[][][] } = {}): Promise<boolean> {
     const view = this.view
-    if (!view || (!origin && !spots.length)) return false
+    if (!view || (!origin && !spots.length && !opts.rings?.length && !opts.around?.length && !(opts.path && opts.path.length > 1))) return false
     try {
       const [Graphic, Point, Polyline, Polygon] = await loadArcGISJSAPIModules(['esri/Graphic', 'esri/geometry/Point', 'esri/geometry/Polyline', 'esri/geometry/Polygon'])
       if (view !== this.view) return false
@@ -974,6 +974,11 @@ export class LiveMap {
       if (opts.rings?.length) {
         marks.push(add(project(new Polygon({ rings: opts.rings, spatialReference: { wkid: 4326 } })),
           { type: 'simple-fill', color: [...HIGHLIGHT_RGB, 0.12], outline: { color: HIGHLIGHT_RGB, width: 3 } }))
+      }
+      // A distance around a place ("within 300 ft"): a dashed line, lightly filled, each ring on its own.
+      for (const ring of (opts.around || []).slice(0, 60)) {
+        marks.push(add(project(new Polygon({ rings: [ring], spatialReference: { wkid: 4326 } })),
+          { type: 'simple-fill', color: [...HIGHLIGHT_RGB, 0.06], outline: { color: HIGHLIGHT_RGB, width: 2, style: 'dash' } }))
       }
       // A route the server planned: the road it follows, as a solid line.
       if (opts.path && opts.path.length > 1) {

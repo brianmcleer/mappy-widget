@@ -23,6 +23,8 @@ import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
 import { parseRoute, esriHelperTool, esriCatalog, toolData, toolError, readCandidates, geocodeArgs, readReverse, routeArgs, readRoute, parseContentSearch, searchArgs, readItems, queryable, describeLayerArgs, describeItemArgs, pickLayer, readLayerSchema, readMapImage, readJob, askedThing, layerRef, type EsriCatalog, type PortalItem } from '../brain/esriMcp'
 import { RemoteLayer, type RemoteSchema } from './esriMcp'
+import { splitSpatial, distanceSwap, relationSaid, NEAR_FEET, type SpatialRead } from '../brain/spatial'
+import { anchorFromLayer, areaAt, pointAnchor, buildScope, countPerArea, anchorRings, anchorPoint, noticeList, MAX_ANCHORS, MAX_IDS, type Anchor, type Scope } from './spatial'
 import { handoffUrl, parseHandoff, assistantJob, contextLine, usageQuestion, usageNote } from '../brain/handoff'
 
 /** A card number or a US Social Security number typed into a question. */
@@ -116,6 +118,8 @@ export interface MindContext {
   telemetry?: boolean
   /** Send each question he could not answer (long numbers masked) to the usage table. Builder opt-in, on top of telemetry. */
   shareMisses?: boolean
+  /** "Owners within 300 ft of ..." answers with the owners and a spreadsheet. Builder opt-in: owner mailing lists are not for every app. */
+  notifyLists?: boolean
   /** Claude answering inside the chat through the GIS server's ask_assistant tool, when the builder chose it as the helper. */
   serverAssistant?: { label: string, shareSelection?: boolean, sharePicture?: boolean, note?: string } | null
   /** Says what a long wait is for, beside the typing dots ("Claude is checking the GIS data..."). */
@@ -167,7 +171,9 @@ export class Mind {
   private missMemory: Miss[] = []
   private keepMemory: Keepsakes = emptyKeepsakes()
   /** The last data question he read against the layers, for "show them" and "only show them on the map". */
-  private lastAsk: { ask: Ask, key: string } | null = null
+  private lastAsk: { ask: Ask, key: string, scope?: Scope } | null = null
+  /** The cross-layer question last answered, so "what about 500 ft" can ask it again. */
+  private lastSpatial: { read: SpatialRead, at: number } | null = null
   /** The reply that answered it: follow-ups ("who owns it", "which ones are over 5 acres") apply while it is the latest thing said. */
   private lastAskReply: Reply | null = null
   private lastAskAt = 0
@@ -175,7 +181,11 @@ export class Mind {
   private keepsakeTurn = false
   /** Guided tour: the widget docs still to visit, and the one being shown. */
   private tour: { stops: Doc[], at: number } | null = null
-  private lastResults: any[] = []
+  private resultStore: any[] = []
+  /** When the results on hand were found, so "it" only means them while they are fresh. */
+  private lastResultsAt = 0
+  private get lastResults (): any[] { return this.resultStore }
+  private set lastResults (v: any[]) { this.resultStore = v || []; this.lastResultsAt = this.resultStore.length ? Date.now() : 0 }
   private lastReadIntent = ''
   private lastReadScope = ''
   private addressSequence = 0
@@ -607,9 +617,16 @@ export class Mind {
     const followed = await this.followAsk(input)
     if (followed) { this.lastReply = followed; return followed }
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text) || await this.portalCommand(text)
+    if (!reply) reply = await this.spatialQuestion(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
-    else reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, await this.respondRead(text)) : await this.offerServer(text, await this.respondRead(text))
+    else {
+      let first = await this.respondRead(text)
+      // Stuck, and the sentence may be about place after all ("hydrants in the floodplain", "parcels outside the city limits").
+      // Also when all he had was a page from the app's own help ("Parcels (layer)...") for a question about where things are.
+      if ((['confused', 'think'].includes(first.mood || '') || first.lookedUp) && !/^__/.test(input)) { const across = await this.spatialQuestion(text, true); if (across) { first = across; this.lastReply = across } }
+      reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, first) : await this.offerServer(text, first)
+    }
     // Stuck on a question about one address ("when did 250 Oak St sell", "land use of 250 Oak St"): look the field up on its parcel.
     if (['confused', 'think'].includes(reply.mood || '') && !/^__/.test(input)) { const a = await this.addressAttr(text); if (a) { reply = a; this.lastReply = a } }
     // Stuck: offer the closest requests he can do, the way Clippy asked "It looks like you're...".
@@ -764,21 +781,23 @@ export class Mind {
     return await this.answerAsk(ask, entry)
   }
 
-  private async answerAsk (ask: Ask, entry: LayerEntry): Promise<Reply> {
+  private async answerAsk (ask: Ask, entry: LayerEntry, scope?: Scope): Promise<Reply> {
     const live = this.ctx.live
     try {
-      const reply = await runAsk(live, entry, ask, this.ctx.maxResults)
+      // A scope limits the layer to a place ("within 300 ft of ..."); follow-ups keep it.
+      const reply = await runAsk(scope ? scope.live : live, entry, ask, this.ctx.maxResults, scope ? { said: scope.said, narrowed: scope.narrowed } : undefined)
       this.lastLayer = entry.path
-      this.lastAsk = { ask, key: entry.key }
+      this.lastAsk = { ask, key: entry.key, scope }
       this.lastAskReply = reply
       this.lastAskAt = Date.now()
       this.lastAnalysis = null; this.dataTask = null; this.tablePage = null
       this.lastResults = reply.results || []
       const some = reply.mood !== 'think'
       const actions: MappyAction[] = [...(reply.actions || [])]
-      if (some && ask.clauses.length && (ask.kind === 'count' || ask.kind === 'stat')) actions.push({ type: 'ask', q: '__ask:list', label: 'Show them' })
-      if (some && ask.clauses.length && ['count', 'list', 'stat', 'attr'].includes(ask.kind) && !entry.isTable) actions.push({ type: 'ask', q: '__ask:map', label: 'Only show them on the map' })
-      if (some && ask.kind === 'list' && ask.clauses.length) reply.suggest = ['How many of those?', 'Show them in a table']
+      const limitedTo = ask.clauses.length > 0 || !!scope
+      if (some && limitedTo && (ask.kind === 'count' || ask.kind === 'stat')) actions.push({ type: 'ask', q: '__ask:list', label: 'Show them' })
+      if (some && limitedTo && ['count', 'list', 'stat', 'attr'].includes(ask.kind) && !entry.isTable) actions.push({ type: 'ask', q: '__ask:map', label: 'Only show them on the map' })
+      if (some && ask.kind === 'list' && limitedTo) reply.suggest = ['How many of those?', 'Show them in a table']
       // The layer is off: the answer still stands, and one click shows it.
       if (!entry.isTable && !live.isVisible(entry)) actions.push({ type: 'layerOn', id: entry.key, label: `Turn on ${entry.title}` })
       if (actions.length) reply.actions = actions.slice(0, 4)
@@ -794,6 +813,8 @@ export class Mind {
    * them on the map". It keeps the earlier filter (or the one record a ranking found) and adds to it.
    */
   private async followAsk (input: string): Promise<Reply | null> {
+    // "What about 150 ft" after a question about a distance is that question again, not a new filter.
+    if (this.lastSpatial && Date.now() - this.lastSpatial.at < 10 * 60000 && distanceSwap(input)) return null
     // Still the thing being talked about: asked within ten minutes, and no other data answer or place since.
     if (!this.lastAsk || this.lastAnalysis || /^__/.test(input) || Date.now() - this.lastAskAt > 600000 || (this.lastPlace && this.lastPlace.at > this.lastAskAt)) return null
     const live = this.ctx.live
@@ -819,7 +840,7 @@ export class Mind {
       const prior = this.lastAsk.ask
       const kept = prior.clauses.filter(c => (c.field as any).type !== 'oid' && !next!.clauses.some(n => n.field.name === c.field.name))
       const ask: Ask = next.kind === 'top' ? { ...next, clauses: [...kept, ...next.clauses] } : { ...prior, clauses: [...kept, ...next.clauses] }
-      return await this.answerAsk(ask, entry)
+      return await this.answerAsk(ask, entry, this.lastAsk.scope)
     }
     if (!/\b(?:it|its|it's|that|that one|this one|them|those|these|they|their|theirs|ones?)\b/.test(t)) return null
     if (resultCountFollowup(input) || resultTableFollowup(input) || /^(?:show|list) (?:them|those|these)(?: all)?$/.test(t)) return null
@@ -842,7 +863,7 @@ export class Mind {
     if (!carried.length && !ask.clauses.length && ask.kind !== 'attr') return null
     ask.clauses = [...carried, ...ask.clauses]
     if (ask.kind === 'distinct' && ask.clauses.length) ask.kind = 'attr'
-    return await this.answerAsk(ask, entry)
+    return await this.answerAsk(ask, entry, one ? undefined : this.lastAsk.scope)
   }
 
   /** One field of the parcel at an address, for the fields the place answers do not cover (sale date, value, land use, any field by its name). */
@@ -872,10 +893,21 @@ export class Mind {
     const entry = this.lastAsk ? live.entries().find(e => e.key === this.lastAsk!.key) : null
     if (!this.lastAsk || !entry) return { text: 'That question is no longer in front of me. Ask it again and I will pick it up.', mood: 'confused' }
     const ask = this.lastAsk.ask
-    if (what === 'list') return await this.answerAsk({ ...ask, kind: 'list', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry)
-    if (what === 'count') return await this.answerAsk({ ...ask, kind: 'count', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry)
+    const scope = this.lastAsk.scope
+    if (what === 'list') return await this.answerAsk({ ...ask, kind: 'list', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry, scope)
+    if (what === 'count') return await this.answerAsk({ ...ask, kind: 'count', field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined }, entry, scope)
     if (what === 'map') {
-      const where = askWhere(ask); const said = askSaid(ask)
+      let where = askWhere(ask); let said = askSaid(ask)
+      if (scope) {
+        // A place cannot be written as a layer filter, so the map shows the exact features by their ids.
+        const t = live.target(entry)
+        if (!t?.objectIdField || typeof t.queryObjectIds !== 'function') return { text: 'That one is by place, and this layer cannot be filtered that way on the map. The list in the chat still zooms to each one.', mood: 'think' }
+        let ids: number[] = scope.ids || []
+        if (where || !scope.ids) { try { const q: any = scope.live.target(entry).createQuery(); q.where = `(${q.where || '1=1'}) AND (${where})`; ids = (await t.queryObjectIds(q)).map(Number) } catch (e) { return { text: `**${entry.title}** could not list those for the map.`, mood: 'confused' } } }
+        if (ids.length > 1000) return { text: `That is ${ids.length.toLocaleString()} ${entry.title.toLowerCase()}, too many to pick out one by one on the map. Narrow it and try again.`, mood: 'think' }
+        where = ids.length ? `${t.objectIdField} IN (${ids.join(', ')})` : '1=0'
+        said = [said, scope.said].filter(Boolean).join(', ')
+      }
       if (!where) return { text: 'There is no filter in that question to show on the map.', mood: 'think' }
       if (!live.setFilter(entry, where, said)) return { text: `**${entry.title}** cannot be filtered on this map.`, mood: 'confused' }
       if (!live.isVisible(entry)) live.setVisible(entry, true)
@@ -1052,6 +1084,9 @@ export class Mind {
    * on Main St", "why is that"). Map commands and place questions stay his.
    */
   private async claudeFollowUp (input: string): Promise<Reply | null> {
+    // A distance change to the question about place just answered is his, not Claude's.
+    if (this.lastSpatial && Date.now() - this.lastSpatial.at < 10 * 60000 && distanceSwap(input)) return null
+    if (splitSpatial(input) && !/^__/.test(input)) { const across = await this.spatialQuestion(normalizeCommand(input)); if (across) return across }
     if (!this.ctx.serverAssistant || !this.claudeAt || Date.now() - this.claudeAt > 5 * 60000 || /^__/.test(input)) return null
     const plain = normalizeCommand(input).trim()
     const suggested = this.claudeFollowups.some(f => f.toLowerCase() === plain.toLowerCase())
@@ -1674,7 +1709,7 @@ export class Mind {
     const named = best && flat(best.value) !== flat(layer) ? best : null
     const flood = pq.yesNo && /flood|sfha|floodplain|floodway/i.test(`${pq.thing} ${layer}`) ? floodVerdict(pairs, where) : ''
     if (flood) reply.text = flood
-    else if (pq.yesNo) reply.text = `**Yes.** ${where} is in ${layer}${named ? ` (${named.value})` : ''}.`
+    else if (pq.yesNo) reply.text = this.inAreaVerdict(where, pq.thing || '', layer, named ? named.value : '')
     else reply.text = named ? placeFact(where, pq.thing || '', layer, named.label, named.value, q) : `${where} is in ${layer}.`
   }
 
@@ -2095,6 +2130,14 @@ export class Mind {
       }
     }
     // A general "what's at" goes to the server's full report when there is one.
+    // "Is 310 Oak St in MU": no layer is called that, but an area on the map is. Check against the layer that has it.
+    if (!entries.length && thing && pq.yesNo && !parcelish) {
+      const areas = live.entries().filter(e => !e.isGroup && !e.isTable && live.canAsk(e) && /polygon/i.test(String(live.target(e)?.geometryType || '')) && typeof live.target(e)?.queryFeatures === 'function').slice(0, 12)
+      for (const e of areas) { try { await loadValues(live, e) } catch (err) { } }
+      const hit = namedFeature(thing.replace(/\s+(?:zoning district|zone|district|area|boundary|limits|neighbou?rhood)s?$/i, ''), areas.map(e => schemaOf(live, e)), 2)
+      const e = hit && areas.find(x => x.key === hit.layer.key)
+      if (e) entries = [e]
+    }
     // A named kind of layer the map does not have ("what zoning is this in" on a utilities map): say so rather than guess.
     if (!entries.length && thing && !parcelish && only) {
       return { text: `This map has no **${thing}** layer, so I cannot answer that here. ${this.ctx.place?.website ? `The ${this.org()} website may have it.` : ''}`.trim(), mood: 'think', suggest: ['What layers are on?', 'List layers'] }
@@ -2136,7 +2179,7 @@ export class Mind {
       : null
     const flood = floodPairs ? floodVerdict(floodPairs, spot.label) : ''
     if (flood) reply.text = flood
-    else if (pq.yesNo) reply.text = `**Yes.** ${spot.label} is in ${entry.title}${named ? ` (${named})` : ''}.`
+    else if (pq.yesNo) reply.text = this.inAreaVerdict(spot.label, thing, entry.title, named)
     else if (parcelish && pq.field) {
       const t: any = live.target(entry)
       const fields: any[] = (t?.fields?.toArray ? t.fields.toArray() : t?.fields) || Object.keys(g.attributes || {}).map(name => ({ name }))
@@ -2420,6 +2463,273 @@ export class Mind {
     }
     if (view.image) reply.image = view.image
     return reply
+  }
+
+  /**
+   * "Is 250 Oak St in the MU zone": yes only when the area found there is the one that was named.
+   * A question that names no particular area ("in city limits", "in a flood zone") is yes for any.
+   */
+  private inAreaVerdict (where: string, thing: string, layer: string, found: string): string {
+    const stem = (w: string): string => w.replace(/(?:ies)$/, 'y').replace(/(?:es|s)$/, '')
+    const generic = new Set([...layer.toLowerCase().split(/[^a-z0-9]+/), ...'the a an in of any some zone zoning zoned district area boundary limit city town county overlay region'.split(' ')].filter(Boolean).map(stem))
+    const asked = thing.toLowerCase().split(/[^a-z0-9-]+/).filter(w => w && !generic.has(stem(w)))
+    if (!asked.length || !found) return `**Yes.** ${where} is in ${layer}${found ? ` (${found})` : ''}.`
+    const have = found.toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean)
+    const same = asked.every(w => have.includes(w)) || flat(found) === flat(asked.join(' '))
+    return same ? `**Yes.** ${where} is in ${found} (${layer}).` : `**No.** ${where} is in **${found}**, not ${thing.replace(/^(?:the|a|an) /i, '')} (${layer}).`
+  }
+
+  // ------------------------------------------------------------ questions that cross layers
+
+  /**
+   * One thing asked about by where it is relative to another: "parcels within 300 ft of 250 N 5th
+   * St", "hydrants in the floodplain", "R-4 parcels over 5 acres within a mile of a school", "how
+   * many hydrants per council district", "parcels not within 500 ft of a hydrant", "owners within
+   * 300 ft of this parcel". Each side is read against the layers' real fields; the layer service
+   * does the geometry. Null when the sentence is not one of these, so other readers get it.
+   */
+  private async spatialQuestion (text: string, late = false): Promise<Reply | null> {
+    const live = this.ctx.live
+    if (!this.ctx.featureSearch || !live.ready || /^__/.test(text)) return null
+    // "What about 500 ft": the question just answered, at another distance.
+    const again = this.lastSpatial && Date.now() - this.lastSpatial.at < 10 * 60000 ? distanceSwap(text) : null
+    let read: SpatialRead | null = again && (this.lastSpatial!.read.feet || this.lastSpatial!.read.notify) ? { ...this.lastSpatial!.read, feet: again.feet, distance: again.said, assumed: false } : splitSpatial(text)
+    if (!read) return null
+    // "In" and "outside" with no distance are ordinary words far more often than they are about
+    // place ("parcels in R-4", "hydrants not in service"). Those are only read this way after
+    // the ordinary readers had their turn and came up empty (late).
+    const explicit = read.relation === 'within' || read.relation === 'touch' || (read.relation === 'outside' && !!read.feet) || !!read.per || !!read.notify || !!read.strong
+    if (explicit === late && !again) return null
+    const entries = live.entries().filter(e => !e.isGroup && live.canAsk(e) && typeof live.target(e)?.queryFeatures === 'function')
+    if (!entries.length) return null
+    const schemas = entries.map(e => schemaOf(live, e))
+    const entryOf = (key: string): LayerEntry | undefined => entries.find(e => e.key === key)
+    try {
+      // Counting by an area the layer already records ("parcels per zoning" with a Zoning field) is a plain group: cheaper and exact.
+      if (read.per && !read.rank) {
+        const named = mentionedLayer(read.target, schemas)
+        const e = named && entryOf(named.layer.key)
+        if (e) {
+          try { await loadValues(live, e) } catch (err) { }
+          let plain: Ask | null = null
+          try { plain = readAsk(`count ${read.target.replace(/^(?:how many|count|number of)\s+/i, '')} by ${read.anchor}`, [schemaOf(live, e)], { fallback: e.key }) } catch (err) { plain = null }
+          if (plain && plain.kind === 'group' && plain.group && !plain.unknown.length) return await this.answerAsk(plain, e)
+        }
+      }
+
+      // ---- the side asked about
+      let entry: LayerEntry | undefined
+      let ask: Ask | null = null
+      const notify = !!read.notify && this.ctx.notifyLists === true
+      if (read.notify) {
+        entry = live.parcelLayers().find(e => entries.includes(e))
+        if (!entry) return explicit ? { text: 'A list of owners near a place needs a parcel layer, and this map does not have one I can ask.', mood: 'confused' } : null
+        ask = { layer: entry.key, kind: 'list', clauses: [], unknown: [] }
+      } else {
+        const named = mentionedLayer(read.target, schemas)
+        if (!named) return null
+        entry = entryOf(named.layer.key)
+        if (!entry) return null
+        try { await loadValues(live, entry) } catch (err) { }
+        const mine = [schemaOf(live, entry)]
+        const bare = !/^(?:how many|count|number of|list|show|which|what|find|total|sum|average|avg|mean|biggest|largest|smallest|oldest|newest|most|least|top)\b/i.test(read.target)
+        try { ask = readAsk(bare ? `list ${read.target}` : read.target, mine, { fallback: entry.key }) || readAsk(`list ${read.target}`, mine, { fallback: entry.key }) } catch (err) { ask = null }
+        if (!ask) ask = flat(read.target.replace(/^(?:the|all|any) /i, '')) === flat(entry.title) || mentionedLayer(read.target, mine) ? { layer: entry.key, kind: /^(?:how many|count|number of)\b/i.test(read.target) ? 'count' : 'list', clauses: [], unknown: [] } : null
+        if (!ask) return null
+        if (ask.unknown.length) {
+          // Words on the asked-about side that its fields do not explain: try them as text, as any data question would.
+          let clause: any = null
+          try { clause = await probeText(live, entry, ask.unknown.join(' '), askWhere(ask)) } catch (err) { clause = null }
+          if (!clause) return explicit ? { text: `I could not match “${ask.unknown.join(' ')}” to anything in **${entry.title}**, so I did not guess. Say it another way, or ask “what fields does ${entry.title} have”.`, mood: 'confused' } : null
+          ask = { ...ask, clauses: [...ask.clauses, clause], unknown: [] }
+        }
+      }
+
+      // A notice list with no distance: ask, and take the next "300 ft" as the answer.
+      if (read.notify && !read.feet) {
+        this.lastSpatial = { read, at: Date.now() }
+        return { text: `How far out from ${clip(read.anchor, 60)}? Say a distance, like “300 ft”.`, mood: 'think', suggest: ['300 ft', '500 ft', '1000 ft'] }
+      }
+
+      // ---- the other side
+      const anchor = await this.spatialAnchor(read, entries, entry)
+      if (anchor === null) return null
+      if ('text' in anchor) return anchor
+      // A plain list near a place ("hydrants within 500 ft of 250 Oak St") is the place reader's: it gives the distance to each one.
+      if (!anchor.key && !read.notify && ask.kind === 'list' && !ask.clauses.length && read.relation === 'within' && !again && !/polygon/i.test(String(live.target(entry)?.geometryType || ''))) return null
+      if (read.per && !anchor.area) return { text: `Counting per ${clip(read.anchor, 40)} needs a layer of areas (districts, zones, wards), and that is not one.`, mood: 'confused' }
+      if (read.relation === 'in' && !anchor.area) return explicit ? { text: `“${clip(read.anchor, 50)}” is not an area on this map, so nothing can be in it. Try “within 500 ft of ${clip(read.anchor, 40)}”.`, mood: 'confused' } : null
+      if (anchor.capped) {
+        return { text: `That would compare against ${anchor.capped.toLocaleString()} ${clip(read.anchor, 40)}, and I stop at ${MAX_ANCHORS} so the map service is not flooded. Narrow that side (a type, a status, one area) and ask again.`, mood: 'think' }
+      }
+      if (!anchor.geoms.length) return { text: `Nothing on this map matches “${clip(read.anchor, 60)}”, so there is nothing to measure from.`, mood: 'think' }
+      // A line is rarely wholly in an area: say what was counted.
+      const lines = read.relation === 'in' && /line/i.test(String(live.target(entry)?.geometryType || ''))
+      const said = lines ? `in or crossing ${anchor.label}` : relationSaid(read, anchor.label)
+      const where = askWhere(ask)
+      this.track(`spatial:${read.notify ? 'notify' : read.per ? 'per' : read.relation}`)
+      this.lastSpatial = { read, at: Date.now() }
+      this.dataTask = null; this.lastAnalysis = null; this.tablePage = null
+
+      // ---- one answer per area
+      if (read.per) {
+        const rows = (await countPerArea(live, entry, anchor, where)).sort((a, b) => read!.rank === 'fewest' ? a.count - b.count : b.count - a.count)
+        const noun = entry.title.toLowerCase()
+        const filter = askSaid(ask)
+        const top = rows[0]
+        if (rows.every(r => r.count === 0)) return { text: `No ${noun}${filter ? ` (${filter})` : ''} ${rows.length === 1 ? 'is' : 'are'} in any of the ${rows.length} ${anchor.label.toLowerCase()}${rows.length === 1 ? '' : ' areas'}.`.replace(/(\d+) (\S+) areas\./, (m, n, w) => /s$/.test(w) ? `${n} ${w}.` : m), mood: 'think', sources: [{ title: entry.title, detail: `Counted inside each area · ${new Date().toLocaleTimeString()}` }] }
+        const ties = rows.filter(r => r.count === top.count)
+        const lead = ties.length > 1 && ties.length < rows.length
+          ? `${ties.slice(0, 4).map(r => `**${r.label}**`).join(', ')}${ties.length > 4 ? ' and others' : ''} tie for the ${read.rank === 'fewest' ? 'fewest' : 'most'} ${noun}${filter ? ` (${filter})` : ''}: ${top.count.toLocaleString()} each.`
+          : `**${top.label}** has the ${read.rank === 'fewest' ? 'fewest' : 'most'} ${noun}${filter ? ` (${filter})` : ''}: **${top.count.toLocaleString()}**.${rows.length > 1 ? ` Then ${rows.slice(1, 3).map(r => `${r.label} (${r.count.toLocaleString()})`).join(' and ')}.` : ''}`
+        this.lastLayer = entry.path
+        const shown = rows.slice(0, 25)
+        return {
+          text: `${lead} ${rows.length} ${rows.length === 1 ? 'area' : 'areas'} counted.`, mood: 'pleased',
+          table: { columns: [anchor.label, entry.title], rows: shown.map(r => [r.label, r.count.toLocaleString()]) },
+          chart: shown.length >= 2 && shown.length <= 12 ? { title: `${entry.title} by ${anchor.label}`, rows: shown.map(r => ({ label: r.label, value: r.count })) } : undefined,
+          note: 'Counted by where each one is. One that sits on a line between two areas is counted in both.',
+          sources: [{ title: entry.title, detail: `Counted inside each area${filter ? ` · ${filter}` : ''} · ${new Date().toLocaleTimeString()}` }]
+        }
+      }
+
+      const built = await buildScope(live, entry, read, anchor, said, where, notify)
+      if (!built.scope) {
+        // Too many to carry as a list: the count is still exact.
+        return { text: `**${(built.count || 0).toLocaleString()}** ${entry.title.toLowerCase()} are ${said}. That is more than I can list or filter at once (${MAX_IDS.toLocaleString()}); narrow it and I can show them.`, mood: 'acknowledge', sources: [{ title: entry.title, detail: `Live layer query · ${said}` }] }
+      }
+      const scope = built.scope
+      const drawFeet = read.relation === 'within' ? Number(read.feet) : 0
+      const origin = anchorPoint(anchor)
+      const shapes = anchorRings(anchor, drawFeet)
+      const draw = async (): Promise<boolean> => { try { return await live.showPlaces(anchor.geoms.length === 1 && !anchor.area ? origin : null, [], { rings: shapes.own, around: shapes.around }) } catch (err) { return false } }
+
+      // ---- the owners near a place, as a list to save
+      if (notify) {
+        const list = await noticeList(scope, entry, anchor.key === entry.key ? (anchor.ids || []) : [], live.view)
+        const drawn = await draw()
+        this.lastAsk = { ask, key: entry.key, scope }; this.lastAskAt = Date.now(); this.lastLayer = entry.path
+        this.lastResults = list.features.slice(0, this.ctx.maxResults).map(g => ({ entry, graphic: g, label: String(g.attributes?.[live.target(entry).displayField] ?? 'Parcel') }))
+        if (!list.parcels) return { text: `No parcels are ${said}.`, mood: 'think', sources: [{ title: entry.title, detail: said }] }
+        const lot = anchor.area && anchor.key === entry.key ? ' The distance is measured from the lot line, and the subject property is in the list and marked.' : anchor.area ? '' : ' The distance is measured from that point, not from a lot line.'
+        const reply: Reply = {
+          text: `**${list.parcels.toLocaleString()}** ${list.parcels === 1 ? 'parcel is' : 'parcels are'} ${said}${list.ownerField ? `, with **${list.owners.toLocaleString()}** different ${list.owners === 1 ? 'owner' : 'owners'}` : ''}.${lot}${drawn ? (shapes.around.length ? ` The ${read.distance} line is drawn on the map.` : ' The area is drawn on the map.') : ''}${list.ownerField ? '' : ' This parcel layer has no owner field I can find, so the list has the parcels only.'}${list.ownerField && !list.hasMailing ? ' It has no mailing address fields, so the list has owners and property addresses.' : ''}${list.capped ? ' The list stops at 2,000 parcels.' : ''}`,
+          mood: 'pleased',
+          table: { columns: list.columns, rows: list.rows.slice(0, 25) },
+          save: { name: `notice-list-${read.distance!.replace(/[^a-z0-9]+/gi, '')}-${new Date().toISOString().slice(0, 10)}.csv`, text: list.csv, type: 'text/csv;charset=utf-8', label: `Save all ${list.parcels.toLocaleString()} as a spreadsheet file` },
+          note: 'From the parcel layer as it is today. Check it against the official notice requirements before mailing.',
+          sources: [{ title: entry.title, detail: `Live layer query · ${said} · ${new Date().toLocaleTimeString()}` }],
+          results: this.lastResults,
+          suggest: ['What about 500 ft', 'Only show them on the map']
+        }
+        if (list.rows.length > 25) reply.text += ` The first 25 are shown here; the file has them all.`
+        return reply
+      }
+
+      const reply = await this.answerAsk(ask, entry, scope)
+      const drawn = reply.mood === 'confused' ? false : await draw()
+      const notes: string[] = []
+      if (read.assumed) notes.push(`“Near” taken as ${NEAR_FEET} ft. Say “what about 1000 ft” to change it.`)
+      if (read.relation === 'touch') notes.push('Next to means within 3 ft, so lots across a street do not count.')
+      if (read.relation === 'in' && anchor.area && !/polygon/i.test(String(live.target(entry)?.geometryType || ''))) { /* points and lines in an area need no caveat */ } else if (read.relation === 'in') notes.push('Counted when the inside of one overlaps the inside of the other, so sharing only an edge does not count.')
+      if (read.relation === 'within' && anchor.area && anchor.key && anchor.geoms.length === 1) notes.push('Measured from its edge, not its middle.')
+      if (read.notify && !notify) notes.push('This lists the parcels. Owner lists to save are turned on by whoever built this app.')
+      if (drawn && anchor.geoms.length) notes.push(shapes.around.length ? 'The distance is drawn on the map as a dashed line.' : shapes.own.length ? 'The area is outlined on the map.' : '')
+      if (notes.length) reply.note = notes.join(' ')
+      // Another distance is the likeliest next question.
+      if (read.feet && read.relation === 'within' && reply.mood !== 'confused') reply.suggest = [`What about ${read.feet >= 2640 ? 'a quarter mile' : read.feet >= 1000 ? '500 ft' : '1000 ft'}`, ...(ask.kind === 'list' ? ['How many of those?'] : [])]
+      return reply
+    } catch (error) {
+      return { text: error instanceof Error ? error.message : 'The map service did not answer that. Try again in a moment.', mood: 'confused' }
+    }
+  }
+
+  /**
+   * The other side of a cross-layer question as shapes: the thing just shown ("it", "this parcel"),
+   * the map ("here"), a named feature ("Compass Park", "Ward 3"), a layer with or without filters
+   * ("a school", "out of service hydrants"), or a place or address. Null when it is none of these;
+   * a Reply when it is one but something is missing.
+   */
+  private async spatialAnchor (read: SpatialRead, entries: LayerEntry[], target: LayerEntry): Promise<Anchor | Reply | null> {
+    const live = this.ctx.live
+    const words = read.anchor
+    const w = words.toLowerCase()
+    const parcels = live.parcelLayers().find(e => entries.includes(e))
+    const lotLine = read.notify || read.relation === 'touch' || (parcels && target.key === parcels.key)
+    const fromPlace = async (at: [number, number], label: string): Promise<Anchor> => {
+      // For parcels and notices, the place is its lot: the distance runs from the lot line.
+      if (lotLine && parcels) { try { const lot = await areaAt(live, parcels, at, label); if (lot) return lot } catch (e) { } }
+      return pointAnchor(at, label)
+    }
+    if (read.per) {
+      const named = mentionedLayer(words, entries.map(e => schemaOf(live, e)))
+      const e = named && entries.find(x => x.key === named.layer.key)
+      if (!e) return null
+      return anchorFromLayer(live, e, '', e.title)
+    }
+    if (/^(?:here|me|my location|where i am|this spot|this point|this place|the map|the map cent(?:er|re)|the middle of the map|this area)$/.test(w)) {
+      const c = this.mapContext()?.center
+      return c ? fromPlace(c, 'the middle of the map') : { text: 'I need the map for that, and it is not ready yet.', mood: 'confused' }
+    }
+    if (/^(?:it|this|that|there|this one|that one|this (?:parcel|property|lot|address|feature|site)|that (?:parcel|property|lot|address|feature|site)|the (?:parcel|property|lot|site|subject(?: property| parcel)?))$/.test(w)) {
+      // One thing on hand is "it". After a list of several, "it" is the place that list was about.
+      const hit = this.lastResults?.length === 1 ? this.lastResults[0] : null
+      const g: any = hit?.graphic?.geometry
+      // The thing last shown: its own shape when it has one.
+      if (g && hit.entry && Date.now() - this.lastResultsAt < 15 * 60000 && (!this.lastPlace || this.lastPlace.at <= this.lastResultsAt)) {
+        const t = live.target(hit.entry)
+        const id = Number(hit.graphic.attributes?.[t?.objectIdField])
+        if (t?.objectIdField && Number.isFinite(id)) return anchorFromLayer(live, hit.entry, `${t.objectIdField} = ${id}`, String(hit.label || 'that one'))
+      }
+      const r = this.recentPlace()
+      if (r) return fromPlace([r.lat, r.lon], r.label)
+      return { text: `Which place? Give me an address, or find it first and then ask “${clip(read.target, 40)} ${read.relation === 'within' ? `within ${read.distance} of it` : 'next to it'}”.`, mood: 'think' }
+    }
+    const addressLike = /^\d{1,6}[a-z]?\s+\S/.test(w) || MY_PLACE.test(w)
+    if (!addressLike) {
+      const schemas = entries.map(e => schemaOf(live, e))
+      const layer = mentionedLayer(words, schemas)
+      if (layer) {
+        const e = entries.find(x => x.key === layer.layer.key)!
+        try { await loadValues(live, e) } catch (err) { }
+        const mine = [schemaOf(live, e)]
+        // Its own name first: "Compass Park" is one park, not parks with "compass" somewhere in a field.
+        const own = namedFeature(words, mine)
+        if (own && /^[a-z_][a-z0-9_.]*$/i.test(own.field.name)) return anchorFromLayer(live, e, `${own.field.name} = '${own.value.replace(/'/g, "''")}'`, own.value)
+        let a: Ask | null = null
+        try { a = readAsk(`list ${words}`, mine, { fallback: e.key }) } catch (err) { a = null }
+        if (a && a.unknown.length) { let clause: any = null; try { clause = await probeText(live, e, a.unknown.join(' '), askWhere(a)) } catch (err) { } ; a = clause ? { ...a, clauses: [...a.clauses, clause], unknown: [] } : null }
+        // Only the layer's own words ("a hydrant" for Fire Hydrants): every feature of it.
+        const stemOf = (x: string): string => x.toLowerCase().replace(/(?:ies)$/, 'y').replace(/(?:es|s)$/, '')
+        const titleWords = e.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(stemOf)
+        const all = words.toLowerCase().split(/[^a-z0-9]+/).filter(x => x && !/^(?:the|a|an|any|all|of)$/.test(x)).every(x => titleWords.includes(stemOf(x)))
+        if (a || all) {
+          const saidFilter = a ? askSaid(a) : ''
+          const one = /^(?:a|an|any|one)\s/i.test(read.anchor) || !/s$/i.test(words)
+          const label = saidFilter ? `${e.title.toLowerCase()} (${saidFilter})` : one ? `${/^[aeiou]/i.test(e.title) ? 'an' : 'a'} ${e.title.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '')}` : e.title.toLowerCase()
+          return anchorFromLayer(live, e, a ? askWhere(a) : '', label)
+        }
+      }
+      // A feature called by its own name: "Compass Park", "Ward 3", "the floodplain".
+      for (const e of entries.slice(0, 12)) { try { await loadValues(live, e) } catch (err) { } }
+      // "The R-4 zone", "Ward 3 district": the name with or without the word for the kind of area.
+      const short = words.replace(/\s+(?:zoning district|zone|district|area|boundary|limits|neighbou?rhood|subdivision|precinct)s?$/i, '').trim()
+      const everything = entries.map(e => schemaOf(live, e))
+      const areas = entries.filter(e => /polygon/i.test(String(live.target(e)?.geometryType || ''))).map(e => schemaOf(live, e))
+      const named = namedFeature(words, everything) || namedFeature(short || words, areas, 2)
+      if (named) {
+        const e = entries.find(x => x.key === named.layer.key)!
+        if (/^[a-z_][a-z0-9_.]*$/i.test(named.field.name)) return anchorFromLayer(live, e, `${named.field.name} = '${named.value.replace(/'/g, "''")}'`, named.value)
+      }
+      // A layer whose whole name is the words ("the floodplain" for a layer named Floodplain).
+      const whole = entries.find(e => flat(e.title) === flat(words) || flat(e.title.replace(/s$/i, '')) === flat(words.replace(/s$/i, '')))
+      if (whole) return anchorFromLayer(live, whole, '', `the ${whole.title.toLowerCase()}`)
+    }
+    // An area cannot be a geocoded point, and "in <words>" with no layer behind it is not a place question.
+    if (read.relation === 'in' || !this.canLocate()) return null
+    const place = await this.locate(words)
+    if (place) return fromPlace(place.at, place.label)
+    return read.notify ? { text: `I could not find “${clip(words, 60)}” as a place or as something on this map.`, mood: 'confused' } : null
   }
 
   // ------------------------------------------------------------ ArcGIS Enterprise MCP: portal content and portal layers

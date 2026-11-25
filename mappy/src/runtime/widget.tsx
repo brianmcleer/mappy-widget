@@ -245,6 +245,7 @@ export default function Widget (props: Props): any {
     contact: cleanContact(plain<any>(cfg.contact)),
     telemetry: cfg.telemetry === true,
     shareMisses: cfg.telemetry === true && (cfg as any).telemetryMisses === true,
+    notifyLists: (cfg as any).notifyLists === true,
     portalUrl: (() => { try { return String(SessionManager.getInstance().getMainSession()?.portal || '').replace(/\/sharing\/rest\/?$/i, '') || undefined } catch (e) { return undefined } })(),
     waiting: (note: string) => { try { waitNoteRef.current(note) } catch (e) { } },
     typoFix: cfg.typoFix !== false,

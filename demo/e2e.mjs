@@ -100,6 +100,18 @@ await step('swaps, lengths and two-slip typos', async () => {
   await say('what is the tallest building allowed', /MU: Max Height \(ft\) 65/)
   await say('cuot parcels', /There are 36 parcels/)
 })
+await step('questions that cross layers', async () => {
+  await page.click('.mappy-bubble button:has-text("New chat")'); await page.waitForTimeout(600)
+  await say('parcels within 300 ft of Compass Park', /8 parcels are within 300 ft of Compass Park/)
+  await say('how many of those are zoned R-4', /2 parcels match \(Zoning R-4, within 300 ft of Compass Park\)\. That is 25% of the 8/)
+  await say('how many hydrants per zoning district', /R-4 has the most fire hydrants: 4/)
+  await say('parcels not within 200 ft of a hydrant', /9 parcels are more than 200 ft from a fire hydrant/)
+  const got = await say('owners within 300 ft of 250 Oak St', /7 parcels are within 300 ft of 250 Oak St, with 6 different owners/)
+  assert.match(got, /Mailing address/); assert.match(got, /The 300 ft line is drawn on the map/)
+  assert.ok(await page.evaluate(() => window.mappyDemo.view.graphics.items.some(g => g.symbol && g.symbol.outline && g.symbol.outline.style === 'dash')), 'the distance is drawn as a dashed line')
+  await say('what about 150 ft', /6 parcels are within 150 ft of 250 Oak St/)
+  await say('is 250 Oak St in the MU zone', /No\. 250 Oak St is in C-1, not MU zone/)
+})
 await step('no errors in the page', async () => assert.deepEqual(problems, []))
 
 await browser.close()

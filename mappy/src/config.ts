@@ -108,6 +108,8 @@ export interface Config {
   telemetry?: boolean
   /** With telemetry on: also send each question he could not answer (long numbers masked) to the usage table. Off by default. */
   telemetryMisses?: boolean
+  /** "Owners within 300 ft of ..." answers with the owners' names and mailing addresses and a spreadsheet to save. Off by default. */
+  notifyLists?: boolean
 }
 
 export type IMConfig = ImmutableObject<Config>

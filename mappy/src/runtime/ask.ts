@@ -170,7 +170,7 @@ export async function rankLines (live: LiveMap, entry: LayerEntry, order: 'asc' 
 }
 
 /** Runs the question. Throws with a plain sentence when the layer cannot answer it. */
-export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: number): Promise<Reply> {
+export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: number, scope?: { said: string, narrowed?: boolean }): Promise<Reply> {
   const target = live.target(entry)
   if (!target || typeof target.queryFeatures !== 'function') throw new Error(`**${entry.title}** does not support questions about its records.`)
   if (target.load && !target.loaded) await withTimeout(target.load(), 8000)
@@ -178,11 +178,15 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
   const base = fresh().where
   const where = askWhere(ask)
   const full = where ? `(${base}) AND (${where})` : base
-  const said = askSaid(ask)
+  // A scope is a place the question is limited to ("within 300 ft of 250 Oak St"); the layer handed in already applies it to every query.
+  const said = [askSaid(ask), scope?.said].filter(Boolean).join(', ')
   const noun = nounOf(entry.title)
   const n = (count: number): string => `**${count.toLocaleString()}** ${count === 1 ? noun.one : noun.many}`
   const source = { title: entry.title, detail: `Live layer query${said ? ` · ${said}` : ''} · ${new Date().toLocaleTimeString()}` }
   const read = said ? ` (${said})` : ''
+  // With only a place and no other filter, say it as a sentence: "8 parcels are within 300 ft of Compass Park".
+  const placeOnly = !!scope && !askSaid(ask)
+  const are = (count: number): string => placeOnly ? ` ${count === 1 ? 'is' : 'are'} ${scope!.said}` : ` match${count === 1 ? 'es' : ''}${read}`
   const fields = Array.from(target.fields || []) as QueryField[]
   const display = fields.find(f => f.name === target.displayField) || fields.find(f => isText(f) && !hidden(f)) || fields.find(f => !hidden(f))
   const labelOf = (g: any): string => { const v = display ? g.attributes?.[display.name] : null; return v == null || v === '' ? String(g.attributes?.[target.objectIdField] ?? 'Feature') : sayValue(display as QueryField, v) }
@@ -192,9 +196,10 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
 
   if (ask.kind === 'count') {
     const [whole, part] = await Promise.all([where ? count(base) : Promise.resolve(-1), count(full)])
-    if (!where) return { text: `There ${part === 1 ? 'is' : 'are'} ${n(part)}.`, mood: 'acknowledge', sources: [source] }
+    if (!where) return { text: `There ${part === 1 ? 'is' : 'are'} ${n(part)}${scope ? ' ' + scope.said : ''}.`, mood: scope && !part ? 'think' : 'acknowledge', sources: [source] }
     const pct = whole > 0 ? Math.round(part / whole * 100) : 0
-    return { text: part ? `${n(part)} match${part === 1 ? 'es' : ''}${read}. That is ${pct < 1 ? 'under 1' : pct}% of the ${whole.toLocaleString()} in the layer.` : `No ${noun.many} match${read}. The layer has ${whole.toLocaleString()}.`, mood: part ? 'acknowledge' : 'think', sources: [source] }
+    if (scope?.narrowed) return { text: part ? `${n(part)} match${part === 1 ? 'es' : ''}${read}.` : `No ${noun.many} match${read}.`, mood: part ? 'acknowledge' : 'think', sources: [source] }
+    return { text: part ? `${n(part)} match${part === 1 ? 'es' : ''}${read}. That is ${pct < 1 ? 'under 1' : pct}% of the ${whole.toLocaleString()} ${scope ? scope.said : 'in the layer'}.` : `No ${noun.many} match${read}. ${scope ? `There ${whole === 1 ? 'is' : 'are'} ${whole.toLocaleString()} ${scope.said}` : `The layer has ${whole.toLocaleString()}`}.`, mood: part ? 'acknowledge' : 'think', sources: [source] }
   }
 
   if (ask.kind === 'list' || ask.kind === 'attr') {
@@ -202,7 +207,7 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
     if (target.objectIdField) q.orderByFields = [target.objectIdField + ' ASC']
     const [res, total] = await Promise.all([withTimeout(target.queryFeatures(q), 12000), count(full)])
     const features = (Array.from((res as any)?.features || []) as any[]).slice(0, max)
-    if (!features.length) return { text: `No ${noun.many} match${read}.`, mood: 'think', sources: [source] }
+    if (!features.length) return { text: placeOnly ? `No ${noun.many} are ${scope!.said}.` : `No ${noun.many} match${read}.`, mood: 'think', sources: [source] }
     if (ask.kind === 'attr' && ask.field) {
       const f = ask.field
       const values = features.map(g => g.attributes?.[f.name])
@@ -212,7 +217,7 @@ export async function runAsk (live: LiveMap, entry: LayerEntry, ask: Ask, max: n
       return { text: `${n(total)} match${read}. Here is **${fieldLabel(f)}** for ${total > features.length ? `the first ${features.length}` : 'each'}:`, mood: 'talk', sources: [source], results: results(features, g => sayMeasure(f, g.attributes?.[f.name])), table: { columns: [display ? fieldLabel(display) : entry.title, fieldLabel(f)], rows: features.map(g => [labelOf(g), sayValue(f, g.attributes?.[f.name])]) } }
     }
     const names = features.slice(0, 5).map(g => `**${labelOf(g)}**`)
-    return { text: total <= 5 ? `${n(total)} match${total === 1 ? 'es' : ''}${read}: ${listOut(names)}.` : `${n(total)} match${read}. Here are the first ${features.length}; choose one to zoom to it.`, mood: 'talk', sources: [source], results: results(features) }
+    return { text: total <= 5 ? `${n(total)}${are(total)}: ${listOut(names)}.` : `${n(total)}${are(total)}. Here are the first ${features.length}; choose one to zoom to it.`, mood: 'talk', sources: [source], results: results(features) }
   }
 
   if (ask.kind === 'top' && ask.field) {
