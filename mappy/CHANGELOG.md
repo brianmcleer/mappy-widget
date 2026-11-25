@@ -2,6 +2,9 @@
 
 - Hands a place to another widget. Wire any widget's message action to Mappy's new "Location changes" trigger (Action tab) and people can ask for it by its label: "property report for 250 Main St", "run the site lookup on this parcel", "report for it". He finds the place, opens the widget and publishes Experience Builder's standard location message; after finding an address he offers a button for each wired widget. Nothing is named in Mappy: the widgets and their names come from the app's own wiring. See docs/hand-off-to-widgets.md.
 - A distance can go with the place: "mailing labels within 300 ft of 250 Main St" sends the point and 300 ft to the wired widget, for widgets whose action takes a distance.
+- A wired widget asked for by name now wins over his own reading of the same words ("mailing labels within 300 ft of ..." goes to a wired Mailing Labels widget, not his owner list). Found in a real app.
+- Parcel layer (optional setting, under Owner lists): name the map layer that holds the parcels, or paste a service address (.../MapServer/0) for one that is not in the map; it is asked but never drawn. Left empty, he also uses the parcel or owner layer another widget in the app is set to, even when the layer list hides it.
+- Settings: password managers no longer fill the Website, Census key and server header boxes.
 
 ## 1.11.0 (2026-11-25)
 

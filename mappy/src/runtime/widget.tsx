@@ -46,7 +46,7 @@ import { openWidget } from './navigate'
 import { McpClient } from './mcp'
 import type { McpPort } from '../brain/mcpTools'
 import { helperMode, assistantPort } from '../brain/handoff'
-import { placeTargets } from '../brain/sendPlace'
+import { placeTargets, parcelLayerIds } from '../brain/sendPlace'
 import type { AssistantPort } from '../brain/handoff'
 import { configuredGeocoders } from '../brain/addresses'
 import { useDesktopWindow } from './desktop'
@@ -310,6 +310,7 @@ export default function Widget (props: Props): any {
   const popupRef = React.useRef<(title: string) => void>(null)
   const onActiveViewChange = React.useCallback((jmv: JimuMapView) => {
     live.bind(jmv)
+    try { void live.setParcelSource(String((cfg as any).parcelLayer || ''), parcelLayerIds(extracted.model?.cfg, props.id)) } catch (e) { }
     live.onLayersChanged = () => setLiveVersion(v => v + 1)
     live.onBusy = () => nudgeRef.current?.()
     live.onPopup = (title) => popupRef.current?.(title)

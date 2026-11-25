@@ -137,7 +137,7 @@ export default function McpSection (props: Props): any {
             onAcceptValue={(v: string) => save({ headerName: v.trim() })} />
         </SettingRow>
         <SettingRow label='Header value' flow='wrap'>
-          <TextInput size='sm' type='password' style={full} key={'hv' + (cfg.headerValue ? 'set' : '')} defaultValue={cfg.headerValue || ''} placeholder='Bearer YOUR_API_KEY' aria-label='Header value'
+          <TextInput size='sm' type='password' autoComplete='new-password' data-lpignore='true' data-1p-ignore='true' data-bwignore='true' data-form-type='other' style={full} key={'hv' + (cfg.headerValue ? 'set' : '')} defaultValue={cfg.headerValue || ''} placeholder='Bearer YOUR_API_KEY' aria-label='Header value'
             onAcceptValue={(v: string) => save({ headerValue: v.trim() })} />
         </SettingRow>
         <Note tone='warn'>Saved in the app and visible to anyone who opens it. Use only a key restricted to this app's address and the services it needs.</Note>

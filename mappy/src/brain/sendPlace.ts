@@ -84,3 +84,22 @@ export function readSend (text: string, targets: PlaceTarget[]): { target: Place
 export function sendChip (t: PlaceTarget, lat: number, lon: number): { label: string, q: string } {
   return { label: t.label, q: `${t.label} for ${lat.toFixed(6)}, ${lon.toFixed(6)}` }
 }
+
+/**
+ * Layer ids other widgets in the app chose for parcels or owners (a labels tool, a report tool):
+ * any setting whose name says parcel, owner, property or tax lot and ends in "layer id".
+ * Lets Mappy use the same layer without the builder choosing it twice.
+ */
+export function parcelLayerIds (appConfig: any, widgetId: string): string[] {
+  const out: string[] = []
+  const walk = (o: any, depth: number): void => {
+    if (!o || typeof o !== 'object' || depth > 3) return
+    for (const k of Object.keys(o)) {
+      let v: any
+      try { v = o[k] } catch (e) { continue }
+      if (typeof v === 'string') { if (v && v.length < 200 && /(?:parcel|owner|property|tax ?lot)/i.test(k) && /layer_?ids?$/i.test(k) && !out.includes(v)) out.push(v) } else if (v && typeof v === 'object') walk(v, depth + 1)
+    }
+  }
+  try { for (const id of Object.keys(appConfig?.widgets || {})) { if (id !== widgetId) walk(appConfig.widgets[id]?.config, 0) } } catch (e) { }
+  return out.slice(0, 12)
+}

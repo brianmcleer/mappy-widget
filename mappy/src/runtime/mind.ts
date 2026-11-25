@@ -623,10 +623,12 @@ export class Mind {
     if (this.ctx.serverAssistant && usageQuestion(input, this.ctx.serverAssistant.label)) { this.keepsakeTurn = true; const mine = await this.claudeUsage(); this.lastReply = mine; return mine }
     const cared = this.care(input)
     if (cared) { this.lastReply = cared; return cared }
+    // A widget the builder wired, asked for by name with a place, comes before his own readings of the same words.
+    const handed = await this.sendPlaceQuestion(input)
+    if (handed) { this.lastReply = handed; return handed }
     const followed = await this.followAsk(input)
     if (followed) { this.lastReply = followed; return followed }
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text) || await this.portalCommand(text)
-    if (!reply) reply = await this.sendPlaceQuestion(input)
     if (!reply) reply = await this.spatialQuestion(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply

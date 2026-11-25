@@ -76,6 +76,8 @@ export default {
   tipInterval: 'Seconds between tips',
   featureSearch: 'Search map features ("find 123 Main St")',
   notifyLists: 'Owner lists near a place',
+  parcelLayer: 'Parcel layer (optional)',
+  parcelLayerHint: 'Leave empty when the map has a layer named for parcels: he finds it, and he also uses the parcel or owner layer another widget in this app is set to (a labels or report tool). Fill it in when he says the map has no parcel layer: type the layer\'s name as the layer list shows it, or paste a service address ending in /MapServer/0 or /FeatureServer/0. A service that is not in the map is asked but never drawn.',
   notifyListsHint: '"Owners within 300 ft of 250 Main St" answers with the owners and mailing addresses from the parcel layer, and a spreadsheet to save. Turn it on for staff apps where that list is the job; leave it off for public apps. With it off he still answers which parcels are near a place.',
   maxResults: 'Most results per search',
   chips: 'Suggestion chips',

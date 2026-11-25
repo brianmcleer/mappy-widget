@@ -23,6 +23,9 @@ import type { FieldInfo, LayerInfo } from '../brain/layers'
 import { layerKey, flat, tokenize } from '../brain/text'
 import { findBridge, onBridgeChange } from './layerList'
 import type { LayerListBridge } from './layerList'
+
+/** The same service layer, whatever the letter case or a trailing slash. */
+function sameUrl (a: string, b: string): boolean { const n = (u: string) => String(u || '').trim().replace(/\/+$/, '').replace(/^http:/i, 'https:').toLowerCase(); return !!a && !!b && n(a) === n(b) }
 import { fieldLabel } from '../brain/fields'
 
 export interface LayerEntry {
@@ -261,14 +264,69 @@ export class LiveMap {
 
   private entriesNow (): LayerEntry[] {
     const b = this.bridge
+    let list: LayerEntry[] | null = null
     if (b) {
       try {
         const entries = this.fromBridge(b)
         const targets = new Set(entries.map(e => this.target(e)))
-        return [...entries, ...this.fromMap().filter(e => e.isTable && !targets.has(this.target(e)))]
-      } catch (e) { }
+        // Tables, and a parcel layer the builder (or another widget) named that the layer list leaves out.
+        list = [...entries, ...this.fromMap().filter(e => !targets.has(this.target(e)) && (e.isTable || (!e.isGroup && this.parcelRank(e) < 9)))]
+      } catch (e) { list = null }
     }
-    return this.fromMap()
+    if (!list) list = this.fromMap()
+    const x = this.parcelExtra
+    if (x && !list.some(e => e.key === x.key || sameUrl(this.urlOfEntry(e), this.parcelPick))) list = [...list, x]
+    return list
+  }
+
+  // ------------------------------------------------------------------ which layer holds the parcels
+
+  /** The builder's choice: a layer's name as the map shows it, or a service address. */
+  private parcelPick = ''
+  /** Layer ids other widgets in the app use for parcels or owners. */
+  private parcelIds: string[] = []
+  /** A parcel layer that is not in the map, loaded from the address the builder gave. */
+  private parcelExtra: LayerEntry | null = null
+
+  private urlOfEntry (e: LayerEntry): string { try { return String(this.target(e)?.url && e.sublayer ? this.target(e).url : (this.urlOf(e.layer) || '')) } catch (err) { return '' } }
+
+  /** 0: the builder's choice. 1: a layer another widget uses for parcels. 9: neither. */
+  private parcelRank (e: LayerEntry): number {
+    const pick = this.parcelPick
+    if (pick) {
+      if (/^https?:\/\//i.test(pick)) { if (sameUrl(this.urlOfEntry(e), pick)) return 0 } else if (flat(e.title) === flat(pick) || flat(e.path) === flat(pick)) return 0
+    }
+    if (this.parcelIds.length) {
+      const own = String(e.layer?.id ?? '')
+      const sub = e.sublayer ? String(e.sublayer.id ?? '') : ''
+      const hit = (id: string): boolean => sub !== '' ? (id === `${own}-${sub}` || id.endsWith(`-${own}-${sub}`) || id === `${own}_${sub}`) : (own !== '' && (id === own || id.endsWith('-' + own)))
+      if (this.parcelIds.some(hit)) return 1
+    }
+    return 9
+  }
+
+  /**
+   * Says which layer holds the parcels when its name does not: the builder's choice (a layer name
+   * or a service address) and the layer ids other widgets in the app use. An address that is not
+   * in the map is loaded as a layer he can ask but that is never drawn.
+   */
+  async setParcelSource (pick: string, ids: string[] = [], load = loadArcGISJSAPIModules): Promise<void> {
+    const p = String(pick || '').trim().replace(/\/+$/, '')
+    const same = p === this.parcelPick && ids.join('|') === this.parcelIds.join('|')
+    this.parcelPick = p; this.parcelIds = ids.slice()
+    if (same) return
+    this.parcelExtra = null; this.entriesCache = null
+    if (!/^https:\/\/[^\s]+\/(?:MapServer|FeatureServer)\/\d+$/i.test(p)) return
+    if (this.fromMap().some(e => sameUrl(this.urlOfEntry(e), p))) return
+    try {
+      const [FeatureLayer] = await load(['esri/layers/FeatureLayer'])
+      const layer = new FeatureLayer({ url: p })
+      await layer.load()
+      if (this.parcelPick !== p) return
+      const title = String(layer.title || 'Parcels')
+      this.parcelExtra = { key: layerKey(p, title), title, layer, ancestors: [], path: title, depth: 0 }
+      this.entriesCache = null
+    } catch (e) { this.parcelExtra = null }
   }
 
   private fromBridge (b: LayerListBridge): LayerEntry[] {
@@ -836,8 +894,10 @@ export class LiveMap {
       const t = this.target(e)
       return (/^(tax )?parcels?$/i.test(e.title.trim()) ? 0 : 4) + (/polygon/i.test(String(t?.geometryType || 'polygon')) ? 0 : 2) + (this.isVisible(e) ? 0 : 1)
     }
-    return this.entries().filter(e => !e.isGroup && !e.isTable && /parcel|tax lots?|property/i.test(e.title) && !/annotation|label|line|dimension|point/i.test(e.title))
-      .sort((a, b) => rank(a) - rank(b))
+    // The builder's choice first, then layers named for parcels, then a layer another widget uses for them.
+    const order = (e: LayerEntry) => { const r = this.parcelRank(e); return r === 0 ? -100 : r === 1 ? 100 : 0 }
+    return this.entries().filter(e => !e.isGroup && !e.isTable && (this.parcelRank(e) < 9 || (/parcel|tax lots?|property/i.test(e.title) && !/annotation|label|line|dimension|point/i.test(e.title))))
+      .sort((a, b) => (order(a) + rank(a)) - (order(b) + rank(b)))
   }
 
   /** A pin at an address, kept with other highlights (not clearing them). */

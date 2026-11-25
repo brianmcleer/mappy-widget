@@ -75,7 +75,7 @@ export default function PlaceSection (props: Props): any {
       </SettingRow>
       <Hint>Together these find the right page for the facts below: "Springfield" + "Illinois", "Lyon" + "France", "Calgary" + "Alberta". The place name alone is what he says in his lines.</Hint>
       <SettingRow flow='wrap' label='Website'>
-        <TextInput size='sm' style={full} value={props.website || ''} placeholder='https://' aria-label='Website' onChange={(e: any) => props.set('website', e.target.value)} />
+        <TextInput size='sm' style={full} autoComplete='off' data-lpignore='true' data-1p-ignore='true' data-bwignore='true' data-form-type='other' value={props.website || ''} placeholder='https://' aria-label='Website' onChange={(e: any) => props.set('website', e.target.value)} />
       </SettingRow>
       <Hint>Offered as a link when he points people off the map (office hours, bills, meetings, the zoning code).</Hint>
       <SettingRow flow='wrap' label={`Local fun facts (${count})`}>
@@ -92,7 +92,7 @@ export default function PlaceSection (props: Props): any {
         </div>
       </SettingRow>
       {chosen.includes('census') && <SettingRow flow='wrap' label='US Census API key'>
-        <TextInput size='sm' type='password' style={full} defaultValue={props.censusKey || ''} placeholder='Free from api.census.gov/data/key_signup.html' aria-label='US Census API key' onAcceptValue={(v: string) => props.set('censusKey', String(v || '').trim())} />
+        <TextInput size='sm' type='password' autoComplete='new-password' data-lpignore='true' data-1p-ignore='true' data-bwignore='true' data-form-type='other' style={full} defaultValue={props.censusKey || ''} placeholder='Free from api.census.gov/data/key_signup.html' aria-label='US Census API key' onAcceptValue={(v: string) => props.set('censusKey', String(v || '').trim())} />
       </SettingRow>}
       <ButtonPair>
         <FullButton type='primary' onClick={build} disabled={busy}>{busy ? 'Building...' : 'Build facts from open sources'}</FullButton>

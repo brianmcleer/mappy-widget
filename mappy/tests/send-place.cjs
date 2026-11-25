@@ -128,6 +128,35 @@ test('finding a place offers the widget, and the chip sends that place', async (
   assert.match(r2.text, /250 Oak St/i)
 })
 
+test('a widget named like his own owner list wins when it is wired', async () => {
+  const labels = [{ ids: ['w9'], label: 'Mailing Labels' }]
+  const { mind, sent } = town({ placeTargets: labels, notifyLists: true })
+  let r = await mind.respond('mailing labels within 300 ft of 250 Oak St')
+  assert.equal(sent.length, 1, r.text); assert.equal(sent[0].at.feet, 300)
+  r = await mind.respond('mailing labels for 250 Oak St')
+  assert.equal(sent.length, 2, r.text)
+})
+
+test('the parcel layer can be named by the builder, or taken from another widget', async () => {
+  assert.deepEqual(S.parcelLayerIds({ widgets: { w1: { config: { ownerLayerId: 'skip-me' } }, w2: { config: { selectedLayerId: 'pts', ownerLayerId: 'lyr-7', deep: { parcelLayerId: 'lyr-9' } } }, w3: { config: { title: 'x' } } } }, 'w1'), ['lyr-7', 'lyr-9'])
+  const { live } = town()
+  const first = () => (live.parcelLayers()[0] || {}).title
+  const was = first()
+  const other = live.entries().find(e => !e.isGroup && !e.isTable && e.title !== was)
+  await live.setParcelSource(other.title, [])
+  assert.equal(first(), other.title, 'the builder\'s choice comes first')
+  await live.setParcelSource('', [String(other.layer.id)])
+  assert.equal(first(), was, 'a layer named for parcels still leads')
+  assert.ok(live.parcelLayers().some(e => e.title === other.title), 'and the other widget\'s layer is known as one too')
+  let asked = ''
+  class FL { constructor (o) { this.url = o.url; this.title = 'County Parcels'; this.id = 'x1' } async load () { asked = this.url } }
+  await live.setParcelSource('https://gis.example.org/arcgis/rest/services/Land/MapServer/3', [], async () => [FL])
+  assert.equal(asked, 'https://gis.example.org/arcgis/rest/services/Land/MapServer/3')
+  assert.equal(first(), 'County Parcels', 'a service that is not in the map is asked too')
+  await live.setParcelSource('', [])
+  assert.equal(first(), was)
+})
+
 test('nothing wired, nothing changes; a place he cannot find is said plainly', async () => {
   const a = town({ placeTargets: [] })
   const r = await a.mind.respond('where is 250 Oak St')

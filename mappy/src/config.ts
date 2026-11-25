@@ -110,6 +110,8 @@ export interface Config {
   telemetryMisses?: boolean
   /** "Owners within 300 ft of ..." answers with the owners' names and mailing addresses and a spreadsheet to save. Off by default. */
   notifyLists?: boolean
+  /** Which layer holds the parcels, when its name does not say so: a layer name from the map, or a service address (.../MapServer/0). */
+  parcelLayer?: string
 }
 
 export type IMConfig = ImmutableObject<Config>

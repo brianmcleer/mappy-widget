@@ -405,6 +405,10 @@ export default function Setting (props: SettingProps): any {
             <Switch checked={(config as any).notifyLists === true} onChange={(e: any) => set('notifyLists', e.target.checked)} />
           </SettingRow>
           <Hint>{__t('notifyListsHint')}</Hint>
+          <SettingRow flow='wrap' label={__t('parcelLayer')}>
+            <TextInput size='sm' className='w-100' autoComplete='off' data-lpignore='true' data-1p-ignore='true' data-form-type='other' placeholder='Parcels, or https://.../MapServer/0' defaultValue={(config as any).parcelLayer || ''} onAcceptValue={(v: string) => set('parcelLayer', String(v || '').trim())} />
+          </SettingRow>
+          <Hint>{__t('parcelLayerHint')}</Hint>
         </>}
         <SettingRow label={__t('maxResults')}>
           <NumericInput size='sm' style={{ width: 90 }} aria-label={__t('maxResults')} min={1} max={25} value={config.maxResults || 8} onChange={(v: number) => set('maxResults', Number(v) || 8)} />

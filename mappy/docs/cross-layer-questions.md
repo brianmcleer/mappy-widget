@@ -77,3 +77,11 @@ node tools/ask-rest.cjs --layer "Parcels=https://host/arcgis/rest/services/X/Map
 ## Tests
 
 `tests/spatial.cjs` covers how sentences are split and runs the questions above on the playground's made-up town, whose layers answer real spatial queries. Try them in the playground under **Across layers**.
+
+## Which layer holds the parcels
+
+Owner lists and "who owns" need the parcel layer. He finds it in this order:
+
+1. The builder's choice: Settings, Owner lists near a place, **Parcel layer**. A layer's name as the layer list shows it, or a service address ending in `/MapServer/0` or `/FeatureServer/0`. A service that is not in the map is asked but never drawn.
+2. A map layer named for parcels (parcel, tax lot, property).
+3. The parcel or owner layer another widget in the app is set to (a setting whose name says parcel, owner, property or tax lot and ends in "layer id"), even when the layer list hides that layer.
