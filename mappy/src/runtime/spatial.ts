@@ -164,6 +164,25 @@ function scopedLive (live: LiveMap, key: string, layer: any): LiveMap {
 }
 
 /**
+ * An earlier scope as a plain list of ids, so another place can be laid on top of it: a shape
+ * filter and a list of ids can sit in one query, two shape filters cannot.
+ */
+export async function scopeAsIds (scope: Scope, entry: LayerEntry): Promise<Scope> {
+  const real = scope.live.target(entry)
+  const ids = scope.ids || await idsOf(real, real.createQuery())
+  if (ids.length > MAX_IDS) throw new Error(`The earlier answer covers ${ids.length.toLocaleString()} features, too many to narrow again by place. Ask it in one sentence instead.`)
+  const base: any = Object.getPrototypeOf(scope.live)
+  const plain = base.target(entry)
+  return { ...scope, ids, live: scopedLive(base, entry.key, limited(plain, q => { q.objectIds = ids.length ? ids : [-1] })) }
+}
+
+/** The same limited layer, seen from the real map (so nothing else about the map is stale). */
+export function rebase (live: LiveMap, scoped: LiveMap, key: string): LiveMap {
+  const layer = scoped.target({ key } as any)
+  return scopedLive(live, key, layer)
+}
+
+/**
  * Limits a layer to what lies in the given relation to the anchor. One shape and a simple
  * relation is a single filter on every query; anything else (several shapes, areas inside
  * areas, "outside", "next to" in the same layer) is worked out as a list of object ids.
@@ -266,7 +285,13 @@ export async function noticeList (scope: Scope, entry: LayerEntry, subjectIds: n
   const named = (re: RegExp, not?: RegExp): QueryField | undefined => fields.find(f => re.test(`${f.name} ${f.alias || ''}`) && !(not && not.test(`${f.name} ${f.alias || ''}`)))
   const mail = /mail|owner.?add|own.?add|taxpayer.?add|\bm_?addr/i
   const mailLines = fields.filter(f => mail.test(`${f.name} ${f.alias || ''}`) && !/city|state|zip|postal|country/i.test(`${f.name} ${f.alias || ''}`)).slice(0, 2)
-  const mailCity = named(/(?:mail|own).*city|city.*(?:mail|own)/i); const mailState = named(/(?:mail|own).*state|state.*(?:mail|own)/i); const mailZip = named(/(?:mail|own).*(?:zip|postal)|(?:zip|postal).*(?:mail|own)/i)
+  // City, state and ZIP named for the mailing address; or, as assessor tables often have them, plain
+  // CITY / ST / ZIP columns sitting right after the mailing line (the property's own are marked situs or site).
+  const after = mailLines.length ? fields.slice(fields.indexOf(mailLines[mailLines.length - 1]) + 1, fields.indexOf(mailLines[mailLines.length - 1]) + 6).filter(f => !/situs|site|prop|phys|loc/i.test(`${f.name} ${f.alias || ''}`)) : []
+  const next = (re: RegExp): QueryField | undefined => after.find(f => re.test(f.name) || re.test(String(f.alias || '')))
+  const mailCity = named(/(?:mail|own).*city|city.*(?:mail|own)/i) || next(/^city$/i)
+  const mailState = named(/(?:mail|own).*state|state.*(?:mail|own)/i) || next(/^(?:st|state)$/i)
+  const mailZip = named(/(?:mail|own).*(?:zip|postal)|(?:zip|postal).*(?:mail|own)/i) || next(/^zip(?:code|5)?$/i)
   const site = fieldFor('site address', fields, 'text') || fieldFor('address', fields, 'text') || named(/situs|site.?add|prop.*add|location/i, mail) || null
   const number = fieldFor('parcel number', fields) || named(/parcel.?(?:num|no|id)|\bpin\b|\bapn\b|account/i) || null
   const q: any = t.createQuery()
@@ -275,6 +300,8 @@ export async function noticeList (scope: Scope, entry: LayerEntry, subjectIds: n
   if (owner) q.orderByFields = [`${owner.name} ASC`]
   const res: any = await withTimeout(t.queryFeatures(q), 20000)
   const features = (Array.from(res?.features || []) as any[]).slice(0, 2000)
+  // Parcels with no owner on record (streets, common areas) go last, not first.
+  if (owner) { const blank = (g: any): number => String(g.attributes?.[owner.name] ?? '').trim() ? 0 : 1; features.sort((x, y) => blank(x) - blank(y)) }
   const val = (f: QueryField | null | undefined, a: any): string => { const v = f ? a?.[f.name] : null; return v === null || v === undefined ? '' : String(sayValue(f as QueryField, v)).trim() }
   const mailing = (a: any): string => {
     const street = mailLines.map(f => val(f, a)).filter(Boolean).join(', ')

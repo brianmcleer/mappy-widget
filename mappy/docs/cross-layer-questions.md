@@ -23,6 +23,7 @@ Every kind of answer works across layers: counts with a share, lists, rankings (
 The place stays with the conversation:
 
 - "how many of those are zoned R-4", "which of those is the biggest", "what about R-8"
+- "which of those are in Lincoln Park", "how many of them are within 300 ft of the library" narrows the answer by another place, and both places hold
 - "what about 500 ft", "make it a quarter mile" asks the same question at another distance
 - "Only show them on the map" filters the layer to exactly those features
 - A notice list with no distance ("notification list for 250 Oak St") makes him ask how far, and the next "300 ft" is the answer
@@ -64,6 +65,14 @@ Each side of the question is read against the layers' real fields and values, th
 Distances, "next to", "per", "cross", "intersect" and "inside" can only be about place, so those are read this way first. "In", "on" and "outside" are everyday words ("parcels in R-4", "hydrants not in service"), so those go to the ordinary reader first and are only read as place when it comes up empty and the other side really is an area on the map.
 
 A plain list near an address with no filter ("hydrants within 500 ft of 250 Oak St") still gets the earlier answer, nearest first with the distance to each.
+
+## Trying it on your own layers
+
+`tools/ask-rest.cjs` runs Mappy's reader against public ArcGIS REST layers with no map and no browser. It only sends query requests. Use it to see how he reads your field names and what your services answer before putting him in an app:
+
+```
+node tools/ask-rest.cjs --layer "Parcels=https://host/arcgis/rest/services/X/MapServer/18" --layer "Parks=https://host/.../MapServer/0" --locator https://host/.../GeocodeServer --log "how many parcels are within 300 ft of Lincoln Park" "which of those are over 1 acre"
+```
 
 ## Tests
 

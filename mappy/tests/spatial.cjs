@@ -162,6 +162,30 @@ T('the other side can be a whole layer, a filtered layer, a place, "it" or "here
   assert.match(r.text, /^\*\*6\*\* parcels are within 500 ft of City Hall/); assert.match(r.note, /“Near” taken as 500 ft/)
 })
 
+T('an earlier answer can be narrowed by another place, and both places hold', async () => {
+  const { say, sent } = town()
+  let r = await say('hydrants within 1500 ft of Compass Park')
+  const first = Number(r.text.match(/\*\*(\d+)\*\* fire hydrants? (?:is|are) within 1,500 ft of Compass Park/)[1])
+  assert.ok(first >= 4, r.text)
+  r = await say('how many of those are in the R-4 zone')
+  const inR4 = Number(r.text.match(/^There (?:is|are) \*\*(\d+)\*\* fire hydrants? within 1,500 ft of Compass Park, in R-4\.$/)[1])
+  assert.ok(inR4 > 0 && inR4 < first, r.text)
+  r = await say('which of those are within 900 ft of City Hall')
+  assert.match(r.text, /fire hydrants? (?:is|are) within 1,500 ft of Compass Park, in R-4, within 900 ft of City Hall|No fire hydrants are within 1,500 ft of Compass Park, in R-4, within 900 ft of City Hall/)
+  // The earlier answer travels as a list of ids, so the layer service applies both at once.
+  const last = sent.filter(s => s.layer === 'hydrants' && s.q.geometry).pop()
+  assert.ok(Array.isArray(last.q.objectIds) && last.q.objectIds.length === inR4, 'ids from the earlier answer, with the new place on top')
+})
+
+T('for parcels the distance runs from the lot line, on the first question too', async () => {
+  const { say, sent } = town()
+  const r = await say('how many parcels are within 200 ft of 250 Oak St')
+  assert.equal(r.text, 'There are **5** parcels within 200 ft of 250 Oak St.')
+  assert.match(r.note, /Measured from its edge/)
+  assert.ok(sent.some(s => s.layer === 'parcels' && s.q.geometry && s.q.geometry.type === 'polygon' && s.q.distance === 200), 'the lot, not the address point, is what is measured from')
+  assert.ok(!sent.some(s => s.layer === 'parcels' && s.q.outStatistics), 'the layer\'s values are not read when the words do not need them')
+})
+
 T('inside, crossing and outside an area; sharing only an edge is not "in"', async () => {
   const { say } = town()
   let r = await say('hydrants in the R-8 zone')

@@ -24,7 +24,7 @@ import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTo
 import { parseRoute, esriHelperTool, esriCatalog, toolData, toolError, readCandidates, geocodeArgs, readReverse, routeArgs, readRoute, parseContentSearch, searchArgs, readItems, queryable, describeLayerArgs, describeItemArgs, pickLayer, readLayerSchema, readMapImage, readJob, askedThing, layerRef, type EsriCatalog, type PortalItem } from '../brain/esriMcp'
 import { RemoteLayer, type RemoteSchema } from './esriMcp'
 import { splitSpatial, distanceSwap, relationSaid, NEAR_FEET, type SpatialRead } from '../brain/spatial'
-import { anchorFromLayer, areaAt, pointAnchor, buildScope, countPerArea, anchorRings, anchorPoint, noticeList, MAX_ANCHORS, MAX_IDS, type Anchor, type Scope } from './spatial'
+import { scopeAsIds, rebase, anchorFromLayer, areaAt, pointAnchor, buildScope, countPerArea, anchorRings, anchorPoint, noticeList, MAX_ANCHORS, MAX_IDS, type Anchor, type Scope } from './spatial'
 import { handoffUrl, parseHandoff, assistantJob, contextLine, usageQuestion, usageNote } from '../brain/handoff'
 
 /** A card number or a US Social Security number typed into a question. */
@@ -77,6 +77,8 @@ import { toLatLon as projectToLatLon, warmProjection, needsProjection } from './
 import { readKeepsakes, emptyKeepsakes, remember, stampLine, keepsake, keepsakeHello, keepsakeSummary, usual } from '../brain/keepsakes'
 import type { Keepsakes, Moment } from '../brain/keepsakes'
 import { readAsk, mentionedLayer, askWhere, askSaid, namedFeature, fieldFor } from '../brain/ask'
+import type { AskLayer } from '../brain/ask'
+import type { QueryField } from '../brain/analysis'
 import type { Ask } from '../brain/ask'
 import { numericField } from '../brain/analysis'
 import { lineLength, rankLines, schemaOf, loadValues, runAsk, probeText } from './ask'
@@ -2465,6 +2467,8 @@ export class Mind {
     return reply
   }
 
+  // (namedValue is below the class.)
+
   /**
    * "Is 250 Oak St in the MU zone": yes only when the area found there is the one that was named.
    * A question that names no particular area ("in city limits", "in a flood zone") is yes for any.
@@ -2498,7 +2502,9 @@ export class Mind {
     // "In" and "outside" with no distance are ordinary words far more often than they are about
     // place ("parcels in R-4", "hydrants not in service"). Those are only read this way after
     // the ordinary readers had their turn and came up empty (late).
-    const explicit = read.relation === 'within' || read.relation === 'touch' || (read.relation === 'outside' && !!read.feet) || !!read.per || !!read.notify || !!read.strong
+    // "Which of those are in Lincoln Park": the things just answered about, narrowed by place.
+    const prior = this.lastAsk && Date.now() - this.lastAskAt < 10 * 60000 && !read.notify && !read.per && /\b(?:those|them|these|they)\b|^(?:which|how many) ones\b/i.test(read.target) ? this.lastAsk : null
+    const explicit = read.relation === 'within' || read.relation === 'touch' || (read.relation === 'outside' && !!read.feet) || !!read.per || !!read.notify || !!read.strong || !!prior
     if (explicit === late && !again) return null
     const entries = live.entries().filter(e => !e.isGroup && live.canAsk(e) && typeof live.target(e)?.queryFeatures === 'function')
     if (!entries.length) return null
@@ -2522,18 +2528,27 @@ export class Mind {
       let ask: Ask | null = null
       const notify = !!read.notify && this.ctx.notifyLists === true
       if (read.notify) {
-        entry = live.parcelLayers().find(e => entries.includes(e))
+        // By key, not by object: the list of layers is rebuilt as the map changes.
+        const lots = live.parcelLayers().map(e => e.key)
+        entry = entries.filter(e => lots.includes(e.key)).sort((a, b) => lots.indexOf(a.key) - lots.indexOf(b.key))[0]
         if (!entry) return explicit ? { text: 'A list of owners near a place needs a parcel layer, and this map does not have one I can ask.', mood: 'confused' } : null
         ask = { layer: entry.key, kind: 'list', clauses: [], unknown: [] }
+      } else if (prior) {
+        entry = entryOf(prior.key)
+        if (!entry) return null
+        const want = /^(?:how many|count|number of)\b/i.test(read.target) ? 'count' : 'list'
+        ask = { ...prior.ask, kind: want, field: undefined, stat: undefined, group: undefined, limit: undefined, superlative: undefined, order: undefined, clauses: prior.ask.clauses.filter(c => (c.field as any).type !== 'oid'), unknown: [] }
       } else {
         const named = mentionedLayer(read.target, schemas)
         if (!named) return null
         entry = entryOf(named.layer.key)
         if (!entry) return null
-        try { await loadValues(live, entry) } catch (err) { }
-        const mine = [schemaOf(live, entry)]
         const bare = !/^(?:how many|count|number of|list|show|which|what|find|total|sum|average|avg|mean|biggest|largest|smallest|oldest|newest|most|least|top)\b/i.test(read.target)
-        try { ask = readAsk(bare ? `list ${read.target}` : read.target, mine, { fallback: entry.key }) || readAsk(`list ${read.target}`, mine, { fallback: entry.key }) } catch (err) { ask = null }
+        const readTarget = (): Ask | null => { const mine = [schemaOf(live, entry!)]; try { return readAsk(bare ? `list ${read!.target}` : read!.target, mine, { fallback: entry!.key }) || readAsk(`list ${read!.target}`, mine, { fallback: entry!.key }) } catch (err) { return null } }
+        ask = readTarget()
+        // The layer's values are only read when the words need them ("R-4 parcels"); "parcels" alone does not, and on a big layer that reading is a dozen queries.
+        if (!ask || ask.unknown.length || ask.loose) { try { await loadValues(live, entry) } catch (err) { } ; ask = readTarget() }
+        const mine = [schemaOf(live, entry)]
         if (!ask) ask = flat(read.target.replace(/^(?:the|all|any) /i, '')) === flat(entry.title) || mentionedLayer(read.target, mine) ? { layer: entry.key, kind: /^(?:how many|count|number of)\b/i.test(read.target) ? 'count' : 'list', clauses: [], unknown: [] } : null
         if (!ask) return null
         if (ask.unknown.length) {
@@ -2556,7 +2571,7 @@ export class Mind {
       if (anchor === null) return null
       if ('text' in anchor) return anchor
       // A plain list near a place ("hydrants within 500 ft of 250 Oak St") is the place reader's: it gives the distance to each one.
-      if (!anchor.key && !read.notify && ask.kind === 'list' && !ask.clauses.length && read.relation === 'within' && !again && !/polygon/i.test(String(live.target(entry)?.geometryType || ''))) return null
+      if (!anchor.key && !read.notify && !prior && ask.kind === 'list' && !ask.clauses.length && read.relation === 'within' && !again && !/polygon/i.test(String(live.target(entry)?.geometryType || ''))) return null
       if (read.per && !anchor.area) return { text: `Counting per ${clip(read.anchor, 40)} needs a layer of areas (districts, zones, wards), and that is not one.`, mood: 'confused' }
       if (read.relation === 'in' && !anchor.area) return explicit ? { text: `“${clip(read.anchor, 50)}” is not an area on this map, so nothing can be in it. Try “within 500 ft of ${clip(read.anchor, 40)}”.`, mood: 'confused' } : null
       if (anchor.capped) {
@@ -2593,7 +2608,10 @@ export class Mind {
         }
       }
 
-      const built = await buildScope(live, entry, read, anchor, said, where, notify)
+      // On top of an earlier place ("hydrants within 500 ft of the park" then "which of those are in the park"), both must hold.
+      const under = prior?.scope ? await scopeAsIds(prior.scope, entry) : null
+      const built = await buildScope(under ? under.live : live, entry, read, anchor, under ? `${prior!.scope!.said}, ${said}` : said, where, notify)
+      if (built.scope && under) built.scope.live = rebase(live, built.scope.live, entry.key)
       if (!built.scope) {
         // Too many to carry as a list: the count is still exact.
         return { text: `**${(built.count || 0).toLocaleString()}** ${entry.title.toLowerCase()} are ${said}. That is more than I can list or filter at once (${MAX_IDS.toLocaleString()}); narrow it and I can show them.`, mood: 'acknowledge', sources: [{ title: entry.title, detail: `Live layer query · ${said}` }] }
@@ -2654,7 +2672,8 @@ export class Mind {
     const live = this.ctx.live
     const words = read.anchor
     const w = words.toLowerCase()
-    const parcels = live.parcelLayers().find(e => entries.includes(e))
+    const lots = live.parcelLayers().map(e => e.key)
+    const parcels = entries.filter(e => lots.includes(e.key)).sort((a, b) => lots.indexOf(a.key) - lots.indexOf(b.key))[0]
     const lotLine = read.notify || read.relation === 'touch' || (parcels && target.key === parcels.key)
     const fromPlace = async (at: [number, number], label: string): Promise<Anchor> => {
       // For parcels and notices, the place is its lot: the distance runs from the lot line.
@@ -2716,7 +2735,7 @@ export class Mind {
       const short = words.replace(/\s+(?:zoning district|zone|district|area|boundary|limits|neighbou?rhood|subdivision|precinct)s?$/i, '').trim()
       const everything = entries.map(e => schemaOf(live, e))
       const areas = entries.filter(e => /polygon/i.test(String(live.target(e)?.geometryType || ''))).map(e => schemaOf(live, e))
-      const named = namedFeature(words, everything) || namedFeature(short || words, areas, 2)
+      const named = namedFeature(words, everything) || namedFeature(short || words, areas, 2) || namedValue(short || words, areas)
       if (named) {
         const e = entries.find(x => x.key === named.layer.key)!
         if (/^[a-z_][a-z0-9_.]*$/i.test(named.field.name)) return anchorFromLayer(live, e, `${named.field.name} = '${named.value.replace(/'/g, "''")}'`, named.value)
@@ -4931,4 +4950,22 @@ function floodVerdict (pairs: Array<{ label: string, value: string }>, where: st
   if (inside) return `**Yes.** ${where} is in FEMA flood ${z}${floodway ? ' (regulatory floodway)' : ''}, the Special Flood Hazard Area (1% annual chance, "100-year" floodplain). Flood insurance is usually required for federally backed mortgages.`
   if (/0\.2|500|shaded|b\b/i.test(`${zone} ${sub}`)) return `**No, but close.** ${where} is in ${z} (0.2% annual chance, "500-year" floodplain), outside the Special Flood Hazard Area.`
   return `**No.** ${where} is in ${z}, outside the FEMA Special Flood Hazard Area (minimal flood risk).`
+}
+
+/**
+ * An area called by a value in any of its layer's short-list fields, not only its name field:
+ * "R-8" in a zoning layer whose title field is something else. Only when one layer has it.
+ */
+function namedValue (phrase: string, layers: AskLayer[]): { layer: AskLayer, field: QueryField, value: string } | null {
+  const key = phrase.toLowerCase().replace(/^(?:the|a|an)\s+/, '').replace(/[^a-z0-9]+/g, '')
+  if (key.length < 2) return null
+  const hits: Array<{ layer: AskLayer, field: QueryField, value: string }> = []
+  for (const l of layers) {
+    for (const name of Object.keys(l.values || {})) {
+      const f = l.fields.find(x => x.name === name)
+      const v = f ? (l.values![name] || []).find(x => String(x).toLowerCase().replace(/[^a-z0-9]+/g, '') === key) : undefined
+      if (f && v !== undefined) { hits.push({ layer: l, field: f, value: v }); break }
+    }
+  }
+  return hits.length === 1 ? hits[0] : null
 }
