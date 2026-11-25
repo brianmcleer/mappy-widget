@@ -22,6 +22,12 @@ export interface McpSettings {
   headerValue?: string
   /** Offer the server when Mappy cannot answer from the app himself. Undefined means on. */
   fallback?: boolean
+  /**
+   * For 'arcgis': when the server refuses the sign-in in a header, send it as ?token= in the
+   * address, the way ArcGIS web addresses carry it. Off unless the builder turns it on: an
+   * address can end up in server and proxy logs.
+   */
+  tokenInAddress?: boolean
   tools?: Array<{ name: string, enabled: boolean, confirm?: boolean }>
 }
 
@@ -61,6 +67,9 @@ export class McpClient {
   /** The protocol version the server chose (sent on every request after initialize). */
   private version = PROTOCOL
   serverName = ''
+  /** How the ArcGIS sign-in is sent: a Bearer header, ArcGIS's own header, or (only if allowed) in the address. The first one the server accepts is kept. */
+  private tokenStyle: 'bearer' | 'esri' | 'query' = 'bearer'
+  private token = ''
 
   constructor (private cfg: McpSettings, private getToken?: () => Promise<string | null> | string | null, private fetcher: typeof fetch = (...a) => fetch(...a)) {
     if (!safeServerUrl(cfg.url)) throw new Error('The MCP server address must start with https:// (http:// only for localhost).')
@@ -74,7 +83,9 @@ export class McpClient {
     if (this.ready) h['mcp-protocol-version'] = this.version
     if (this.cfg.auth === 'arcgis' && this.getToken) {
       const token = await this.getToken()
-      if (token) h.authorization = 'Bearer ' + token
+      this.token = token || ''
+      if (token && this.tokenStyle === 'bearer') h.authorization = 'Bearer ' + token
+      else if (token && this.tokenStyle === 'esri') h['x-esri-authorization'] = 'Bearer ' + token
     }
     if (this.cfg.auth === 'header' && this.cfg.headerName && this.cfg.headerValue && /^[A-Za-z0-9-]+$/.test(this.cfg.headerName)) h[this.cfg.headerName.toLowerCase()] = this.cfg.headerValue
     return h
@@ -119,17 +130,25 @@ export class McpClient {
   private async exchange (method: string, params: any, id: number | undefined, notify: boolean, retried: boolean, ctrl: AbortController | null): Promise<any> {
     let res: Response
     try {
-      res = await this.fetcher(this.cfg.url, { method: 'POST', headers: await this.headers(), body: JSON.stringify({ jsonrpc: '2.0', method, params, ...(notify ? {} : { id }) }), signal: ctrl?.signal, credentials: 'omit' } as any)
+      const headers = await this.headers()
+      const address = this.tokenStyle === 'query' && this.token ? `${this.cfg.url}${this.cfg.url.includes('?') ? '&' : '?'}token=${encodeURIComponent(this.token)}` : this.cfg.url
+      res = await this.fetcher(address, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', method, params, ...(notify ? {} : { id }) }), signal: ctrl?.signal, credentials: 'omit' } as any)
     } catch (e) {
       if (e?.name === 'AbortError') throw e
       throw new Error(`Could not reach ${this.label}. It may be offline, or it does not allow this app's address (CORS).`)
     }
     const sid = res.headers.get('mcp-session-id')
-    if (sid) this.session = sid
+    if (sid && res.status !== 401 && res.status !== 403) this.session = sid
     if (res.status === 404 && this.session && !retried && method !== 'initialize') {
       // The server forgot the session: start a new one and try once more.
       this.session = ''; this.ready = null; await this.connect()
       return this.post(method, params, notify, true)
+    }
+    if (res.status === 401 && this.cfg.auth === 'arcgis' && this.token && method === 'initialize') {
+      // At the handshake: the server may take the same sign-in another way.
+      const next = this.tokenStyle === 'bearer' ? 'esri' : this.tokenStyle === 'esri' && this.cfg.tokenInAddress ? 'query' : null
+      if (next) { this.tokenStyle = next; return this.exchange(method, params, id, notify, retried, ctrl) }
+      this.tokenStyle = 'bearer'
     }
     if (res.status === 401 || res.status === 403) {
       // Say what to change: a server that wants the ArcGIS sign-in, or a key.

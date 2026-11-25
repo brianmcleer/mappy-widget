@@ -938,7 +938,7 @@ export class LiveMap {
    * found, a dashed line to the closest one, and a zoom that fits them. Points are
    * [latitude, longitude]. Cleared like other Mappy highlights.
    */
-  async showPlaces (origin: [number, number] | null, spots: Array<[number, number]>, opts: { line?: boolean, rings?: number[][][] } = {}): Promise<boolean> {
+  async showPlaces (origin: [number, number] | null, spots: Array<[number, number]>, opts: { line?: boolean, rings?: number[][][], path?: Array<[number, number]> } = {}): Promise<boolean> {
     const view = this.view
     if (!view || (!origin && !spots.length)) return false
     try {
@@ -975,7 +975,11 @@ export class LiveMap {
         marks.push(add(project(new Polygon({ rings: opts.rings, spatialReference: { wkid: 4326 } })),
           { type: 'simple-fill', color: [...HIGHLIGHT_RGB, 0.12], outline: { color: HIGHLIGHT_RGB, width: 3 } }))
       }
-      if (origin && opts.line && spots[0]) {
+      // A route the server planned: the road it follows, as a solid line.
+      if (opts.path && opts.path.length > 1) {
+        marks.push(add(project(new Polyline({ paths: [opts.path.slice(0, 20000).map(p => [p[1], p[0]])], spatialReference: { wkid: 4326 } })),
+          { type: 'simple-line', style: 'solid', color: HIGHLIGHT_RGB, width: 4 }))
+      } else if (origin && opts.line && spots[0]) {
         add(project(new Polyline({ paths: [[[origin[1], origin[0]], [spots[0][1], spots[0][0]]]], spatialReference: { wkid: 4326 } })),
           { type: 'simple-line', style: 'short-dash', color: HIGHLIGHT_RGB, width: 2 })
       }

@@ -24,6 +24,7 @@ jobs:
           node tests/local-assistant.cjs
           node tests/typos.cjs
           node tests/mcp.cjs
+          node tests/esri-mcp.cjs
       - name: Phrase test set
         run: node language/build.mjs --check
       - name: Knowledge feed is current

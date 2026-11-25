@@ -2,7 +2,7 @@
   "name": "mappy",
   "version": "1.10.0",
   "scripts": {
-    "test": "node tests/local-assistant.cjs && node tests/typos.cjs && node tests/mcp.cjs"
+    "test": "node tests/local-assistant.cjs && node tests/typos.cjs && node tests/mcp.cjs && node tests/esri-mcp.cjs"
   },
   "description": "ArcGIS Experience Builder widget: a friendly folded-map assistant that knows every page, widget, link, layer and field in the app it is dropped into, answers questions, opens tools, switches layers and finds features, all in the browser.",
   "keywords": [

@@ -47,9 +47,9 @@
     {
       "name": "enterprise",
       "label": "ArcGIS Enterprise",
-      "url": "https://portal.example.org/portal/REPLACE_WHEN_ESRI_SHIPS_IT/mcp",
+      "url": "https://gis.example.org/server/mcp/default",
       "auth": "user_token",
-      "prefix": "portal_",
+      "prefix": "enterprise_",
       "enabled": false
     }
   ],

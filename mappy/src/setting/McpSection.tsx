@@ -11,6 +11,7 @@ import type { McpSettings } from '../runtime/mcp'
 import { changesData, toolLabel } from '../brain/mcpTools'
 import type { McpTool, McpToolPref } from '../brain/mcpTools'
 import { clip } from '../brain/text'
+import { esriCatalog, enterpriseMcpUrl, hostingServerUrl, isEnterpriseMcpUrl } from '../brain/esriMcp'
 import { Hint, Note, FullButton, Sub, toneOf } from './ui'
 
 interface Props {
@@ -45,7 +46,8 @@ export default function McpSection (props: Props): any {
       // Keep earlier choices; new tools start on only when they cannot change data.
       const next: McpToolPref[] = list.map(t => prefs.find(p => p.name === t.name) || { name: t.name, enabled: !changesData(t), confirm: changesData(t) })
       save({ url, label: cfg.label || client.serverName || '', tools: next, enabled: true })
-      setStatus(`Connected to ${client.serverName || 'the server'}: ${list.length} tools, ${next.filter(p => p.enabled).length} turned on.`)
+      const cat = esriCatalog(list)
+      setStatus(`Connected to ${client.serverName || 'the server'}: ${list.length} tools, ${next.filter(p => p.enabled).length} turned on.${cat ? ` This is an ArcGIS Enterprise catalog: he knows ${Object.keys(cat).length} of its tools by name (addresses, routes, portal search, questions on portal layers).` : ''}`)
     } catch (e) {
       setStatus(e?.message || String(e))
     } finally { setBusy(false) }
@@ -57,6 +59,28 @@ export default function McpSection (props: Props): any {
     setStatus('Filled in ArcGIS Location Services (beta). Put "Bearer " and an API key from ArcGIS Location Platform in Header value (privileges: beta access, geocoding, routing, elevation, static maps), then connect.')
   }
 
+  /** Esri's MCP for ArcGIS Enterprise: the default catalog on this portal's hosting server, with the signed-in person's own access. */
+  const useEnterprise = async () => {
+    // An address already typed (the hosting server, or the endpoint) wins.
+    let found = enterpriseMcpUrl(url)
+    if (!found) {
+      setBusy(true); setStatus('Looking for the hosting server of this portal...')
+      try {
+        const session: any = SessionManager.getInstance().getMainSession()
+        const portal = String(session?.portal || '').replace(/\/+$/, '')
+        if (portal && session?.token) {
+          // The token goes in the form body, never in the address.
+          const res = await fetch(`${portal}/portals/self/servers`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `f=json&token=${encodeURIComponent(session.token)}`, credentials: 'omit' })
+          found = enterpriseMcpUrl(hostingServerUrl(await res.json()))
+        }
+      } catch (e) { found = '' } finally { setBusy(false) }
+    }
+    if (!found) { setStatus('I could not find the hosting server from here. Type its address in Server address (for example https://your-server/server) and press this again.'); return }
+    setUrl(found)
+    save({ url: found, label: cfg.label || 'ArcGIS Enterprise', auth: 'arcgis', headerName: '', headerValue: '' })
+    setStatus(`Filled in ${found} with the signed-in ArcGIS user. MCP Services must be installed on the hosting server (and, on 12.2 or later, External AI client access turned on). Press Connect.`)
+  }
+
   const setPref = (name: string, patch: Partial<McpToolPref>) => save({ tools: prefs.map(p => p.name === name ? { ...p, ...patch } : p) })
   const shown: McpTool[] = tools || prefs.map(p => ({ name: p.name }))
   const onCount = prefs.filter(p => p.enabled).length
@@ -64,22 +88,25 @@ export default function McpSection (props: Props): any {
 
   return (
     <SettingSection title='MCP server'>
-      <Hint>Optional. Your own gis-mcp server (closest feature, what's at an address, owners, zoning), ArcGIS Location Services or another Model Context Protocol server. Read-only tools run on their own; anything that could change data asks first.</Hint>
+      <Hint>Optional. Esri's MCP for ArcGIS Enterprise (addresses, routes, portal search, questions on portal layers), your own gis-mcp server, ArcGIS Location Services or another Model Context Protocol server. Read-only tools run on their own; anything that could change data asks first.</Hint>
 
       {cfg.url && <Note tone={!props.active ? 'info' : cfg.url === ESRI_LOCATION_MCP ? 'warn' : 'ok'}>
         {!props.active
           ? `Questions do not go to ${cfg.label || 'the server'}: "Where he gets help" is set to something else.`
           : cfg.url === ESRI_LOCATION_MCP
             ? "This app is using Esri's ArcGIS Location Services (beta), not your own server. It answers addresses, directions and elevation only; closest-feature and owner questions come from the app's own layers. Disconnect it if you are not using it."
-            : `In use: ${cfg.label || cfg.url}.`}
+            : isEnterpriseMcpUrl(cfg.url)
+              ? `In use: ${cfg.label || 'ArcGIS Enterprise'}, Esri's MCP for ArcGIS Enterprise. People see only what their own sign-in may see, and portal search finds only items tagged "mcp".`
+              : `In use: ${cfg.label || cfg.url}.`}
       </Note>}
 
       <SettingRow label='Server address' flow='wrap'>
-        <TextInput size='sm' style={full} value={url} placeholder='https://server/gis-mcp/mcp' aria-label='Server address'
+        <TextInput size='sm' style={full} value={url} placeholder='https://server/server/mcp/default' aria-label='Server address'
           onChange={(e: any) => setUrl(e.target.value.trim())} onAcceptValue={(v: string) => { if (safeServerUrl(v)) save({ url: v.trim() }) }} />
       </SettingRow>
       <SettingRow>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, width: '100%' }}>
+          <Button type='link' size='sm' disabled={busy} style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={useEnterprise}>Fill in ArcGIS Enterprise MCP (this portal)</Button>
           <Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={useEsri}>Fill in ArcGIS Location Services (beta)</Button>
           {cfg.url && <Button type='link' size='sm' style={{ padding: 0, height: 'auto', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => { setUrl(''); setTools(null); setStatus('Disconnected. No server is used; place questions come from the app\'s own layers and locator.'); save({ url: '', label: '', auth: 'none', headerName: '', headerValue: '', tools: [], enabled: false }) }}>Disconnect and forget this server</Button>}
         </div>
@@ -97,6 +124,13 @@ export default function McpSection (props: Props): any {
           <Option value='header'>A key in a header</Option>
         </Select>
       </SettingRow>
+      {cfg.auth === 'arcgis' && <React.Fragment>
+        <Hint>The person's own ArcGIS sign-in is sent in a header. Nothing is saved in the app.</Hint>
+        <SettingRow tag='label' label='If a header is refused, send it in the address'>
+          <Switch checked={cfg.tokenInAddress === true} onChange={(e: any) => save({ tokenInAddress: e.target.checked })} aria-label='If a header is refused, send the sign-in in the address' />
+        </SettingRow>
+        {cfg.tokenInAddress === true && <Note tone='warn'>The sign-in token is added to the address as ?token= only when the server refuses it in a header. Addresses can be written to server and proxy logs, so leave this off unless the connection fails without it.</Note>}
+      </React.Fragment>}
       {cfg.auth === 'header' && <React.Fragment>
         <SettingRow label='Header name' flow='wrap'>
           <TextInput size='sm' style={full} key={'hn' + (cfg.headerName || '')} defaultValue={cfg.headerName || ''} placeholder='Authorization' aria-label='Header name'

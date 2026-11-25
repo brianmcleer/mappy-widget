@@ -202,18 +202,20 @@ It runs against `tests\fake_arcgis.py`, a stand-in for ArcGIS REST.
 | `assistant.retry_wait_seconds` | 1.5 | Wait before the one retry after a busy answer |
 | `assistant.api_url` | Anthropic's | For a gateway in between |
 
-## Esri's MCP servers (ready when they are)
+## Esri's MCP servers
 
-Esri has MCP for ArcGIS Location Services in beta and is working on MCP for ArcGIS Online and Enterprise. Put them behind this server with `upstream_servers`, and apps (Mappy included) keep talking to one address:
+Esri ships MCP for ArcGIS Enterprise (MCP Services on the hosting server; default catalog at `https://<domain>/<server-context>/mcp/default`) and has MCP for ArcGIS Location Services in beta. A browser app can only reach Esri's endpoint when it allows the app's address (CORS). When it does not, or when you want one address for everything, put them behind this server with `upstream_servers`, and apps (Mappy included) keep talking to one address:
 
 ```json
 "upstream_servers": [
   { "name": "esri", "label": "ArcGIS Location Services", "url": "https://location-services-mcp.arcgis.com/beta/mcp",
     "auth": "api_key", "api_key_env": "ESRI_LOCATION_API_KEY", "prefix": "esri_", "enabled": true },
-  { "name": "enterprise", "label": "ArcGIS Enterprise", "url": "https://portal.example.org/portal/<path Esri gives>/mcp",
-    "auth": "user_token", "prefix": "portal_", "enabled": true }
+  { "name": "enterprise", "label": "ArcGIS Enterprise", "url": "https://gis.example.org/server/mcp/default",
+    "auth": "user_token", "prefix": "enterprise_", "enabled": true }
 ]
 ```
+
+With `user_token`, each person's own Portal token is passed on as `Authorization: Bearer`, so they see only what Portal lets them see. Mappy recognises the Enterprise tools behind the prefix (`enterprise_query_data`, `enterprise_solve_route`) and uses them as he would directly: see [the widget's guide](../mappy/docs/arcgis-enterprise-mcp.md).
 
 | Key | Meaning |
 | --- | --- |

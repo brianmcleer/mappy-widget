@@ -21,6 +21,8 @@ import { contextualCommand, normalizeCommand, splitCommands } from '../brain/con
 import { lexiconFor, readRequest, didYouMean } from '../brain/language'
 import { matchTool, rankTools, fillArgs, toolAnswer, toolValueError, usableTools, needsConfirm, toolLabel, describeArgs, viewResult, parsePlaceQuestion, placeToolFits, placeKeys, looksLikePlace, closestChoice } from '../brain/mcpTools'
 import type { McpPort, McpTool, MapContext, PlaceQuestion } from '../brain/mcpTools'
+import { parseRoute, esriHelperTool, esriCatalog, toolData, toolError, readCandidates, geocodeArgs, readReverse, routeArgs, readRoute, parseContentSearch, searchArgs, readItems, queryable, describeLayerArgs, describeItemArgs, pickLayer, readLayerSchema, readMapImage, readJob, askedThing, layerRef, type EsriCatalog, type PortalItem } from '../brain/esriMcp'
+import { RemoteLayer, type RemoteSchema } from './esriMcp'
 import { handoffUrl, parseHandoff, assistantJob, contextLine, usageQuestion, usageNote } from '../brain/handoff'
 
 /** A card number or a US Social Security number typed into a question. */
@@ -89,6 +91,10 @@ export interface MindContext {
   hints: Map<string, LayerHint>
   name: string
   appTitle: string
+  /** The portal this app is signed in to (https://host/portal), for links to item pages. */
+  portalUrl?: string
+  /** How often a running geoprocessing job is checked, in milliseconds (tests shorten it). */
+  jobPollMs?: number
   featureSearch: boolean
   maxResults: number
   geocoders?: GeocoderSource[]
@@ -208,6 +214,13 @@ export class Mind {
   private rateTool = false
   /** The server counts questions per person and can say how many are left (assistant_usage). */
   private usageTool = false
+  /** Esri's MCP for ArcGIS Enterprise tools on the connected server, when it has them. */
+  private esri: EsriCatalog | null = null
+  /** The portal layer last asked about, so the next question can stay on it. */
+  private lastRemote: { layer: RemoteLayer, item: PortalItem, at: number, ask?: Ask } | null = null
+  /** Portal items last listed, for "ask the second one". */
+  private portalItems: { items: PortalItem[], thing: string, question: string, at: number } | null = null
+  private remoteLayers = new Map<string, RemoteLayer>()
   private rated = new Map<number, { q: string, a: string, done?: boolean }>()
   private rateSeq = 0
   /** When Claude last answered, and the follow-ups it suggested: the conversation stays with Claude for a few minutes. */
@@ -593,7 +606,7 @@ export class Mind {
     if (cared) { this.lastReply = cared; return cared }
     const followed = await this.followAsk(input)
     if (followed) { this.lastReply = followed; return followed }
-    let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text)
+    let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text) || await this.portalCommand(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
     else reply = this.ctx.serverAssistant ? await this.askServerClaudeWhenStuck(input, await this.respondRead(text)) : await this.offerServer(text, await this.respondRead(text))
@@ -1263,6 +1276,8 @@ export class Mind {
     this.rateTool = tools.some(t => t.name === FEEDBACK_TOOL)
     this.usageTool = tools.some(t => t.name === USAGE_TOOL)
     this.mcpTools = usable.filter(t => t.name !== ASK_TOOL && t.name !== FEEDBACK_TOOL && t.name !== USAGE_TOOL)
+    // Esri's own catalog (MCP for ArcGIS Enterprise), directly or passed through another server: he knows these tools by name.
+    this.esri = esriCatalog(this.mcpTools.filter(t => !needsConfirm(t, port.prefs)))
     this.loadServerLayers(port)
     return this.mcpTools
   }
@@ -1493,7 +1508,7 @@ export class Mind {
             const keys = placeKeys(tool)
             const reply = await this.runTool(tool, { [keys.lat!]: Number(at[0].toFixed(6)), [keys.lon!]: Number(at[1].toFixed(6)) })
             if (!['confused', 'attention'].includes(reply.mood || '')) {
-              const found = niceAddress(String(this.lastToolData?.address || reply.text.match(/address:?\s*([^.\n]+)/i)?.[1] || '').split(',')[0].trim())
+              const found = niceAddress(String(readReverse(this.lastToolData) || reply.text.match(/address:?\s*([^.\n]+)/i)?.[1] || '').split(',')[0].trim())
               if (found) { this.placeNames.set(placeKey(at[0], at[1]), found); this.lastPlace = { label: found, lat: at[0], lon: at[1], at: Date.now() }; reply.text = `The closest address to that spot is **${found}**.` }
               await this.ctx.live.showPlaces(at, [], {})
               reply.suggest = [`Who owns ${found || 'it'}?`, `What's at ${found || 'that spot'}?`]
@@ -1723,10 +1738,10 @@ export class Mind {
       try {
         const tool = (await this.serverTools()).find(t => /geocode|find_?address|address_?candidates/i.test(t.name) && !/reverse/i.test(t.name) && placeKeys(t).address && !needsConfirm(t, port.prefs))
         if (tool) {
-          const raw = await port.call(tool.name, { [placeKeys(tool).address!]: w })
-          const c = raw?.structuredContent?.candidates?.[0] || raw?.structuredContent?.results?.[0]
-          const lat = Number(c?.latitude ?? c?.location?.y); const lon = Number(c?.longitude ?? c?.location?.x)
-          if (Number.isFinite(lat) && Number.isFinite(lon) && (c?.score == null || c.score >= 75)) return { label: niceAddress(String(c.address || w).split(',')[0]), at: [lat, lon] }
+          const esriOwn = this.esri?.geocode === tool
+          const raw = await port.call(tool.name, esriOwn ? geocodeArgs(tool, w) : { [placeKeys(tool).address!]: w })
+          const c = readCandidates(toolData(raw))[0]
+          if (c && c.score >= 75) return { label: niceAddress(String(c.address || w).split(',')[0]), at: [c.lat, c.lon] }
         }
       } catch (e) { }
     }
@@ -1788,7 +1803,7 @@ export class Mind {
    */
   private async directionsQuestion (q: string): Promise<Reply | null> {
     const t = q.replace(/[?.!]+$/, '').trim()
-    const m = t.match(/^(?:(?:get |give me |show me )?(?:driving |walking |biking |cycling )?directions\s+(?:to|for)\s+|how (?:do|can|would) i (?:get|drive|walk|bike|go|travel) to\s+|(?:route|drive|walk)\s+(?:me\s+)?to\s+|(?:what(?:'s| is) the )?(?:best |fastest |quickest )?(?:way|route) to\s+)(.+?)(?:\s+from\s+(.+))?$/i)
+    const m = t.match(/^(?:(?:get |give me |show me )?(?:driving |walking |biking |cycling )?directions\s+(?:to|for)\s+|how (?:do|can|would) i (?:get|drive|walk|bike|go|travel) to\s+|(?:route|drive|walk)\s+(?:me\s+)?to\s+|(?:what(?:'s| is) the )?(?:best |fastest |quickest )?(?:way|route) to\s+)(.+?)(?:\s+from\s+(.+))?$/i) || (() => { const r = parseRoute(t); return r ? [t, r.to, r.from] as any : null })()
     if (!m) return null
     // "How do I get to the legend": a tool or page, not a place.
     if (this.ctx.index.resolve(m[1].trim(), ['widget', 'page', 'view', 'dialog', 'bookmark'], 2)) return null
@@ -1811,7 +1826,25 @@ export class Mind {
     if (port && port.fallback !== false) {
       try {
         const tool = (await this.serverTools()).find(x => /route|directions/i.test(x.name) && !needsConfirm(x, port.prefs))
-        if (tool) {
+        if (tool && this.esri?.route === tool && mode !== 'bicycling') {
+          // Esri's solve_route: points as objects, the road it follows drawn on the map, steps listed.
+          this.track('mcp:' + tool.name)
+          const raw = await port.call(tool.name, routeArgs(tool, from, to, mode === 'walking' ? 'walking' : 'driving', /\bshortest\b/i.test(t)), 45000)
+          const route = raw?.isError ? null : readRoute(toolData(raw))
+          if (route) {
+            const drawn = await this.ctx.live.showPlaces(from.at, [to.at], route.path.length > 1 ? { path: route.path } : { line: true })
+            this.lastPlace = { label: to.label, lat: to.at[0], lon: to.at[1], at: Date.now() }
+            this.placeNames.set(placeKey(from.at[0], from.at[1]), from.label); this.placeNames.set(placeKey(to.at[0], to.at[1]), to.label)
+            const size = [route.distance, route.time].filter(Boolean).join(', about ')
+            const reply: Reply = {
+              text: `${mode === 'walking' ? 'Walking' : 'Driving'} from ${from.label} to **${to.label}**${size ? `: **${size}**` : ''}.${drawn && route.path.length > 1 ? ' The route is drawn on the map.' : ''}${route.steps.length ? '\n\n' + route.steps.slice(0, 12).map((s, i) => `${i + 1}. ${s}`).join('\n') + (route.steps.length > 12 ? `\n… and ${route.steps.length - 12} more steps.` : '') : ''}`,
+              mood: 'route', sources: [{ title: port.label, detail: `${toolLabel(tool)} · roads and travel times from your organization's route service` }],
+              suggest: [`What's at ${to.label}?`, mode === 'walking' ? `Driving directions to ${to.label}` : `Walking directions to ${to.label}`]
+            }
+            return reply
+          }
+          if (raw?.isError) return { text: `${port.label} could not plan that route: ${clip(toolError(raw), 200)}`, mood: 'confused' }
+        } else if (tool) {
           const keys = Object.keys(tool.inputSchema?.properties || {})
           const fromKey = keys.find(k => /^(from|origin|start|stops)$/i.test(k)); const toKey = keys.find(k => /^(to|destination|end)$/i.test(k))
           if (fromKey && toKey) {
@@ -2341,11 +2374,38 @@ export class Mind {
     const map = this.ctx.live.view
     const prefs = this.mcpPrefs
     this.track('mcp:' + tool.name)
-    const raw = await port.call(tool.name, args)
+    let raw = await port.call(tool.name, args)
+    // A geoprocessing tool that runs as a job: wait for it (up to a minute), asking the server how it is going.
+    const status = this.esri?.gpStatus
+    let job = status && !raw?.isError ? readJob(toolData(raw)) : null
+    if (job && status && job.state === 'running') {
+      const idKey = Object.keys(status.inputSchema?.properties || {}).find(k => /job/i.test(k)) || 'jobId'
+      const extra: { [k: string]: any } = {}
+      for (const k of Object.keys(status.inputSchema?.properties || {})) if (k !== idKey && args[k] !== undefined) extra[k] = args[k]
+      const until = Date.now() + 60000
+      while (job && job.state === 'running' && Date.now() < until) {
+        await new Promise(resolve => setTimeout(resolve, this.ctx.jobPollMs ?? 3000))
+        const next = await port.call(status.name, { ...extra, [idKey]: job.id })
+        if (next?.isError) break
+        const seen = readJob(toolData(next))
+        if (!seen) break
+        job = seen; raw = next
+      }
+      if (job.state === 'running') return { text: `${toolLabel(tool)} is still running on ${port.label} (job ${clip(job.id, 40)}). Ask again in a minute: “use the server ${toolLabel(status).toLowerCase()} ${job.id}”.`, mood: 'think', sources: [{ title: port.label, detail: toolLabel(tool) }] }
+      if (job.state === 'failed') return { text: `${toolLabel(tool)} did not finish on ${port.label}.${job.message ? ' ' + job.message : ''}`, mood: 'confused', sources: [{ title: port.label, detail: toolLabel(tool) }] }
+    }
     if (map !== this.ctx.live.view || port !== this.ctx.mcp || prefs !== JSON.stringify(port.prefs || [])) { this.lastToolData = null; return { text: 'The map or server settings changed while I was working. Please ask again.', mood: 'confused' } }
-    this.lastToolData = raw && !raw.isError ? raw.structuredContent ?? null : null
+    this.lastToolData = toolData(raw)
     const view = viewResult(raw, port.label)
-    const actions: MappyAction[] = []
+    // A map picture comes back as a temporary address (get_map_image), not as image data.
+    const picture = view.image ? null : readMapImage(this.lastToolData)
+    // Shown in the chat only from the organization's own servers (the portal's site); from anywhere else it is a link to open.
+    const site = (u: string): string => { try { return new URL(u).hostname.toLowerCase().split('.').slice(-2).join('.') } catch (e) { return '' } }
+    const ours = !!picture && !!this.ctx.portalUrl && site(picture.src) !== '' && site(picture.src) === site(this.ctx.portalUrl)
+    if (picture && ours) { view.image = { src: picture.src, alt: `Map image from ${port.label}` }; view.text = `Here is the map image from ${port.label}. The link is temporary.` }
+    else if (picture) view.text = `${port.label} made a map image. The link is temporary.`
+    const pictureLink: MappyAction[] = picture && !ours ? [{ type: 'url', url: picture.src, label: 'Open the map image' }] : []
+    const actions: MappyAction[] = [...pictureLink]
     if (view.point) actions.push({ type: 'ask', q: `zoom to ${view.point[0]}, ${view.point[1]}`, label: 'Zoom there' })
     const reply: Reply = { text: view.text, mood: view.error ? 'confused' : 'pleased', actions, sources: [{ title: port.label, detail: `${toolLabel(tool)} (${describeArgs(args)})` }] }
     if (view.table) reply.table = view.table
@@ -2362,6 +2422,177 @@ export class Mind {
     return reply
   }
 
+  // ------------------------------------------------------------ ArcGIS Enterprise MCP: portal content and portal layers
+
+  /** The address of a portal item's page, when the app knows its portal. */
+  private itemPage (id: string): string {
+    const portal = String(this.ctx.portalUrl || '').replace(/\/+$/, '')
+    return /^https:\/\//i.test(portal) && /^[0-9a-f]{32}$/i.test(id) ? `${portal}/home/item.html?id=${id}` : ''
+  }
+
+  /**
+   * Requests that are about the portal, not this map: "find maps about zoning", "search the
+   * portal for flood data", a choice from the list just shown, and the next question about a
+   * portal layer already being talked about. Null when it is not one of those.
+   */
+  private async portalCommand (text: string): Promise<Reply | null> {
+    const port = this.ctx.mcp
+    if (!port || Date.now() - this.mcpFailedAt < 60000) return null
+    const pick = text.match(/^__portal:(\d+)$/)
+    if (!pick && /^__/.test(text)) return null
+    if (!this.esri) { if (!pick && !parseContentSearch(text) && !/\bin (?:the |our )?portal\b/i.test(text)) return null; try { await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return null } }
+    const cat = this.esri
+    if (!cat) return null
+    try {
+      if (pick) {
+        const hit = this.portalItems && Date.now() - this.portalItems.at < 15 * 60000 ? this.portalItems.items[Number(pick[1])] : null
+        if (!hit) return { text: 'That list is no longer current. Search again.', mood: 'confused' }
+        return await this.askPortalItem(hit, this.portalItems!.question || `how many ${hit.title}`, this.portalItems!.thing || hit.title)
+      }
+      // "... in the portal": a data question aimed there on purpose.
+      const aimed = text.match(/^(.{6,160}?)\s+in (?:the |our )?(?:portal|organization|org)[?.!]*$/i)
+      if (aimed && askedThing(aimed[1])) { const r = await this.portalData(aimed[1]); if (r) return r }
+      const search = parseContentSearch(text)
+      if (search && cat.search) return await this.portalSearch(search.q, search.type)
+      // Still talking about the portal layer just asked about.
+      const last = this.lastRemote
+      if (last && Date.now() - last.at < 10 * 60000 && last.at >= this.lastAskAt && (!this.lastPlace || this.lastPlace.at < last.at)) {
+        const follow = await this.remoteFollow(text)
+        if (follow) return follow
+      }
+    } catch (e) {
+      this.mcpFailedAt = Date.now()
+      return { text: e instanceof Error ? e.message : `${port.label} did not answer.`, mood: 'confused' }
+    }
+    return null
+  }
+
+  private async portalSearch (q: string, type?: string): Promise<Reply> {
+    const port = this.ctx.mcp!; const tool = this.esri!.search!
+    this.track('mcp:' + tool.name)
+    const raw = await port.call(tool.name, searchArgs(tool, q, type, 8))
+    if (raw?.isError) return { text: `${port.label} could not search: ${clip(toolError(raw), 200)}`, mood: 'confused' }
+    const items = readItems(toolData(raw))
+    const what = `${type ? type.toLowerCase() + 's' : 'items'}${q ? ` about “${clip(q, 60)}”` : ''}`
+    if (!items.length) {
+      return { text: `I found no ${what} in the portal that you can open. Only items tagged **mcp** can be found this way, so one may exist without the tag.`, mood: 'think', sources: [{ title: port.label, detail: toolLabel(tool) }], suggest: q && type ? [`Search the portal for ${q}`] : undefined }
+    }
+    this.portalItems = { items, thing: q, question: '', at: Date.now() }
+    const canAsk = !!(this.esri!.layer && this.esri!.query)
+    const reply: Reply = {
+      text: `I found ${items.length} ${items.length === 1 ? what.replace(/s\b/, '') : what} in the portal.${canAsk && items.some(queryable) ? ' Choose a layer to ask it questions.' : ''}`,
+      mood: 'pleased',
+      list: items.map((it, i) => ({
+        label: `${i + 1}. ${it.title}${it.type ? ` (${it.type})` : ''}${it.snippet ? `: ${clip(it.snippet, 90)}` : ''}`,
+        action: canAsk && queryable(it) ? { type: 'ask' as const, q: `__portal:${i}`, label: `Ask about ${it.title}` } : this.itemPage(it.id) ? { type: 'url' as const, url: this.itemPage(it.id), label: `Open ${it.title}` } : undefined
+      })),
+      sources: [{ title: port.label, detail: `${toolLabel(tool)}${q ? ` · ${clip(q, 60)}` : ''} · items tagged mcp that you can open` }]
+    }
+    return reply
+  }
+
+  /** A data question no layer on this map answers ("how many bus stops are there"): find the layer in the portal and ask it. */
+  private async portalData (question: string): Promise<Reply | null> {
+    const cat = this.esri; const port = this.ctx.mcp
+    if (!cat?.search || !cat.layer || !cat.query || !port) return null
+    const thing = askedThing(question)
+    if (!thing) return null
+    this.track('mcp:' + cat.search.name)
+    const raw = await port.call(cat.search.name, searchArgs(cat.search, thing, 'Feature Service', 5))
+    if (raw?.isError) return null
+    const items = readItems(toolData(raw)).filter(queryable)
+    if (!items.length) return null
+    const flat = (v: string): string => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/(?:es|s)\b/g, '')
+    const exact = items.filter(it => flat(it.title) === flat(thing) || it.layers.some(l => flat(l.name) === flat(thing)))
+    if (items.length === 1 || exact.length === 1) return this.askPortalItem(exact.length === 1 ? exact[0] : items[0], question, thing)
+    this.portalItems = { items, thing, question, at: Date.now() }
+    return {
+      text: `This map has no layer for that, but the portal has ${items.length} that could fit “${clip(thing, 50)}”. Which one?`, mood: 'think',
+      list: items.map((it, i) => ({ label: `${i + 1}. ${it.title}${it.snippet ? `: ${clip(it.snippet, 90)}` : ''}`, action: { type: 'ask' as const, q: `__portal:${i}`, label: `Ask ${it.title}` } })),
+      sources: [{ title: port.label, detail: `${toolLabel(cat.search)} · ${clip(thing, 50)}` }]
+    }
+  }
+
+  /** Opens one portal layer for questions: its fields from describe_layer, then the question itself. */
+  private async remoteLayer (item: PortalItem, thing: string): Promise<RemoteLayer> {
+    const cat = this.esri!; const port = this.ctx.mcp!
+    let layers = item.layers
+    const direct = /\/\d+$/.test(item.url)
+    if (!direct && !layers.length && cat.item) {
+      const raw = await port.call(cat.item.name, describeItemArgs(cat.item, item.id))
+      layers = readItems(toolData(raw))[0]?.layers || []
+    }
+    const chosen = direct ? null : pickLayer(layers, thing)
+    const ref = layerRef(item.url, chosen?.id)
+    const url = `${ref.serviceUrl}/${ref.layerId}`
+    const known = this.remoteLayers.get(url)
+    if (known) return known
+    this.track('mcp:' + cat.layer!.name)
+    const raw = await port.call(cat.layer!.name, describeLayerArgs(cat.layer!, item.url, chosen?.id))
+    if (raw?.isError) throw new Error(`${port.label} could not describe **${item.title}**: ${clip(toolError(raw), 200)}`)
+    const schema = readLayerSchema(toolData(raw), `portal:${url}`, chosen?.name || item.title) as RemoteSchema | null
+    if (!schema) throw new Error(`${port.label} did not say what fields **${item.title}** has, so I cannot ask it questions.`)
+    const layer = new RemoteLayer(port, cat.query!, url, schema)
+    if (this.remoteLayers.size > 20) this.remoteLayers.clear()
+    this.remoteLayers.set(url, layer)
+    return layer
+  }
+
+  private async askPortalItem (item: PortalItem, question: string, thing: string): Promise<Reply> {
+    const layer = await this.remoteLayer(item, thing)
+    return this.answerRemote(layer, item, question, thing)
+  }
+
+  /** Reads a question against a portal layer's fields and runs it with the same code that answers map layers. */
+  private async answerRemote (layer: RemoteLayer, item: PortalItem, question: string, thing: string, prior?: Ask): Promise<Reply> {
+    const port = this.ctx.mcp!
+    const schema = layer.schema
+    // The layer is named by what the person called it, so "how many bus stops" lands on it whatever its title.
+    const named = [schema]
+    let ask: Ask | null = null
+    try { ask = readAsk(question, named, { fallback: schema.key }) || readAsk(`${question.replace(new RegExp(thing.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), schema.title)}`, named, { fallback: schema.key }) } catch (e) { ask = null }
+    if (!ask && prior) { ask = prior; prior = undefined }
+    if (!ask) ask = { layer: schema.key, kind: 'count', clauses: [], unknown: [] }
+    if (prior) ask = ask.kind === 'top' ? { ...ask, clauses: [...prior.clauses.filter(c => !ask!.clauses.some(n => n.field.name === c.field.name)), ...ask.clauses] } : { ...prior, ...(ask.kind !== 'count' || !ask.clauses.length ? { kind: ask.kind, field: ask.field, stat: ask.stat, group: ask.group, order: ask.order, limit: ask.limit } : {}), clauses: [...prior.clauses.filter(c => !ask!.clauses.some(n => n.field.name === c.field.name)), ...ask.clauses], unknown: ask.unknown }
+    // Words the layer's fields and example values do not explain: said, never guessed at.
+    const lost = ask.unknown.filter(w => !thing.toLowerCase().split(/\s+/).includes(w) && !schema.title.toLowerCase().split(/\s+/).includes(w))
+    const entry: any = { key: schema.key, title: schema.title, path: [], isTable: true, isGroup: false }
+    const shim: any = { target: () => layer, view: null, isVisible: () => false }
+    const reply = await runAsk(shim, entry, { ...ask, unknown: [] }, this.ctx.maxResults)
+    delete reply.results
+    this.lastRemote = { layer, item, at: Date.now(), ask }
+    this.lastAskAt = 0
+    const page = this.itemPage(item.id)
+    reply.actions = page ? [{ type: 'url', url: page, label: `Open ${item.title} in the portal` }] : []
+    reply.sources = [{ title: `${item.title} (portal layer, not on this map)`, detail: `${port.label} · ${askSaid(ask) || 'all records'} · ${new Date().toLocaleTimeString()}` }]
+    if (lost.length) reply.text += `\n\nI did not use “${lost.join(' ')}”: nothing in that layer's fields matched it.`
+    reply.note = 'From a portal layer that is not on this map.'
+    reply.suggest = ask.kind === 'count' ? [`List them`, `What fields does ${schema.title} have`] : undefined
+    return reply
+  }
+
+  /** The next question about the portal layer just asked about: a pronoun, a swap, or a question its fields explain. */
+  private async remoteFollow (text: string): Promise<Reply | null> {
+    const last = this.lastRemote!
+    const t = text.trim().toLowerCase().replace(/[?.!]+$/, '')
+    const schema = last.layer.schema
+    if (/^(?:what|which) fields (?:does|do) (?:it|that|they|.{2,60}) have$|^(?:its|their|the) fields$/.test(t)) {
+      const shown = schema.fields.filter(f => !/^(?:shape|objectid|globalid)/i.test(f.name)).slice(0, 25)
+      return { text: `**${schema.title}** has ${schema.fields.length} fields. ${shown.length < schema.fields.length ? 'Some of them:' : 'They are:'}`, mood: 'explain', table: { columns: ['Field', 'Type'], rows: shown.map(f => [f.alias || f.name, String(f.type || '').replace(/^esriFieldType/, '')]) }, sources: [{ title: `${schema.title} (portal layer)`, detail: this.ctx.mcp!.label }] }
+    }
+    const pronoun = /\b(?:it|its|that|them|those|these|they|their|ones?)\b/.test(t)
+    const swap = t.match(/^(?:and |or |now )?(?:(?:what|how) about|and|or|same for|now)\s+(?:just |only )?(?:the ones? |those |in |for |with )?(.{2,60})$/)
+    const lister = /^(?:list|show)(?: me)? (?:them|those|these)(?: all)?$/.test(t)
+    if (lister) return this.answerRemote(last.layer, last.item, `list ${schema.title}`, schema.title, last.ask ? { ...last.ask, kind: 'list' } : undefined)
+    const words = swap ? `${swap[1]} ${schema.title}` : pronoun ? t.replace(/\b(?:of |in )?(?:them|those|these|they|it|that)\b/g, ` ${schema.title} `).replace(/\b(?:which|what) ones?\b/, `which ${schema.title}`) : t
+    let ask: Ask | null = null
+    try { ask = readAsk(words, [schema], { fallback: schema.key }) } catch (e) { ask = null }
+    // Not about this layer unless it leans on it (a pronoun, a swap) or names it, and its fields explain every word.
+    const namesIt = mentionedLayer(t, [schema])
+    if (!ask || ask.unknown.length || (!pronoun && !swap && !namesIt) || (!ask.clauses.length && ask.kind === 'count' && !namesIt && !pronoun)) return null
+    return this.answerRemote(last.layer, last.item, words, schema.title, pronoun || swap ? last.ask : undefined)
+  }
+
   /** When Mappy is stuck, offer the server's best-fitting tool as a button (nothing is sent until it is pressed). */
   private async offerServer (text: string, reply: Reply): Promise<Reply> {
     const port = this.ctx.mcp
@@ -2370,7 +2601,10 @@ export class Mind {
       if (Date.now() - this.mcpFailedAt < 60000) return reply
       let tools: McpTool[] = []
       try { tools = await this.serverTools() } catch (e) { this.mcpFailedAt = Date.now(); return reply }
-      const hit = matchTool(text, tools)
+      // No layer on this map answers it: the portal may have one (ArcGIS Enterprise MCP).
+      if (this.esri?.query && askedThing(text)) { try { const far = await this.portalData(text); if (far) return far } catch (e) { } }
+      // Esri's helper tools (describe an item, job status) are steps he takes himself, never an offer.
+      const hit = matchTool(text, this.esri ? tools.filter(t => !esriHelperTool(t.name)) : tools)
       if (!hit) return reply
       // A plain question a read-only tool can answer as asked: just answer it, like a person would.
       const map = this.mapContext()

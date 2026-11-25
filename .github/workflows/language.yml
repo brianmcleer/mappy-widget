@@ -60,6 +60,7 @@ jobs:
           node tests/local-assistant.cjs
           node tests/typos.cjs
           node tests/mcp.cjs
+          node tests/esri-mcp.cjs
           cd ..
           node language/build.mjs --check
 

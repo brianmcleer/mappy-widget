@@ -69,6 +69,8 @@ For an assistant you set its name, a prefix written in front of every question (
 
 ## MCP server (optional)
 
+**Esri's MCP for ArcGIS Enterprise** works out of the box: one press in settings fills in your hosting server's catalog, and he then answers data questions from portal layers that are not on the map, searches the portal, and draws routes on your own roads, all with the signed-in person's own access. See [docs/arcgis-enterprise-mcp.md](docs/arcgis-enterprise-mcp.md).
+
 A second way for Mappy to help: connect a Model Context Protocol server in **MCP server** settings and he can use its tools, such as ArcGIS Location Platform's MCP (geocoding, routing, elevation, static maps) or a portal MCP server. He picks the tool and fills it in from what was typed (still no language model), shows the answer as words, a table, a picture or a **Zoom there** button, and asks first before any tool that could change data. Say "list server tools", "ask the server where is 250 N 5th St", "elevation here", or "use route from City Hall to the library"; "here" and "this area" mean the map as it is now. **Use ArcGIS Location Services (beta)** fills in Esri's hosted server; add an API key. Setup, CORS and safety: [docs/mcp.md](docs/mcp.md).
 
 ## Help guides and ArcGIS documentation
