@@ -84,6 +84,8 @@ import { numericField } from '../brain/analysis'
 import { lineLength, rankLines, schemaOf, loadValues, runAsk, probeText } from './ask'
 import { parseCare, contactActions, contactText, stuckLine, readMisses, addMiss, missesText, missesMail, missesCsv, maskNumbers, worthKeeping, privacyText } from '../brain/care'
 import type { Contact, Miss } from '../brain/care'
+import { readSend, sendChip } from '../brain/sendPlace'
+import type { PlaceTarget } from '../brain/sendPlace'
 import { openWidget, openWidgetHelp, closeWidget, goPage, goDialog, goView, openUrl, widgetEl, bestWidgetId, pulse } from './navigate'
 import { isShown, waitForBridge } from './layerList'
 import { fieldLabel, keyLabel } from '../brain/fields'
@@ -134,6 +136,10 @@ export interface MindContext {
   place?: Place
   /** This widget's id, named as the source when records go to the Table widget. */
   widgetId?: string
+  /** Widgets the builder wired to Mappy's location message (a report tool, a lookup): people can ask for them by name with a place. */
+  placeTargets?: PlaceTarget[]
+  /** Opens one of those widgets and publishes the place to the app. */
+  sendPlace?: (target: PlaceTarget, at: { lat: number, lon: number, label: string }) => Promise<boolean>
   /** What the knowledge feed gave him ("feed 2026.10.29: language pack ..., 18 answers"), for diagnostics. */
   feedInfo?: string
   /** Small things kept for the person in this browser (saved views). Absent in tests. */
@@ -456,6 +462,7 @@ export class Mind {
         if (line && !['confused', 'alert', 'sad', 'sorry'].includes(reply.mood || '')) reply.text = `${reply.text}\n\n${line}`
       } catch (e) { }
     }
+    try { this.offerSend(reply, startedAt) } catch (e) { }
     // Keepsakes: stamps for things done together, and what this person asks most.
     if (this.ctx.fun !== false && !/^__/.test(input) && !parseCare(input) && !this.keepsakeTurn) {
       try {
@@ -619,6 +626,7 @@ export class Mind {
     const followed = await this.followAsk(input)
     if (followed) { this.lastReply = followed; return followed }
     let reply = (await this.serverClaudeCommand(input)) || (await this.claudeFollowUp(input)) || this.assistantCommand(input) || await this.mcpCommand(text) || await this.portalCommand(text)
+    if (!reply) reply = await this.sendPlaceQuestion(input)
     if (!reply) reply = await this.spatialQuestion(text)
     if (!reply) reply = await this.placeQuestion(text, input)
     if (reply) this.lastReply = reply
@@ -2749,6 +2757,52 @@ export class Mind {
     const place = await this.locate(words)
     if (place) return fromPlace(place.at, place.label)
     return read.notify ? { text: `I could not find “${clip(words, 60)}” as a place or as something on this map.`, mood: 'confused' } : null
+  }
+
+  // ------------------------------------------------------------ a place handed to another widget
+
+  /** "Property report for 250 Main St": finds the place and hands it to a widget the builder wired to Mappy's location message. */
+  private async sendPlaceQuestion (input: string): Promise<Reply | null> {
+    const targets = this.ctx.placeTargets || []
+    if (!targets.length || !this.ctx.sendPlace || /^__/.test(input)) return null
+    const read = readSend(input, targets)
+    if (!read) return null
+    const name = read.target.label
+    let spot: { label: string, at: [number, number] } | null = null
+    if (read.place === 'it') {
+      // The one thing just found (a parcel, a park) is "it"; otherwise the place last talked about.
+      const hit = this.lastResults?.length === 1 ? this.lastResults[0] : null
+      const g: any = hit?.graphic?.geometry
+      if (g && Date.now() - this.lastResultsAt < 15 * 60000 && (!this.lastPlace || this.lastPlace.at <= this.lastResultsAt)) {
+        let ll: [number, number] | null = null
+        try { ll = this.toLatLon(g.type === 'point' ? g : (g.extent?.center || g.centroid)) } catch (e) { ll = null }
+        if (ll) spot = { label: String(hit.label || 'that one'), at: ll }
+      }
+      if (!spot) spot = await this.locate('it')
+      if (!spot) return { text: `Which place? Give me an address, like “${name} for 250 Main St”, or find it first and then ask.`, mood: 'think' }
+    } else {
+      if (!this.canLocate() && !/^-?\d{1,2}\.\d+\s*,\s*-?\d{1,3}\.\d+$/.test(read.place)) return { text: `I need an address search in this app to find “${clip(read.place, 60)}”. Find the place on the map first, then ask for “${name} here”.`, mood: 'confused' }
+      try { spot = await this.locate(read.place) } catch (e) { spot = null }
+      if (!spot) return { text: `I could not find “${clip(read.place, 60)}”. Check the address and try again.`, mood: 'confused' }
+    }
+    const label = /^-?\d/.test(spot.label) && /,/.test(spot.label) && !/[a-z]/i.test(spot.label) ? 'that spot' : spot.label
+    let ok = false
+    try { ok = await this.ctx.sendPlace(read.target, { lat: spot.at[0], lon: spot.at[1], label }) } catch (e) { ok = false }
+    if (!ok) return { text: `I found ${label === 'that spot' ? 'the spot' : `**${label}**`}, but I could not hand it to **${name}**.`, mood: 'confused' }
+    try { await this.ctx.live.showPlaces(spot.at, [], {}) } catch (e) { }
+    this.lastPlace = { label, lat: spot.at[0], lon: spot.at[1], at: Date.now() }
+    return { text: label === 'that spot' ? `I sent that spot to **${name}**.` : `I sent **${label}** to **${name}**.`, mood: 'happy', sent: true }
+  }
+
+  /** After he finds a place: a chip for each widget that can take it. */
+  private offerSend (reply: Reply, startedAt: number): void {
+    const targets = this.ctx.placeTargets || []
+    const p = this.lastPlace
+    if (!targets.length || !this.ctx.sendPlace || !p || p.at < startedAt || reply.sent || ['confused', 'alert', 'sorry', 'think'].includes(reply.mood || '')) return
+    if (!this.placeNames.has(placeKey(p.lat, p.lon)) && p.label) this.placeNames.set(placeKey(p.lat, p.lon), p.label)
+    const have = new Set((reply.actions || []).map(a => a.label))
+    const chips = targets.slice(0, 2).map(t => sendChip(t, p.lat, p.lon)).filter(c => !have.has(c.label))
+    if (chips.length) reply.actions = [...(reply.actions || []), ...chips.map(c => ({ type: 'ask' as const, label: c.label, q: c.q }))]
   }
 
   // ------------------------------------------------------------ ArcGIS Enterprise MCP: portal content and portal layers

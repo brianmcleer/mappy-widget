@@ -62,6 +62,7 @@ jobs:
           node tests/mcp.cjs
           node tests/esri-mcp.cjs
           node tests/spatial.cjs
+          node tests/send-place.cjs
           cd ..
           node language/build.mjs --check
 

@@ -1,3 +1,7 @@
+## 1.12.0 (2026-11-25)
+
+- Hands a place to another widget. Wire any widget's message action to Mappy's new "Location changes" trigger (Action tab) and people can ask for it by its label: "property report for 250 Main St", "run the site lookup on this parcel", "report for it". He finds the place, opens the widget and publishes Experience Builder's standard location message; after finding an address he offers a button for each wired widget. Nothing is named in Mappy: the widgets and their names come from the app's own wiring. See docs/hand-off-to-widgets.md.
+
 ## 1.11.0 (2026-11-25)
 
 - Questions that cross layers. One thing can be asked about by where it is relative to another: "parcels within 300 ft of 250 N 5th St", "how many R-4 parcels over 5 acres are within a mile of a school", "hydrants in the floodplain", "parcels next to Compass Park", "parcels not within 500 ft of a hydrant", "how many hydrants per council district", "which district has the fewest hydrants". Both sides take the filters he already reads, and every kind of answer works (counts, lists, rankings, averages, groups with a chart). The layer's own service does the geometry, so there is no AI and no server in it. See docs/cross-layer-questions.md.

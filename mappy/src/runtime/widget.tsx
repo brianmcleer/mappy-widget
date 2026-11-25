@@ -12,7 +12,7 @@
   positions, so no transformed layout container can trap them, and placement.ts keeps all
   three inside the browser tab at any size, on resize, and while he is dragged.
 */
-import { React, ReactRedux, ReactDOM, SessionManager } from 'jimu-core'
+import { React, ReactRedux, ReactDOM, SessionManager, MessageManager, LocationChangeMessage } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
@@ -42,9 +42,11 @@ import type { ManifestMap } from '../brain/manifests'
 import { LiveMap } from './live'
 import { Mind } from './mind'
 import { openInTable, tableWidgetIds } from './tableWidget'
+import { openWidget } from './navigate'
 import { McpClient } from './mcp'
 import type { McpPort } from '../brain/mcpTools'
 import { helperMode, assistantPort } from '../brain/handoff'
+import { placeTargets } from '../brain/sendPlace'
 import type { AssistantPort } from '../brain/handoff'
 import { configuredGeocoders } from '../brain/addresses'
 import { useDesktopWindow } from './desktop'
@@ -259,6 +261,13 @@ export default function Widget (props: Props): any {
     feedInfo: feed ? describeFeed(feed) : undefined,
     store: { get: (k: string) => store(k + ':' + appId), set: (k: string, v: string | null) => { store(k + ':' + appId, v) } },
     widgetId: props.id,
+    placeTargets: placeTargets(extracted.model?.cfg, props.id),
+    // Opens the widget the person named, then publishes the place: every action the builder wired to the message runs.
+    sendPlace: async (target: any, at: any) => {
+      try { await openWidget(target.ids, target.label, extracted.model, { pulse: false }) } catch (e) { }
+      await new Promise(resolve => setTimeout(resolve, 250))
+      try { MessageManager.getInstance().publishMessage(new LocationChangeMessage(props.id, { x: at.lon, y: at.lat, spatialReference: { wkid: 4326 } } as any)); return true } catch (e) { return false }
+    },
     myLocation: () => new Promise<[number, number] | null>(resolve => {
       try {
         if (!navigator.geolocation) { resolve(null); return }

@@ -69,6 +69,8 @@ For an assistant you set its name, a prefix written in front of every question (
 
 ## MCP server (optional)
 
+**Handing a place to another widget** (a report tool, a lookup): wire its message action to Mappy's "Location changes" trigger and people ask for it by name, "property report for 250 Main St". See [docs/hand-off-to-widgets.md](docs/hand-off-to-widgets.md).
+
 **Questions that cross layers** need nothing but the map: "parcels within 300 ft of 250 N 5th St", "hydrants in the floodplain", "how many hydrants per council district", "parcels not within 500 ft of a hydrant", and (when the builder turns it on) "owners within 300 ft of this parcel" with a spreadsheet to save. See [docs/cross-layer-questions.md](docs/cross-layer-questions.md).
 
 **Esri's MCP for ArcGIS Enterprise** works out of the box: one press in settings fills in your hosting server's catalog, and he then answers data questions from portal layers that are not on the map, searches the portal, and draws routes on your own roads, all with the signed-in person's own access. See [docs/arcgis-enterprise-mcp.md](docs/arcgis-enterprise-mcp.md).

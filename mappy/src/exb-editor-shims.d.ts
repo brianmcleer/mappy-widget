@@ -347,6 +347,7 @@ declare module 'jimu-core' {
     export const DataSourceComponent: any
     export const DataRecordsSelectionChangeMessage: any
     export const MessageManager: any
+    export const LocationChangeMessage: any
     export const MessageType: any
     export const SessionManager: any
     export const portalUrlUtils: any

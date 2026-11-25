@@ -40,6 +40,8 @@ export interface Reply {
   pointAt?: HTMLElement | null
   /** The answer is a page found in the app's own help or layer list, not something worked out from the data. */
   lookedUp?: boolean
+  /** He handed a place to another widget: no chip offering the same thing again. */
+  sent?: boolean
   /** A small file the person can save with one click (the questions he missed, as a CSV). */
   save?: { name: string, text: string, type: string, label: string }
   /** Something the widget itself should do: pause or resume motion, speak, resize or move Mappy. */
