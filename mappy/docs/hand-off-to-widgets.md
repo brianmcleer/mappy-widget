@@ -7,6 +7,7 @@ own name:
 - "property report for 250 Main St"
 - "run the site lookup on this parcel"
 - "report for it" (the place just found, or the search result on the map)
+- "mailing labels within 300 ft of 250 Main St" (the distance goes along, for widgets that take one)
 - "everything about 250 Main St" (when only one widget is wired)
 
 After he finds an address he also offers a button named for each wired widget.
@@ -24,7 +25,7 @@ a widget and the words follow. A map as a target (pan, zoom) still runs but is n
 ## How it works
 
 - Mappy publishes Experience Builder's standard `LOCATION_CHANGE` message with the point in
-  longitude and latitude (WGS84). He opens the named widget first, then publishes.
+  the map's coordinate system (longitude and latitude if that cannot be had). He opens the named widget first, then publishes.
 - Every action wired to that trigger runs, as with any Experience Builder message.
 - The message is only sent when someone asks for a wired widget or presses its button. Finding
   an address on its own sends nothing.
@@ -34,3 +35,6 @@ a widget and the words follow. A map as a target (pan, zoom) still runs but is n
 
 To be a target, a widget needs a message action whose `filterMessageDescription` accepts
 `MessageType.LocationChange`, reading `message.point` (`x`, `y`, `spatialReference`).
+
+Two optional extras ride on the message, safe to ignore: `message.label` (the place's name, usually
+the address) and `message.distanceFeet` (a number, only when the person asked for a distance).

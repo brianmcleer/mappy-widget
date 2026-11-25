@@ -12,7 +12,7 @@
   positions, so no transformed layout container can trap them, and placement.ts keeps all
   three inside the browser tab at any size, on resize, and while he is dragged.
 */
-import { React, ReactRedux, ReactDOM, SessionManager, MessageManager, LocationChangeMessage } from 'jimu-core'
+import { React, ReactRedux, ReactDOM, SessionManager, MessageManager, LocationChangeMessage, loadArcGISJSAPIModules } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
@@ -266,7 +266,24 @@ export default function Widget (props: Props): any {
     sendPlace: async (target: any, at: any) => {
       try { await openWidget(target.ids, target.label, extracted.model, { pulse: false }) } catch (e) { }
       await new Promise(resolve => setTimeout(resolve, 250))
-      try { MessageManager.getInstance().publishMessage(new LocationChangeMessage(props.id, { x: at.lon, y: at.lat, spatialReference: { wkid: 4326 } } as any)); return true } catch (e) { return false }
+      try {
+        // In the map's own coordinate system when it can be had (widgets often use the point as it comes); longitude and latitude otherwise.
+        let point: any = { x: at.lon, y: at.lat, spatialReference: { wkid: 4326 } }
+        try {
+          const sr: any = (live as any)?.view?.spatialReference
+          if (sr && !sr.isWGS84) {
+            const [op, Point] = await loadArcGISJSAPIModules(['esri/geometry/operators/projectOperator', 'esri/geometry/Point'])
+            if (!op.isLoaded()) await op.load()
+            const out: any = op.execute(new Point({ longitude: at.lon, latitude: at.lat }), sr)
+            if (out && Number.isFinite(out.x) && Number.isFinite(out.y)) point = { x: out.x, y: out.y, spatialReference: sr.toJSON ? sr.toJSON() : { wkid: sr.wkid } }
+          }
+        } catch (e) { }
+        const message: any = new LocationChangeMessage(props.id, point)
+        // Extras a receiving action may use and others ignore: the place's name, and a distance in feet when one was asked for.
+        if (at.label) message.label = at.label
+        if (at.feet > 0) message.distanceFeet = at.feet
+        MessageManager.getInstance().publishMessage(message); return true
+      } catch (e) { return false }
     },
     myLocation: () => new Promise<[number, number] | null>(resolve => {
       try {

@@ -50,6 +50,15 @@ test('a request for a wired widget with a place is read', () => {
   assert.equal(r('Property Report for 39.064000, -108.550000'), '39.064000, -108.550000')
 })
 
+test('a distance goes along when one is asked for', () => {
+  const labels = [{ ids: ['w9'], label: 'Mailing Labels' }]
+  assert.deepEqual(S.readSend('mailing labels within 300 ft of 250 N 5th St', labels), { target: labels[0], place: '250 N 5th St', feet: 300, distance: '300 ft' })
+  assert.equal(S.readSend('make mailing labels for owners within a quarter mile of this parcel', labels).feet, 1320)
+  assert.equal(S.readSend('labels for 250 N 5th St within 500 feet', labels).feet, 500)
+  assert.equal(S.readSend('mailing labels for 250 N 5th St', labels).feet, undefined)
+  assert.equal(S.readSend('mailing labels within reach of everyone', labels), null)
+})
+
 test('ordinary sentences and bare widget names are left alone', () => {
   for (const t of ['property report', 'open property report', 'how do I report a pothole', 'report a problem', 'parcels within 300 ft of 250 Oak St', 'who owns 250 Oak St', 'what is the property report', 'zoom to 250 Oak St', 'hello']) assert.equal(S.readSend(t, one), null, t)
   assert.equal(S.readSend('report for 250 Oak St', []), null)
@@ -102,6 +111,8 @@ test('the whole turn: the address is found, handed over, and remembered', async 
   assert.ok(Number.isFinite(sent[0].at.lat) && Number.isFinite(sent[0].at.lon))
   assert.match(r.text, /^I sent \*\*250 Oak St\*\* to \*\*Property Report\*\*\./i)
   assert.ok(!(r.actions || []).some(a => a.label === 'Property Report'), 'no chip for what was just done')
+  r = await mind.respond('property report within 300 ft of 250 Oak St')
+  assert.equal(sent[1].at.feet, 300, r.text); assert.match(r.text, /with 300 ft around it/); sent.pop()
   r = await mind.respond('report for it')
   assert.equal(sent.length, 2, r.text)
   assert.ok(Math.abs(sent[1].at.lat - sent[0].at.lat) < 1e-6)

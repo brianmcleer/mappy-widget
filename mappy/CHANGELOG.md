@@ -1,6 +1,7 @@
 ## 1.12.0 (2026-11-25)
 
 - Hands a place to another widget. Wire any widget's message action to Mappy's new "Location changes" trigger (Action tab) and people can ask for it by its label: "property report for 250 Main St", "run the site lookup on this parcel", "report for it". He finds the place, opens the widget and publishes Experience Builder's standard location message; after finding an address he offers a button for each wired widget. Nothing is named in Mappy: the widgets and their names come from the app's own wiring. See docs/hand-off-to-widgets.md.
+- A distance can go with the place: "mailing labels within 300 ft of 250 Main St" sends the point and 300 ft to the wired widget, for widgets whose action takes a distance.
 
 ## 1.11.0 (2026-11-25)
 

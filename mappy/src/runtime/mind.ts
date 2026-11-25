@@ -139,7 +139,7 @@ export interface MindContext {
   /** Widgets the builder wired to Mappy's location message (a report tool, a lookup): people can ask for them by name with a place. */
   placeTargets?: PlaceTarget[]
   /** Opens one of those widgets and publishes the place to the app. */
-  sendPlace?: (target: PlaceTarget, at: { lat: number, lon: number, label: string }) => Promise<boolean>
+  sendPlace?: (target: PlaceTarget, at: { lat: number, lon: number, label: string, feet?: number }) => Promise<boolean>
   /** What the knowledge feed gave him ("feed 2026.10.29: language pack ..., 18 answers"), for diagnostics. */
   feedInfo?: string
   /** Small things kept for the person in this browser (saved views). Absent in tests. */
@@ -2787,11 +2787,12 @@ export class Mind {
     }
     const label = /^-?\d/.test(spot.label) && /,/.test(spot.label) && !/[a-z]/i.test(spot.label) ? 'that spot' : spot.label
     let ok = false
-    try { ok = await this.ctx.sendPlace(read.target, { lat: spot.at[0], lon: spot.at[1], label }) } catch (e) { ok = false }
+    try { ok = await this.ctx.sendPlace(read.target, { lat: spot.at[0], lon: spot.at[1], label, feet: read.feet }) } catch (e) { ok = false }
     if (!ok) return { text: `I found ${label === 'that spot' ? 'the spot' : `**${label}**`}, but I could not hand it to **${name}**.`, mood: 'confused' }
     try { await this.ctx.live.showPlaces(spot.at, [], {}) } catch (e) { }
     this.lastPlace = { label, lat: spot.at[0], lon: spot.at[1], at: Date.now() }
-    return { text: label === 'that spot' ? `I sent that spot to **${name}**.` : `I sent **${label}** to **${name}**.`, mood: 'happy', sent: true }
+    const far = read.feet ? `, with ${read.distance} around it` : ''
+    return { text: label === 'that spot' ? `I sent that spot to **${name}**${far}.` : `I sent **${label}** to **${name}**${far}.`, mood: 'happy', sent: true }
   }
 
   /** After he finds a place: a chip for each widget that can take it. */

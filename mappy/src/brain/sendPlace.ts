@@ -7,6 +7,8 @@
   Nothing here knows any particular widget: the names come from the app's own config.
 */
 
+import { distanceSwap } from './spatial'
+
 /** A widget wired to Mappy's location message: its label and its ids (one per screen size). */
 export interface PlaceTarget { ids: string[], label: string }
 
@@ -49,7 +51,7 @@ function namesFor (t: PlaceTarget, all: PlaceTarget[]): string[] {
 }
 
 /** "Property report for 250 Main St" -> which wired widget, and the place in the person's words ("it" for the place on hand). */
-export function readSend (text: string, targets: PlaceTarget[]): { target: PlaceTarget, place: string } | null {
+export function readSend (text: string, targets: PlaceTarget[]): { target: PlaceTarget, place: string, feet?: number, distance?: string } | null {
   if (!targets?.length) return null
   const t = String(text || '').trim().replace(/[?.!]+$/, '').replace(/\s+/g, ' ')
   if (!t || t.length > 200) return null
@@ -57,8 +59,16 @@ export function readSend (text: string, targets: PlaceTarget[]): { target: Place
   for (const target of targets) {
     for (const name of namesFor(target, targets)) {
       const n = name.split(' ').map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+')
+      // "Mailing labels within 300 ft of 250 Main St": the distance goes along for widgets that take one.
+      const around = t.match(new RegExp(`^${LEAD}${n}s?\\s+(?:for\\s+(?:everything|everyone|all|parcels|properties|owners|lots|neighbou?rs)\\s+)?within\\s+(.+?)\\s+of\\s+(.+)$`, 'i'))
+      const far = around && distanceSwap(around[1])
+      if (around && far) return { target, place: place(around[2]), feet: far.feet, distance: far.said }
       const withPlace = t.match(new RegExp(`^${LEAD}${n}s?\\s+(?:for|on|at|of|about)\\s+(.+)$`, 'i'))
-      if (withPlace) return { target, place: place(withPlace[1]) }
+      if (withPlace) {
+        const tail = withPlace[1].match(/^(.+?),?\s+(?:within|with a buffer of|buffered by|plus)\s+(.+)$/i)
+        const d = tail && distanceSwap(tail[2])
+        return tail && d ? { target, place: place(tail[1]), feet: d.feet, distance: d.said } : { target, place: place(withPlace[1]) }
+      }
       if (new RegExp(`^${LEAD}${n}s?\\s+(?:here|there|for (?:it|this|that))$`, 'i').test(t)) return { target, place: 'it' }
     }
   }
